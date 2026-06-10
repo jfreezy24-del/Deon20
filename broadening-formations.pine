@@ -23,6 +23,17 @@ upTestColor   = input.color(color.red,   "Upper Test Dot", group="Style")
 dnTestColor   = input.color(color.green, "Lower Test Dot", group="Style")
 c3Color       = input.color(color.orange, "C3 Highlight",  group="Style")
 
+enableFades     = input.bool(true,  "Fade Entries (boundary tests)",      group="Entries & Exits", tooltip="Enter against a boundary test (wick through, close back inside), targeting the formation midpoint (T1) and the opposite boundary (T2). Stop beyond the test extreme.")
+enableReclaims  = input.bool(true,  "Reclaim Entries (failed breakouts)", group="Entries & Exits", tooltip="Enter when price closes back inside the formation after a close-through breakout, targeting the midpoint and opposite boundary. Stop beyond the formation extreme.")
+enableBreakouts = input.bool(true,  "Breakout Entries (BF resolution)",   group="Entries & Exits", tooltip="Enter when price closes through the projected broadening line. Stop at the formation midpoint, targets at 0.5x and 1x the formation height (measured move).")
+entryMode       = input.string("Confirmed", "Fade Entry Mode", options=["Immediate", "Confirmed"], group="Entries & Exits", tooltip="Immediate: enter on the close of the test bar. Confirmed: enter only when a later bar closes beyond the test bar's opposite extreme (TheStrat-style 2-bar confirmation), within the confirmation window.")
+confirmBars     = input.int(3,    "Confirmation Window (bars)", minval=1, maxval=10, group="Entries & Exits")
+atrLenIn        = input.int(14,   "ATR Length (stop buffer)", minval=1, group="Entries & Exits")
+stopBufMult     = input.float(0.25, "Stop Buffer (ATR x)", minval=0.0, step=0.05, group="Entries & Exits")
+moveBE          = input.bool(true, "Move Stop to Breakeven at T1", group="Entries & Exits")
+maxBarsInTrade  = input.int(0,    "Time Stop (bars, 0 = off)", minval=0, group="Entries & Exits")
+showTrades      = input.bool(true, "Draw Entry / Stop / Target Lines", group="Entries & Exits")
+
 showStats     = input.bool(true, "Show Statistics Table", group="Statistics")
 
 // ====================== BAR CLASSIFICATION (TheStrat) ======================
@@ -208,6 +219,55 @@ processBF(BF b) =>
 newBF(bool sub, int trigLen, float aHi, int aHiBar, float aLo, int aLoBar) =>
     BF.new(active=true, isSub=sub, startBar=bar_index - trigLen, hi=aHi, lo=aLo, upBar2=aHiBar, upPr2=aHi, dnBar2=aLoBar, dnPr2=aLo, upCount=1, dnCount=1, lastExpBar=bar_index)
 
+// ====================== TRADE ENGINE ======================
+type Trade
+    bool   open     = false
+    int    dir      = 0
+    string kind     = ""
+    float  entry    = na
+    float  stop     = na
+    float  t1       = na
+    float  t2       = na
+    float  initRisk = na
+    int    entryBar = na
+    bool   t1Hit    = false
+    float  exitR    = na
+    bool   counted  = false
+    line   eLine    = na
+    line   sLine    = na
+    line   t1Line   = na
+    line   t2Line   = na
+
+openTrade(int dir, string kind, float entryPx, float stopPx, float t1Px, float t2Px) =>
+    Trade t = Trade.new(open=true, dir=dir, kind=kind, entry=entryPx, stop=stopPx, t1=t1Px, t2=t2Px, initRisk=math.abs(entryPx - stopPx), entryBar=bar_index)
+    if showTrades
+        t.eLine  := line.new(bar_index, entryPx, bar_index, entryPx, color=color.new(color.gray, 20),  style=line.style_dotted, width=1)
+        t.sLine  := line.new(bar_index, stopPx,  bar_index, stopPx,  color=color.new(color.red, 0),    style=line.style_solid,  width=1)
+        t.t1Line := line.new(bar_index, t1Px,    bar_index, t1Px,    color=color.new(color.green, 40), style=line.style_dashed, width=1)
+        t.t2Line := line.new(bar_index, t2Px,    bar_index, t2Px,    color=color.new(color.green, 0),  style=line.style_solid,  width=1)
+        if dir == 1
+            label.new(bar_index, low, "▲ LONG · " + kind, style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+        else
+            label.new(bar_index, high, "▼ SHORT · " + kind, style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+    t
+
+extendTradeLines(Trade t) =>
+    if not na(t.eLine)
+        line.set_x2(t.eLine, bar_index)
+    if not na(t.sLine)
+        line.set_x2(t.sLine, bar_index)
+    if not na(t.t1Line)
+        line.set_x2(t.t1Line, bar_index)
+    if not na(t.t2Line)
+        line.set_x2(t.t2Line, bar_index)
+
+closeTrade(Trade t, float px, string tag) =>
+    t.open := false
+    t.exitR := t.initRisk > 0 ? (px - t.entry) / t.initRisk * t.dir : 0.0
+    if showTrades
+        string txt = tag + " " + (t.exitR >= 0 ? "+" : "") + str.tostring(t.exitR, "#.##") + "R"
+        label.new(bar_index, px, txt, style=label.style_label_left, color=t.exitR >= 0 ? color.new(color.green, 20) : color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+
 // ====================== STATE & PER-BAR LOGIC ======================
 var BF major = na
 var BF sub   = na
@@ -224,6 +284,14 @@ var int cntTestUp = 0
 var int cntTestDn = 0
 var int cntBrkUp  = 0
 var int cntBrkDn  = 0
+
+var int   cntTrades  = 0
+var int   cntWins    = 0
+var int   cntLoss    = 0
+var int   cntScratch = 0
+var float sumR       = 0.0
+
+float atrBuf = ta.atr(atrLenIn) * stopBufMult
 
 cnt1  += is1  ? 1 : 0
 cnt2u += is2u ? 1 : 0
@@ -253,7 +321,138 @@ if subActive and not majorActive
     finalize(sub)
     subActive := false
 
-// 3) New formation triggers
+// 3) Trade management: exits first, then new entries.
+//    Intrabar fill assumptions: stop checked before target (conservative).
+var Trade tr       = na
+var int   pendDir  = 0
+var float pendTrig = na
+var float pendStop = na
+var float pendT1   = na
+var float pendT2   = na
+var int   pendBar  = na
+
+bool evLongEntry  = false
+bool evShortEntry = false
+bool evTargetHit  = false
+bool evStopHit    = false
+
+if not na(tr) and tr.open
+    extendTradeLines(tr)
+    if tr.dir == 1
+        if low <= tr.stop
+            closeTrade(tr, tr.stop, tr.t1Hit ? "EXIT" : "SL")
+            evStopHit := true
+        else
+            if not tr.t1Hit and high >= tr.t1
+                tr.t1Hit := true
+                evTargetHit := true
+                if moveBE
+                    tr.stop := tr.entry
+                    if not na(tr.sLine)
+                        line.set_y1(tr.sLine, tr.entry)
+                        line.set_y2(tr.sLine, tr.entry)
+            if tr.open and high >= tr.t2
+                closeTrade(tr, tr.t2, "TP")
+                evTargetHit := true
+    else
+        if high >= tr.stop
+            closeTrade(tr, tr.stop, tr.t1Hit ? "EXIT" : "SL")
+            evStopHit := true
+        else
+            if not tr.t1Hit and low <= tr.t1
+                tr.t1Hit := true
+                evTargetHit := true
+                if moveBE
+                    tr.stop := tr.entry
+                    if not na(tr.sLine)
+                        line.set_y1(tr.sLine, tr.entry)
+                        line.set_y2(tr.sLine, tr.entry)
+            if tr.open and low <= tr.t2
+                closeTrade(tr, tr.t2, "TP")
+                evTargetHit := true
+    if tr.open and maxBarsInTrade > 0 and bar_index - tr.entryBar >= maxBarsInTrade
+        closeTrade(tr, close, "TIME")
+
+if not na(tr) and not tr.open and not tr.counted
+    tr.counted := true
+    cntTrades += 1
+    sumR += tr.exitR
+    if tr.exitR > 0.05
+        cntWins += 1
+    else if tr.exitR < -0.05
+        cntLoss += 1
+    else
+        cntScratch += 1
+
+bool canEnter = (na(tr) or not tr.open) and not na(atrBuf)
+
+// Pending fade confirmation (Confirmed mode): enter when a later bar closes
+// beyond the test bar's opposite extreme; cancel on stop-side violation,
+// timeout, or if the room to T1 is gone.
+if pendDir != 0
+    bool invalid = bar_index - pendBar > confirmBars or (pendDir == 1 ? low <= pendStop : high >= pendStop)
+    if invalid
+        pendDir := 0
+    else if canEnter and (pendDir == 1 ? close > pendTrig and close < pendT1 : close < pendTrig and close > pendT1)
+        tr := openTrade(pendDir, "Fade", close, pendStop, pendT1, pendT2)
+        evLongEntry  := pendDir == 1
+        evShortEntry := pendDir == -1
+        canEnter := false
+        pendDir := 0
+
+// New entry setups (major formation only)
+if majorActive
+    float eq = (major.hi + major.lo) / 2
+    if enableFades and mTDn
+        float stopPx = low - atrBuf
+        if entryMode == "Immediate"
+            if canEnter and close < eq
+                tr := openTrade(1, "Fade", close, stopPx, eq, major.hi)
+                evLongEntry := true
+                canEnter := false
+        else
+            pendDir  := 1
+            pendTrig := high
+            pendStop := stopPx
+            pendT1   := eq
+            pendT2   := major.hi
+            pendBar  := bar_index
+    if enableFades and mTUp
+        float stopPx = high + atrBuf
+        if entryMode == "Immediate"
+            if canEnter and close > eq
+                tr := openTrade(-1, "Fade", close, stopPx, eq, major.lo)
+                evShortEntry := true
+                canEnter := false
+        else
+            pendDir  := -1
+            pendTrig := low
+            pendStop := stopPx
+            pendT1   := eq
+            pendT2   := major.lo
+            pendBar  := bar_index
+    if enableReclaims and mRecDn and canEnter and close > eq
+        tr := openTrade(-1, "Reclaim", close, major.hi + atrBuf, eq, major.lo)
+        evShortEntry := true
+        canEnter := false
+    if enableReclaims and mRecUp and canEnter and close < eq
+        tr := openTrade(1, "Reclaim", close, major.lo - atrBuf, eq, major.hi)
+        evLongEntry := true
+        canEnter := false
+
+// Breakout entries: the formation just resolved through its projected line
+if enableBreakouts and (mBrkUp or mBrkDn) and canEnter and not na(major)
+    float h   = major.hi - major.lo
+    float eqB = (major.hi + major.lo) / 2
+    if mBrkUp
+        tr := openTrade(1, "Breakout", close, eqB, close + 0.5 * h, close + h)
+        evLongEntry := true
+    else
+        tr := openTrade(-1, "Breakout", close, eqB, close - 0.5 * h, close - h)
+        evShortEntry := true
+    canEnter := false
+
+// 4) New formation triggers
 bool evNewBF = false
 if is3 or c3Now
     int trigLen = is3 ? 1 : c3Len
@@ -292,7 +491,7 @@ if c3Now
         box.new(bar_index - c3Len, c3Hi, bar_index, c3Lo, border_color=color.new(c3Color, 40), bgcolor=color.new(c3Color, 88))
 
 // ====================== STATISTICS TABLE ======================
-var table st = showStats ? table.new(position.top_right, 2, 13, bgcolor=color.new(color.black, 75), border_width=1, border_color=color.new(color.gray, 70)) : na
+var table st = showStats ? table.new(position.top_right, 2, 18, bgcolor=color.new(color.black, 75), border_width=1, border_color=color.new(color.gray, 70)) : na
 if showStats and barstate.islast
     int total = math.max(cnt1 + cnt2u + cnt2d + cnt3, 1)
     int resTotal = math.max(cntBrkUp + cntBrkDn, 1)
@@ -318,12 +517,36 @@ if showStats and barstate.islast
     table.cell(st, 1, 9, str.tostring(cntBrkUp) + " / " + str.tostring(cntBrkDn), text_color=color.white, text_size=size.tiny)
     table.cell(st, 0, 10, "Resolution Bias", text_color=color.white, text_size=size.tiny)
     table.cell(st, 1, 10, str.tostring(100.0 * cntBrkUp / resTotal, "#.#") + "% up", text_color=color.white, text_size=size.tiny)
-    bool ma = not na(major) and major.active
+    string maTxt = "—"
+    color  maCol = color.gray
+    if not na(major) and major.active
+        maTxt := str.tostring(major.hi, format.mintick) + " / " + str.tostring(major.lo, format.mintick)
+        maCol := majorColor
     table.cell(st, 0, 11, "Active BF", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 11, ma ? str.tostring(major.hi, format.mintick) + " / " + str.tostring(major.lo, format.mintick) : "—", text_color=ma ? majorColor : color.gray, text_size=size.tiny)
-    bool sa = not na(sub) and sub.active
+    table.cell(st, 1, 11, maTxt, text_color=maCol, text_size=size.tiny)
+    string saTxt = "—"
+    color  saCol = color.gray
+    if not na(sub) and sub.active
+        saTxt := str.tostring(sub.hi, format.mintick) + " / " + str.tostring(sub.lo, format.mintick)
+        saCol := subColor
     table.cell(st, 0, 12, "Active Sub BF", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 12, sa ? str.tostring(sub.hi, format.mintick) + " / " + str.tostring(sub.lo, format.mintick) : "—", text_color=sa ? subColor : color.gray, text_size=size.tiny)
+    table.cell(st, 1, 12, saTxt, text_color=saCol, text_size=size.tiny)
+    int decided = math.max(cntWins + cntLoss, 1)
+    table.cell(st, 0, 13, "Trades (closed)", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 13, str.tostring(cntTrades), text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 14, "Win / Loss / Scratch", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 14, str.tostring(cntWins) + " / " + str.tostring(cntLoss) + " / " + str.tostring(cntScratch), text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 15, "Win Rate", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 15, str.tostring(100.0 * cntWins / decided, "#.#") + "%", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 16, "Total R", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 16, (sumR >= 0 ? "+" : "") + str.tostring(sumR, "#.##") + "R", text_color=sumR >= 0 ? color.green : color.red, text_size=size.tiny)
+    string trTxt = "—"
+    color  trCol = color.gray
+    if not na(tr) and tr.open
+        trTxt := (tr.dir == 1 ? "Long " : "Short ") + tr.kind + " @ " + str.tostring(tr.entry, format.mintick)
+        trCol := tr.dir == 1 ? color.green : color.red
+    table.cell(st, 0, 17, "Open Trade", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 17, trTxt, text_color=trCol, text_size=size.tiny)
 
 // ====================== ALERTS ======================
 alertcondition(is3,                "Outside Bar (3)",       "Outside bar detected — single-bar expansion")
@@ -333,3 +556,7 @@ alertcondition(mBoUp or mBoDn,     "BF Boundary Break",     "Price closed throug
 alertcondition(mBrkUp or mBrkDn,   "BF Resolved",           "Price closed through the projected broadening line — formation resolved")
 alertcondition(mTUp or mTDn,       "BF Boundary Test",      "Price wicked through a formation boundary and closed back inside")
 alertcondition(mRecUp or mRecDn,   "BF Reclaim",            "Price reclaimed a broken formation boundary")
+alertcondition(evLongEntry,        "Long Entry",            "QBF long entry triggered (fade, reclaim or breakout)")
+alertcondition(evShortEntry,       "Short Entry",           "QBF short entry triggered (fade, reclaim or breakout)")
+alertcondition(evTargetHit,        "Target Hit",            "QBF trade reached a profit target")
+alertcondition(evStopHit,          "Stop Hit",              "QBF trade stopped out")
