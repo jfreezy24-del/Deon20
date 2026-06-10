@@ -83,6 +83,18 @@ showTargetLabels = input.bool(true, "Show Target Labels", group="C2 Targets")
 showHistorical = input.bool(true, "Show Historical Setups", group="Setup History", tooltip="Keep the drawings of completed or invalidated C2 setups on the chart. When off, a setup's drawings are removed as soon as it finishes its lifecycle or gets stopped out (XC2).")
 maxHistorical  = input.int(5, "Max Historical Setups", minval=1, maxval=50, group="Setup History", tooltip="Maximum number of historical setups kept on the chart at the same time. The oldest ones are removed first. Active setups are always shown and don't count toward this limit.")
 
+invLineColor   = input.color(color.red, "", group="Invalidation Line", inline="inv")
+showInvLine    = input.bool(true, "Invalidation Line", group="Invalidation Line", inline="inv", tooltip="Draws a line at the C2 sweep wick — the top wick for bearish setups, the bottom wick for bullish setups. A breach of this level invalidates the setup (XC2).")
+invLineStyle   = input.string("Dashed", "", options=["Solid", "Dotted", "Dashed"], group="Invalidation Line", inline="inv")
+invLineWidth   = input.int(1, "Width", minval=1, maxval=10, group="Invalidation Line", inline="inv")
+showInvLabel   = input.bool(true, "Show Label", group="Invalidation Line", inline="inv2")
+invLabelPos    = input.string("Right", "Label Position", options=["Left", "Center", "Right"], group="Invalidation Line", inline="inv2")
+
+invLabelStyle =
+     invLabelPos == "Left" ? label.style_label_right :
+     invLabelPos == "Center" ? label.style_label_down :
+     label.style_label_left
+
 show_swing_lines          = input.bool(true, title="Show Confirmed Swing Lines", group="HTF Swings", tooltip="Draws horizontal lines at confirmed swing highs and lows (swept level with rejection close)")
 swing_line_width          = input.int(1, title="Line Width", minval=1, maxval=5, group="HTF Swings")
 swing_line_style_input    = input.string("Solid", title="Line Style", options=["Solid", "Dashed", "Dotted"], group="HTF Swings")
@@ -191,6 +203,8 @@ type SetupHistory
     box   c4_box
     StdDevData std
     TargetData tgt
+    line  inv_ln
+    label inv_lbl
 
 type Candle
     float o
@@ -387,6 +401,8 @@ var array<bool>  activeCisdConfirmed = array.new<bool>()
 var array<bool>  activeInvalidated   = array.new<bool>()
 var array<StdDevData> activeStdDevData = array.new<StdDevData>()
 var array<TargetData> activeTargets = array.new<TargetData>()
+var array<line>  activeInvLines  = array.new<line>()
+var array<label> activeInvLabels = array.new<label>()
 var array<SetupHistory> historySetups = array.new<SetupHistory>()
 
 var array<cisdNeo> cisdLevelsBu = array.new<cisdNeo>()
@@ -1040,6 +1056,13 @@ f_deleteHistory(SetupHistory h) =>
         label.delete(h.tgt.lb_eq)
         line.delete(h.tgt.ln_full)
         label.delete(h.tgt.lb_full)
+    if not na(h.inv_ln)
+        line.delete(h.inv_ln)
+    if not na(h.inv_lbl)
+        label.delete(h.inv_lbl)
+
+f_invLabelX(int x1, int x2) =>
+    invLabelPos == "Left" ? x1 : invLabelPos == "Center" ? (x1 + x2) / 2 : x2
 
 f_pushHistory(SetupHistory h) =>
     if not showHistorical
@@ -1166,6 +1189,18 @@ createC2Setup(bool isShort, int setupTime, float setupPrice, float _htfOpen, flo
                          text_font_family=font.family_monospace)
         array.push(activeTargets, td)
 
+        // Invalidation level = the C2 sweep wick (setupPrice is C2's extreme).
+        invLine = showInvLine ? line.new(setupTime, setupPrice, time, setupPrice, xloc=xloc.bar_time, color=invLineColor, width=invLineWidth, style=getLineStyle(invLineStyle)) : na
+        invLbl  = showInvLine and showInvLabel ? label.new(f_invLabelX(setupTime, time), setupPrice, "Invalidation",
+             xloc=xloc.bar_time,
+             style=invLabelStyle,
+             color=color.new(color.white, 100),
+             textcolor=invLineColor,
+             size=size.small,
+             text_font_family=font.family_monospace) : na
+        array.push(activeInvLines, invLine)
+        array.push(activeInvLabels, invLbl)
+
 if period_changed
     if prevC2Buy and bull_cisd_confirmed and not c2_already_invalidated_bull
         midPoint = not na(prevHTFHigh) and not na(prevHTFLow) ? (prevHTFHigh + prevHTFLow) / 2 : na
@@ -1251,6 +1286,8 @@ if array.size(activeLabels) > 0
             hist.c4_box     := array.get(activeC4Boxes, i)
             hist.std        := array.get(activeStdDevData, i)
             hist.tgt        := array.get(activeTargets, i)
+            hist.inv_ln     := array.get(activeInvLines, i)
+            hist.inv_lbl    := array.get(activeInvLabels, i)
 
             array.remove(activeLabels, i)
             array.remove(activeStops, i)
@@ -1268,10 +1305,19 @@ if array.size(activeLabels) > 0
             array.remove(activeInvalidated, i)
             array.remove(activeStdDevData, i)
             array.remove(activeTargets, i)
+            array.remove(activeInvLines, i)
+            array.remove(activeInvLabels, i)
             f_pushHistory(hist)
             continue
 
         if count <= 2 and not isInvalidated
+            invLn = array.size(activeInvLines) > i ? array.get(activeInvLines, i) : na
+            if not na(invLn)
+                line.set_x2(invLn, time)
+                invLb = array.size(activeInvLabels) > i ? array.get(activeInvLabels, i) : na
+                if not na(invLb)
+                    label.set_x(invLb, f_invLabelX(line.get_x1(invLn), time))
+
             stopHit = isShort ? high > stop : low < stop
             if stopHit
                 array.set(activeInvalidated, i, true)
@@ -1314,10 +1360,17 @@ if array.size(activeLabels) > 0
                         label.delete(tdr.lb_full)
                     array.remove(activeTargets, i)
 
-                // Only the XC2 marker survives invalidation — hand it to history
-                // so the Show Historical / max count settings govern it too.
+                // The XC2 marker and the breached invalidation line survive —
+                // hand them to history so the Show Historical / max count
+                // settings govern them too.
                 hist = SetupHistory.new()
                 hist.c2_lbl := lbl
+                if array.size(activeInvLines) > i
+                    hist.inv_ln := array.get(activeInvLines, i)
+                    array.remove(activeInvLines, i)
+                if array.size(activeInvLabels) > i
+                    hist.inv_lbl := array.get(activeInvLabels, i)
+                    array.remove(activeInvLabels, i)
                 f_pushHistory(hist)
 
                 array.remove(activeLabels, i)
