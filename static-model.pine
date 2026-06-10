@@ -89,7 +89,6 @@ swing_overshoot           = input.int(1, title="Overshoot (bars)", minval=0, max
 
 show_sweeps           = input.bool(true, "Sweeps", group="Sweeps", inline="swp1", tooltip="Shows sweep lines on main chart when HTF candle sweeps previous candle's high/low")
 sweep_line_color      = input.color(color.rgb(255, 123, 22), "", group="Sweeps", inline="swp1")
-sweep_text_color      = input.color(color.rgb(255, 123, 22), "Sweep Text", group="Sweeps")
 sweep_line_style_input= input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group="Sweeps", inline="swp1")
 sweep_line_width      = input.int(1, "Width", minval=1, maxval=5, group="Sweeps", inline="swp1")
 
@@ -808,12 +807,6 @@ if showHTFCandles
                                 line.set_x2(swp1.ltf_sweep_high, x2_end)
                                 line.set_y2(swp1.ltf_sweep_high, swp1.h)
 
-                            if na(swp1.ltf_sweep_high_lbl)
-                                swp1.ltf_sweep_high_lbl := label.new(swp2.h_idx, swp1.h, "Sweep", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.white, 100), textcolor=sweep_text_color, size=size.small)
-                            else
-                                label.set_x(swp1.ltf_sweep_high_lbl, swp2.h_idx)
-                                label.set_y(swp1.ltf_sweep_high_lbl, swp1.h)
-
                         if is_bear_sweep
                             x2_end = i > 0 ? (array.get(htfCandles, i - 1)).c_idx : swp2.c_idx
                             if na(swp1.ltf_sweep_low)
@@ -823,12 +816,6 @@ if showHTFCandles
                                 line.set_y1(swp1.ltf_sweep_low, swp1.l)
                                 line.set_x2(swp1.ltf_sweep_low, x2_end)
                                 line.set_y2(swp1.ltf_sweep_low, swp1.l)
-
-                            if na(swp1.ltf_sweep_low_lbl)
-                                swp1.ltf_sweep_low_lbl := label.new(swp2.l_idx, swp1.l, "Sweep", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.white, 100), textcolor=sweep_text_color, size=size.small)
-                            else
-                                label.set_x(swp1.ltf_sweep_low_lbl, swp2.l_idx)
-                                label.set_y(swp1.ltf_sweep_low_lbl, swp1.l)
 
                         array.set(htfCandles, i + 1, swp1)
 
