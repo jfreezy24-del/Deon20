@@ -1,0 +1,335 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=6
+indicator("Quantifiable Broadening Formations", "QBF", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=100)
+
+// ============================== INPUTS ==============================
+showBarLabels = input.bool(true,  "Show Bar Classification Labels (1 / 2u / 2d / 3)", group="Bar Classification")
+detectC3      = input.bool(true,  "Detect Composite 3s (C3)",                          group="Bar Classification")
+maxC3Len      = input.int(5,      "Max C3 Lookback (bars)", minval=2, maxval=10,       group="Bar Classification", tooltip="A Composite 3 is a multi-bar sequence that collectively engulfs the bar that preceded it (takes out both its high and its low) without any single bar being an outside bar.")
+showC3Box     = input.bool(true,  "Highlight C3 Range",                                group="Bar Classification")
+
+showSubs      = input.bool(true,  "Show Sub / Internal Formations", group="Formations", tooltip="A new 3 or C3 that triggers strictly inside the active major formation starts a nested sub-formation.")
+maxStaleBars  = input.int(150,    "End Formation After N Bars Without Expansion", minval=10, group="Formations")
+
+showTests     = input.bool(true,  "Show Boundary Test Dots",        group="Signals", tooltip="A test = price wicks through a formation boundary but closes back inside.")
+showBreakouts = input.bool(true,  "Show Breakout / Reclaim Labels", group="Signals", tooltip="Breakout = close through a formation boundary. Reclaim = a later close back through the breakout level.")
+
+majorColor    = input.color(color.new(color.blue, 0),  "Major BF Lines",  group="Style")
+subColor      = input.color(color.new(color.gray, 30), "Sub BF Lines",    group="Style")
+majorWidth    = input.int(2, "Major Line Width", minval=1, maxval=5,      group="Style")
+projectLines  = input.bool(true, "Project Lines Forward",                 group="Style")
+upTestColor   = input.color(color.red,   "Upper Test Dot", group="Style")
+dnTestColor   = input.color(color.green, "Lower Test Dot", group="Style")
+c3Color       = input.color(color.orange, "C3 Highlight",  group="Style")
+
+showStats     = input.bool(true, "Show Statistics Table", group="Statistics")
+
+// ====================== BAR CLASSIFICATION (TheStrat) ======================
+bool hasPrev = not na(high[1])
+bool is1  = hasPrev and high <= high[1] and low >= low[1]
+bool is2u = hasPrev and high >  high[1] and low >= low[1]
+bool is2d = hasPrev and low  <  low[1]  and high <= high[1]
+bool is3  = hasPrev and high >  high[1] and low  <  low[1]
+
+// ====================== COMPOSITE 3 DETECTION ======================
+// A C3 completes on the bar where a window of k bars first collectively
+// engulfs the reference bar (the bar immediately before the window),
+// breaking both its high and its low, while no engulf existed one bar earlier.
+bool  c3Now = false
+int   c3Len = 0
+float c3Hi  = na
+float c3Lo  = na
+if detectC3 and not is3 and bar_index > maxC3Len
+    for k = 2 to maxC3Len
+        float winH = high
+        float winL = low
+        for i = 1 to k - 1
+            winH := math.max(winH, high[i])
+            winL := math.min(winL, low[i])
+        bool engulfNow = winH > high[k] and winL < low[k]
+        float prevH = high[1]
+        float prevL = low[1]
+        if k > 2
+            for i = 2 to k - 1
+                prevH := math.max(prevH, high[i])
+                prevL := math.min(prevL, low[i])
+        bool engulfBefore = prevH > high[k] and prevL < low[k]
+        if engulfNow and not engulfBefore
+            c3Now := true
+            c3Len := k
+            c3Hi  := winH
+            c3Lo  := winL
+            break
+
+// ====================== FORMATION OBJECT ======================
+type BF
+    bool  active     = false
+    bool  isSub      = false
+    int   startBar   = na
+    float hi         = na
+    float lo         = na
+    int   upBar1     = na
+    float upPr1      = na
+    int   upBar2     = na
+    float upPr2      = na
+    int   dnBar1     = na
+    float dnPr1      = na
+    int   dnBar2     = na
+    float dnPr2      = na
+    int   upCount    = 0
+    int   dnCount    = 0
+    int   lastExpBar = na
+    int   breakDir   = 0
+    float breakLvl   = na
+    line  projUp     = na
+    line  projDn     = na
+
+finalize(BF b) =>
+    b.active := false
+    if not na(b.projUp)
+        line.delete(b.projUp)
+        b.projUp := na
+    if not na(b.projDn)
+        line.delete(b.projDn)
+        b.projDn := na
+
+// Projected value of the diverging boundary lines at the current bar
+projUpVal(BF b) =>
+    b.upCount >= 2 ? b.upPr2 + (b.upPr2 - b.upPr1) / (b.upBar2 - b.upBar1) * (bar_index - b.upBar2) : na
+
+projDnVal(BF b) =>
+    b.dnCount >= 2 ? b.dnPr2 + (b.dnPr2 - b.dnPr1) / (b.dnBar2 - b.dnBar1) * (bar_index - b.dnBar2) : na
+
+addUpPoint(BF b, float price) =>
+    color col = b.isSub ? subColor : majorColor
+    int   w   = b.isSub ? 1 : majorWidth
+    line.new(b.upBar2, b.upPr2, bar_index, price, color=col, width=w)
+    b.upBar1 := b.upBar2
+    b.upPr1  := b.upPr2
+    b.upBar2 := bar_index
+    b.upPr2  := price
+    b.upCount += 1
+    b.lastExpBar := bar_index
+    if not na(b.projUp)
+        line.delete(b.projUp)
+        b.projUp := na
+    if projectLines and not b.isSub
+        float slope = (b.upPr2 - b.upPr1) / (b.upBar2 - b.upBar1)
+        b.projUp := line.new(b.upBar2, b.upPr2, b.upBar2 + 10, b.upPr2 + slope * 10, extend=extend.right, style=line.style_dashed, color=color.new(majorColor, 50), width=1)
+
+addDnPoint(BF b, float price) =>
+    color col = b.isSub ? subColor : majorColor
+    int   w   = b.isSub ? 1 : majorWidth
+    line.new(b.dnBar2, b.dnPr2, bar_index, price, color=col, width=w)
+    b.dnBar1 := b.dnBar2
+    b.dnPr1  := b.dnPr2
+    b.dnBar2 := bar_index
+    b.dnPr2  := price
+    b.dnCount += 1
+    b.lastExpBar := bar_index
+    if not na(b.projDn)
+        line.delete(b.projDn)
+        b.projDn := na
+    if projectLines and not b.isSub
+        float slope = (b.dnPr2 - b.dnPr1) / (b.dnBar2 - b.dnBar1)
+        b.projDn := line.new(b.dnBar2, b.dnPr2, b.dnBar2 + 10, b.dnPr2 + slope * 10, extend=extend.right, style=line.style_dashed, color=color.new(majorColor, 50), width=1)
+
+// Per-bar formation update. Returns event flags:
+// [breakoutUp, breakoutDn, testUp, testDn, resolvedUp, resolvedDn, reclaimDn, reclaimUp]
+processBF(BF b) =>
+    bool boUp  = false
+    bool boDn  = false
+    bool tUp   = false
+    bool tDn   = false
+    bool brkUp = false
+    bool brkDn = false
+    bool recDn = false
+    bool recUp = false
+    if not na(b) and b.active
+        float pUp = projUpVal(b)
+        float pDn = projDnVal(b)
+        if not na(pUp) and close > pUp
+            // Close through the projected upper broadening line: upward resolution
+            brkUp := true
+            if not b.isSub and showBreakouts
+                label.new(bar_index, high, "BF BREAK ▲", style=label.style_label_down, color=color.new(color.teal, 0), textcolor=color.white, size=size.small)
+            finalize(b)
+        else if not na(pDn) and close < pDn
+            brkDn := true
+            if not b.isSub and showBreakouts
+                label.new(bar_index, low, "BF BREAK ▼", style=label.style_label_up, color=color.new(color.maroon, 0), textcolor=color.white, size=size.small)
+            finalize(b)
+        else
+            float priorHi = b.hi
+            float priorLo = b.lo
+            if high > priorHi
+                addUpPoint(b, high)
+                b.hi := high
+                if close > priorHi
+                    boUp := true
+                    b.breakDir := 1
+                    b.breakLvl := priorHi
+                    if not b.isSub and showBreakouts
+                        label.new(bar_index, high, "BO ▲", style=label.style_label_down, color=color.new(color.teal, 30), textcolor=color.white, size=size.tiny)
+                else
+                    tUp := true
+                    if not b.isSub and showTests
+                        label.new(bar_index, high, "", style=label.style_circle, color=upTestColor, size=size.tiny)
+            if low < priorLo
+                addDnPoint(b, low)
+                b.lo := low
+                if close < priorLo
+                    boDn := true
+                    b.breakDir := -1
+                    b.breakLvl := priorLo
+                    if not b.isSub and showBreakouts
+                        label.new(bar_index, low, "BO ▼", style=label.style_label_up, color=color.new(color.maroon, 30), textcolor=color.white, size=size.tiny)
+                else
+                    tDn := true
+                    if not b.isSub and showTests
+                        label.new(bar_index, low, "", style=label.style_circle, color=dnTestColor, size=size.tiny)
+            if b.active
+                if b.breakDir == 1 and close < b.breakLvl
+                    recDn := true
+                    b.breakDir := 0
+                    if not b.isSub and showBreakouts
+                        label.new(bar_index, high, "RECLAIM ▼", style=label.style_label_down, color=color.new(color.orange, 20), textcolor=color.white, size=size.tiny)
+                else if b.breakDir == -1 and close > b.breakLvl
+                    recUp := true
+                    b.breakDir := 0
+                    if not b.isSub and showBreakouts
+                        label.new(bar_index, low, "RECLAIM ▲", style=label.style_label_up, color=color.new(color.orange, 20), textcolor=color.white, size=size.tiny)
+                if bar_index - b.lastExpBar > maxStaleBars
+                    finalize(b)
+    [boUp, boDn, tUp, tDn, brkUp, brkDn, recDn, recUp]
+
+// Anchor extremes of a new formation: the trigger window plus the engulfed bar
+newBF(bool sub, int trigLen, float aHi, int aHiBar, float aLo, int aLoBar) =>
+    BF.new(active=true, isSub=sub, startBar=bar_index - trigLen, hi=aHi, lo=aLo, upBar2=aHiBar, upPr2=aHi, dnBar2=aLoBar, dnPr2=aLo, upCount=1, dnCount=1, lastExpBar=bar_index)
+
+// ====================== STATE & PER-BAR LOGIC ======================
+var BF major = na
+var BF sub   = na
+
+var int cnt1      = 0
+var int cnt2u     = 0
+var int cnt2d     = 0
+var int cnt3      = 0
+var int cntC3     = 0
+var int cntBF     = 0
+var int cntBOup   = 0
+var int cntBOdn   = 0
+var int cntTestUp = 0
+var int cntTestDn = 0
+var int cntBrkUp  = 0
+var int cntBrkDn  = 0
+
+cnt1  += is1  ? 1 : 0
+cnt2u += is2u ? 1 : 0
+cnt2d += is2d ? 1 : 0
+cnt3  += is3  ? 1 : 0
+cntC3 += c3Now ? 1 : 0
+
+// 1) Update active formations
+[mBoUp, mBoDn, mTUp, mTDn, mBrkUp, mBrkDn, mRecDn, mRecUp] = processBF(major)
+[sBoUp, sBoDn, sTUp, sTDn, sBrkUp, sBrkDn, sRecDn, sRecUp] = processBF(sub)
+
+cntBOup   += mBoUp ? 1 : 0
+cntBOdn   += mBoDn ? 1 : 0
+cntTestUp += mTUp  ? 1 : 0
+cntTestDn += mTDn  ? 1 : 0
+cntBrkUp  += mBrkUp ? 1 : 0
+cntBrkDn  += mBrkDn ? 1 : 0
+
+// 2) A sub-formation that has expanded to the major's boundaries is absorbed
+bool majorActive = not na(major) and major.active
+bool subActive   = not na(sub) and sub.active
+if subActive and majorActive and sub.hi >= major.hi and sub.lo <= major.lo
+    finalize(sub)
+    subActive := false
+// The sub does not outlive the major
+if subActive and not majorActive
+    finalize(sub)
+    subActive := false
+
+// 3) New formation triggers
+bool evNewBF = false
+if is3 or c3Now
+    int trigLen = is3 ? 1 : c3Len
+    float aHi = high
+    int   aHiBar = bar_index
+    float aLo = low
+    int   aLoBar = bar_index
+    for i = 1 to trigLen
+        if high[i] > aHi
+            aHi    := high[i]
+            aHiBar := bar_index - i
+        if low[i] < aLo
+            aLo    := low[i]
+            aLoBar := bar_index - i
+    if not majorActive
+        major := newBF(false, trigLen, aHi, aHiBar, aLo, aLoBar)
+        evNewBF := true
+        cntBF += 1
+    else if showSubs and aHi < major.hi and aLo > major.lo
+        if subActive
+            finalize(sub)
+        sub := newBF(true, trigLen, aHi, aHiBar, aLo, aLoBar)
+        evNewBF := true
+        cntBF += 1
+
+// ====================== VISUALS ======================
+if showBarLabels
+    string txt = is3 ? "3" : is2u ? "2u" : is2d ? "2d" : is1 ? "1" : ""
+    color  tcol = is3 ? c3Color : is2u ? color.teal : is2d ? color.red : color.gray
+    if txt != ""
+        label.new(bar_index, na, txt, yloc=yloc.belowbar, style=label.style_none, textcolor=tcol, size=size.tiny)
+
+if c3Now
+    label.new(bar_index, na, "C3", yloc=yloc.abovebar, style=label.style_none, textcolor=c3Color, size=size.small)
+    if showC3Box
+        box.new(bar_index - c3Len, c3Hi, bar_index, c3Lo, border_color=color.new(c3Color, 40), bgcolor=color.new(c3Color, 88))
+
+// ====================== STATISTICS TABLE ======================
+var table st = showStats ? table.new(position.top_right, 2, 13, bgcolor=color.new(color.black, 75), border_width=1, border_color=color.new(color.gray, 70)) : na
+if showStats and barstate.islast
+    int total = math.max(cnt1 + cnt2u + cnt2d + cnt3, 1)
+    int resTotal = math.max(cntBrkUp + cntBrkDn, 1)
+    table.cell(st, 0, 0, "QBF Statistics", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 0, "", text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 1, "Inside (1)",  text_color=color.gray,  text_size=size.tiny)
+    table.cell(st, 1, 1, str.tostring(cnt1)  + "  (" + str.tostring(100.0 * cnt1  / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 2, "2 Up",        text_color=color.teal,  text_size=size.tiny)
+    table.cell(st, 1, 2, str.tostring(cnt2u) + "  (" + str.tostring(100.0 * cnt2u / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 3, "2 Down",      text_color=color.red,   text_size=size.tiny)
+    table.cell(st, 1, 3, str.tostring(cnt2d) + "  (" + str.tostring(100.0 * cnt2d / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 4, "Outside (3)", text_color=c3Color,     text_size=size.tiny)
+    table.cell(st, 1, 4, str.tostring(cnt3)  + "  (" + str.tostring(100.0 * cnt3  / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 5, "Composite 3s", text_color=c3Color,    text_size=size.tiny)
+    table.cell(st, 1, 5, str.tostring(cntC3), text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 6, "Formations",  text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 6, str.tostring(cntBF), text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 7, "Breakouts ▲ / ▼", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 7, str.tostring(cntBOup) + " / " + str.tostring(cntBOdn), text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 8, "Tests ▲ / ▼", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 8, str.tostring(cntTestUp) + " / " + str.tostring(cntTestDn), text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 9, "BF Breaks ▲ / ▼", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 9, str.tostring(cntBrkUp) + " / " + str.tostring(cntBrkDn), text_color=color.white, text_size=size.tiny)
+    table.cell(st, 0, 10, "Resolution Bias", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 10, str.tostring(100.0 * cntBrkUp / resTotal, "#.#") + "% up", text_color=color.white, text_size=size.tiny)
+    bool ma = not na(major) and major.active
+    table.cell(st, 0, 11, "Active BF", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 11, ma ? str.tostring(major.hi, format.mintick) + " / " + str.tostring(major.lo, format.mintick) : "—", text_color=ma ? majorColor : color.gray, text_size=size.tiny)
+    bool sa = not na(sub) and sub.active
+    table.cell(st, 0, 12, "Active Sub BF", text_color=color.white, text_size=size.tiny)
+    table.cell(st, 1, 12, sa ? str.tostring(sub.hi, format.mintick) + " / " + str.tostring(sub.lo, format.mintick) : "—", text_color=sa ? subColor : color.gray, text_size=size.tiny)
+
+// ====================== ALERTS ======================
+alertcondition(is3,                "Outside Bar (3)",       "Outside bar detected — single-bar expansion")
+alertcondition(c3Now,              "Composite 3 (C3)",      "Composite 3 detected — multi-bar expansion pattern")
+alertcondition(evNewBF,            "New BF Started",        "A new broadening formation has been triggered")
+alertcondition(mBoUp or mBoDn,     "BF Boundary Break",     "Price closed through a broadening formation boundary")
+alertcondition(mBrkUp or mBrkDn,   "BF Resolved",           "Price closed through the projected broadening line — formation resolved")
+alertcondition(mTUp or mTDn,       "BF Boundary Test",      "Price wicked through a formation boundary and closed back inside")
+alertcondition(mRecUp or mRecDn,   "BF Reclaim",            "Price reclaimed a broken formation boundary")
