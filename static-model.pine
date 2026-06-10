@@ -80,6 +80,9 @@ showTargetEQ     = input.bool(true, "50% Target (C1 EQ)", group="C2 Targets", in
 showTargetFull   = input.bool(true, "100% Target (C1 High/Low)", group="C2 Targets", inline="tgt2")
 showTargetLabels = input.bool(true, "Show Target Labels", group="C2 Targets")
 
+showHistorical = input.bool(true, "Show Historical Setups", group="Setup History", tooltip="Keep the drawings of completed or invalidated C2 setups on the chart. When off, a setup's drawings are removed as soon as it finishes its lifecycle or gets stopped out (XC2).")
+maxHistorical  = input.int(5, "Max Historical Setups", minval=1, maxval=50, group="Setup History", tooltip="Maximum number of historical setups kept on the chart at the same time. The oldest ones are removed first. Active setups are always shown and don't count toward this limit.")
+
 show_swing_lines          = input.bool(true, title="Show Confirmed Swing Lines", group="HTF Swings", tooltip="Draws horizontal lines at confirmed swing highs and lows (swept level with rejection close)")
 swing_line_width          = input.int(1, title="Line Width", minval=1, maxval=5, group="HTF Swings")
 swing_line_style_input    = input.string("Solid", title="Line Style", options=["Solid", "Dashed", "Dotted"], group="HTF Swings")
@@ -176,6 +179,18 @@ type TargetData
     label lb_full
     float p_full
     bool  hit_full
+
+type SetupHistory
+    label c2_lbl
+    line  open_ln
+    line  mid_ln
+    box   c3_box
+    label c4_lbl
+    line  c4_open_ln
+    line  c4_mid_ln
+    box   c4_box
+    StdDevData std
+    TargetData tgt
 
 type Candle
     float o
@@ -372,6 +387,7 @@ var array<bool>  activeCisdConfirmed = array.new<bool>()
 var array<bool>  activeInvalidated   = array.new<bool>()
 var array<StdDevData> activeStdDevData = array.new<StdDevData>()
 var array<TargetData> activeTargets = array.new<TargetData>()
+var array<SetupHistory> historySetups = array.new<SetupHistory>()
 
 var array<cisdNeo> cisdLevelsBu = array.new<cisdNeo>()
 var array<cisdNeo> cisdLevelsBe = array.new<cisdNeo>()
@@ -997,6 +1013,43 @@ if showCISDNeo and cisdMode == "Hybrid"
         bearState = bear_cisd_confirmed ? 2 : (htf_count_since_sweep >= 2 ? 1 : 0)
         f_setLastCISDStyle(false, bearState)
 
+f_deleteHistory(SetupHistory h) =>
+    if not na(h.c2_lbl)
+        label.delete(h.c2_lbl)
+    if not na(h.open_ln)
+        line.delete(h.open_ln)
+    if not na(h.mid_ln)
+        line.delete(h.mid_ln)
+    if not na(h.c3_box)
+        box.delete(h.c3_box)
+    if not na(h.c4_lbl)
+        label.delete(h.c4_lbl)
+    if not na(h.c4_open_ln)
+        line.delete(h.c4_open_ln)
+    if not na(h.c4_mid_ln)
+        line.delete(h.c4_mid_ln)
+    if not na(h.c4_box)
+        box.delete(h.c4_box)
+    if not na(h.std)
+        for ln in h.std.lines
+            line.delete(ln)
+        for lb in h.std.labels
+            label.delete(lb)
+    if not na(h.tgt)
+        line.delete(h.tgt.ln_eq)
+        label.delete(h.tgt.lb_eq)
+        line.delete(h.tgt.ln_full)
+        label.delete(h.tgt.lb_full)
+
+f_pushHistory(SetupHistory h) =>
+    if not showHistorical
+        f_deleteHistory(h)
+    else
+        array.push(historySetups, h)
+        while array.size(historySetups) > maxHistorical
+            old = array.shift(historySetups)
+            f_deleteHistory(old)
+
 createC2Setup(bool isShort, int setupTime, float setupPrice, float _htfOpen, float midPoint, float cisdLevel, int cisdIndex, int currentCount, float tgtEQ, float tgtFull, int tgtFullTime) =>
     shouldCreate = biasFilter == "Neutral" or (biasFilter == "Bullish" and not isShort) or (biasFilter == "Bearish" and isShort)
     if shouldCreate
@@ -1184,6 +1237,40 @@ if array.size(activeLabels) > 0
                     array.set(activeC4MidLines, i, c4MidLine)
                     array.set(activeC4Boxes, i, c4Box)
 
+        // Setup lifecycle is over (stop checks end at count 2, target extension
+        // at count 4) — retire it into history so the cap can manage it.
+        if count > 4
+            hist = SetupHistory.new()
+            hist.c2_lbl     := lbl
+            hist.open_ln    := array.get(activeOpenLines, i)
+            hist.mid_ln     := array.get(activeMidLines, i)
+            hist.c3_box     := array.get(activeC3Boxes, i)
+            hist.c4_lbl     := array.get(activeC4Labels, i)
+            hist.c4_open_ln := array.get(activeC4OpenLines, i)
+            hist.c4_mid_ln  := array.get(activeC4MidLines, i)
+            hist.c4_box     := array.get(activeC4Boxes, i)
+            hist.std        := array.get(activeStdDevData, i)
+            hist.tgt        := array.get(activeTargets, i)
+
+            array.remove(activeLabels, i)
+            array.remove(activeStops, i)
+            array.remove(activeShorts, i)
+            array.remove(activeCounts, i)
+            array.remove(activeOpenLines, i)
+            array.remove(activeMidLines, i)
+            array.remove(activeC3Boxes, i)
+            array.remove(activeC4Labels, i)
+            array.remove(activeC4OpenLines, i)
+            array.remove(activeC4MidLines, i)
+            array.remove(activeC4Boxes, i)
+            array.remove(activeC3Mids, i)
+            array.remove(activeCisdConfirmed, i)
+            array.remove(activeInvalidated, i)
+            array.remove(activeStdDevData, i)
+            array.remove(activeTargets, i)
+            f_pushHistory(hist)
+            continue
+
         if count <= 2 and not isInvalidated
             stopHit = isShort ? high > stop : low < stop
             if stopHit
@@ -1226,6 +1313,12 @@ if array.size(activeLabels) > 0
                         line.delete(tdr.ln_full)
                         label.delete(tdr.lb_full)
                     array.remove(activeTargets, i)
+
+                // Only the XC2 marker survives invalidation — hand it to history
+                // so the Show Historical / max count settings govern it too.
+                hist = SetupHistory.new()
+                hist.c2_lbl := lbl
+                f_pushHistory(hist)
 
                 array.remove(activeLabels, i)
                 array.remove(activeStops, i)
