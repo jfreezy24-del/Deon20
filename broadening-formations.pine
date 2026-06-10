@@ -4,16 +4,19 @@
 indicator("Quantifiable Broadening Formations", "QBF", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=100)
 
 // ============================== INPUTS ==============================
-showBarLabels = input.bool(true,  "Show Bar Classification Labels (1 / 2u / 2d / 3)", group="Bar Classification")
+barLabelMode  = input.string("3s only", "Bar Classification Labels", options=["Off", "3s only", "All bars"], group="Bar Classification")
 detectC3      = input.bool(true,  "Detect Composite 3s (C3)",                          group="Bar Classification")
 maxC3Len      = input.int(5,      "Max C3 Lookback (bars)", minval=2, maxval=10,       group="Bar Classification", tooltip="A Composite 3 is a multi-bar sequence that collectively engulfs the bar that preceded it (takes out both its high and its low) without any single bar being an outside bar.")
-showC3Box     = input.bool(true,  "Highlight C3 Range",                                group="Bar Classification")
+showC3Box     = input.bool(false, "Highlight C3 Range",                                group="Bar Classification")
 
-showSubs      = input.bool(true,  "Show Sub / Internal Formations", group="Formations", tooltip="A new 3 or C3 that triggers strictly inside the active major formation starts a nested sub-formation.")
+showSubs      = input.bool(false, "Show Sub / Internal Formations", group="Formations", tooltip="A new 3 or C3 that triggers strictly inside the active major formation starts a nested sub-formation.")
+keepHistory   = input.bool(false, "Keep Completed Formations on Chart", group="Formations", tooltip="Off: only the active formation is drawn; lines of resolved or expired formations are removed automatically.")
 maxStaleBars  = input.int(150,    "End Formation After N Bars Without Expansion", minval=10, group="Formations")
 
-showTests     = input.bool(true,  "Show Boundary Test Dots",        group="Signals", tooltip="A test = price wicks through a formation boundary but closes back inside.")
-showBreakouts = input.bool(true,  "Show Breakout / Reclaim Labels", group="Signals", tooltip="Breakout = close through a formation boundary. Reclaim = a later close back through the breakout level.")
+showTests      = input.bool(true,  "Show Boundary Test Dots",  group="Signals", tooltip="A test = price wicks through a formation boundary but closes back inside.")
+showBO         = input.bool(false, "Show Boundary Breakout (BO) Labels", group="Signals", tooltip="Labels every close-through boundary expansion. Off by default — these are frequent.")
+showResolution = input.bool(true,  "Show BF Break Labels",     group="Signals", tooltip="Labels the close through the projected broadening line that resolves the formation.")
+showReclaimLbl = input.bool(true,  "Show Reclaim Labels",      group="Signals")
 
 majorColor    = input.color(color.new(color.blue, 0),  "Major BF Lines",  group="Style")
 subColor      = input.color(color.new(color.gray, 30), "Sub BF Lines",    group="Style")
@@ -33,8 +36,9 @@ stopBufMult     = input.float(0.25, "Stop Buffer (ATR x)", minval=0.0, step=0.05
 moveBE          = input.bool(true, "Move Stop to Breakeven at T1", group="Entries & Exits")
 maxBarsInTrade  = input.int(0,    "Time Stop (bars, 0 = off)", minval=0, group="Entries & Exits")
 showTrades      = input.bool(true, "Draw Entry / Stop / Target Lines", group="Entries & Exits")
+keepTradeLines  = input.bool(false, "Keep Closed Trade Lines", group="Entries & Exits", tooltip="Off: entry/stop/target lines are removed when a trade closes; only the entry and exit labels remain.")
 
-showStats     = input.bool(true, "Show Statistics Table", group="Statistics")
+statsMode     = input.string("Compact", "Statistics Table", options=["Off", "Compact", "Full"], group="Statistics")
 
 // ====================== BAR CLASSIFICATION (TheStrat) ======================
 bool hasPrev = not na(high[1])
@@ -95,6 +99,7 @@ type BF
     float breakLvl   = na
     line  projUp     = na
     line  projDn     = na
+    array<line> segs = na
 
 finalize(BF b) =>
     b.active := false
@@ -104,6 +109,10 @@ finalize(BF b) =>
     if not na(b.projDn)
         line.delete(b.projDn)
         b.projDn := na
+    if not keepHistory and not na(b.segs)
+        for ln in b.segs
+            line.delete(ln)
+        array.clear(b.segs)
 
 // Projected value of the diverging boundary lines at the current bar
 projUpVal(BF b) =>
@@ -115,7 +124,9 @@ projDnVal(BF b) =>
 addUpPoint(BF b, float price) =>
     color col = b.isSub ? subColor : majorColor
     int   w   = b.isSub ? 1 : majorWidth
-    line.new(b.upBar2, b.upPr2, bar_index, price, color=col, width=w)
+    line seg = line.new(b.upBar2, b.upPr2, bar_index, price, color=col, width=w)
+    if not na(b.segs)
+        array.push(b.segs, seg)
     b.upBar1 := b.upBar2
     b.upPr1  := b.upPr2
     b.upBar2 := bar_index
@@ -132,7 +143,9 @@ addUpPoint(BF b, float price) =>
 addDnPoint(BF b, float price) =>
     color col = b.isSub ? subColor : majorColor
     int   w   = b.isSub ? 1 : majorWidth
-    line.new(b.dnBar2, b.dnPr2, bar_index, price, color=col, width=w)
+    line seg = line.new(b.dnBar2, b.dnPr2, bar_index, price, color=col, width=w)
+    if not na(b.segs)
+        array.push(b.segs, seg)
     b.dnBar1 := b.dnBar2
     b.dnPr1  := b.dnPr2
     b.dnBar2 := bar_index
@@ -163,12 +176,12 @@ processBF(BF b) =>
         if not na(pUp) and close > pUp
             // Close through the projected upper broadening line: upward resolution
             brkUp := true
-            if not b.isSub and showBreakouts
+            if not b.isSub and showResolution
                 label.new(bar_index, high, "BF BREAK ▲", style=label.style_label_down, color=color.new(color.teal, 0), textcolor=color.white, size=size.small)
             finalize(b)
         else if not na(pDn) and close < pDn
             brkDn := true
-            if not b.isSub and showBreakouts
+            if not b.isSub and showResolution
                 label.new(bar_index, low, "BF BREAK ▼", style=label.style_label_up, color=color.new(color.maroon, 0), textcolor=color.white, size=size.small)
             finalize(b)
         else
@@ -181,7 +194,7 @@ processBF(BF b) =>
                     boUp := true
                     b.breakDir := 1
                     b.breakLvl := priorHi
-                    if not b.isSub and showBreakouts
+                    if not b.isSub and showBO
                         label.new(bar_index, high, "BO ▲", style=label.style_label_down, color=color.new(color.teal, 30), textcolor=color.white, size=size.tiny)
                 else
                     tUp := true
@@ -194,7 +207,7 @@ processBF(BF b) =>
                     boDn := true
                     b.breakDir := -1
                     b.breakLvl := priorLo
-                    if not b.isSub and showBreakouts
+                    if not b.isSub and showBO
                         label.new(bar_index, low, "BO ▼", style=label.style_label_up, color=color.new(color.maroon, 30), textcolor=color.white, size=size.tiny)
                 else
                     tDn := true
@@ -204,12 +217,12 @@ processBF(BF b) =>
                 if b.breakDir == 1 and close < b.breakLvl
                     recDn := true
                     b.breakDir := 0
-                    if not b.isSub and showBreakouts
+                    if not b.isSub and showReclaimLbl
                         label.new(bar_index, high, "RECLAIM ▼", style=label.style_label_down, color=color.new(color.orange, 20), textcolor=color.white, size=size.tiny)
                 else if b.breakDir == -1 and close > b.breakLvl
                     recUp := true
                     b.breakDir := 0
-                    if not b.isSub and showBreakouts
+                    if not b.isSub and showReclaimLbl
                         label.new(bar_index, low, "RECLAIM ▲", style=label.style_label_up, color=color.new(color.orange, 20), textcolor=color.white, size=size.tiny)
                 if bar_index - b.lastExpBar > maxStaleBars
                     finalize(b)
@@ -217,7 +230,7 @@ processBF(BF b) =>
 
 // Anchor extremes of a new formation: the trigger window plus the engulfed bar
 newBF(bool sub, int trigLen, float aHi, int aHiBar, float aLo, int aLoBar) =>
-    BF.new(active=true, isSub=sub, startBar=bar_index - trigLen, hi=aHi, lo=aLo, upBar2=aHiBar, upPr2=aHi, dnBar2=aLoBar, dnPr2=aLo, upCount=1, dnCount=1, lastExpBar=bar_index)
+    BF.new(active=true, isSub=sub, startBar=bar_index - trigLen, hi=aHi, lo=aLo, upBar2=aHiBar, upPr2=aHi, dnBar2=aLoBar, dnPr2=aLo, upCount=1, dnCount=1, lastExpBar=bar_index, segs=array.new<line>())
 
 // ====================== TRADE ENGINE ======================
 type Trade
@@ -267,6 +280,19 @@ closeTrade(Trade t, float px, string tag) =>
     if showTrades
         string txt = tag + " " + (t.exitR >= 0 ? "+" : "") + str.tostring(t.exitR, "#.##") + "R"
         label.new(bar_index, px, txt, style=label.style_label_left, color=t.exitR >= 0 ? color.new(color.green, 20) : color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+    if not keepTradeLines
+        if not na(t.eLine)
+            line.delete(t.eLine)
+            t.eLine := na
+        if not na(t.sLine)
+            line.delete(t.sLine)
+            t.sLine := na
+        if not na(t.t1Line)
+            line.delete(t.t1Line)
+            t.t1Line := na
+        if not na(t.t2Line)
+            line.delete(t.t2Line)
+            t.t2Line := na
 
 // ====================== STATE & PER-BAR LOGIC ======================
 var BF major = na
@@ -479,8 +505,8 @@ if is3 or c3Now
         cntBF += 1
 
 // ====================== VISUALS ======================
-if showBarLabels
-    string txt = is3 ? "3" : is2u ? "2u" : is2d ? "2d" : is1 ? "1" : ""
+if barLabelMode != "Off"
+    string txt = is3 ? "3" : barLabelMode == "All bars" ? (is2u ? "2u" : is2d ? "2d" : is1 ? "1" : "") : ""
     color  tcol = is3 ? c3Color : is2u ? color.teal : is2d ? color.red : color.gray
     if txt != ""
         label.new(bar_index, na, txt, yloc=yloc.belowbar, style=label.style_none, textcolor=tcol, size=size.tiny)
@@ -491,62 +517,57 @@ if c3Now
         box.new(bar_index - c3Len, c3Hi, bar_index, c3Lo, border_color=color.new(c3Color, 40), bgcolor=color.new(c3Color, 88))
 
 // ====================== STATISTICS TABLE ======================
-var table st = showStats ? table.new(position.top_right, 2, 18, bgcolor=color.new(color.black, 75), border_width=1, border_color=color.new(color.gray, 70)) : na
-if showStats and barstate.islast
+statRow(table t, int r, string k, string v, color kc, color vc) =>
+    table.cell(t, 0, r, k, text_color=kc, text_size=size.tiny)
+    table.cell(t, 1, r, v, text_color=vc, text_size=size.tiny)
+    r + 1
+
+var table st = statsMode != "Off" ? table.new(position.top_right, 2, statsMode == "Full" ? 18 : 7, bgcolor=color.new(color.black, 75), border_width=1, border_color=color.new(color.gray, 70)) : na
+if statsMode != "Off" and barstate.islast
+    bool full = statsMode == "Full"
     int total = math.max(cnt1 + cnt2u + cnt2d + cnt3, 1)
     int resTotal = math.max(cntBrkUp + cntBrkDn, 1)
-    table.cell(st, 0, 0, "QBF Statistics", text_color=color.white, text_size=size.small)
-    table.cell(st, 1, 0, "", text_color=color.white, text_size=size.small)
-    table.cell(st, 0, 1, "Inside (1)",  text_color=color.gray,  text_size=size.tiny)
-    table.cell(st, 1, 1, str.tostring(cnt1)  + "  (" + str.tostring(100.0 * cnt1  / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 2, "2 Up",        text_color=color.teal,  text_size=size.tiny)
-    table.cell(st, 1, 2, str.tostring(cnt2u) + "  (" + str.tostring(100.0 * cnt2u / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 3, "2 Down",      text_color=color.red,   text_size=size.tiny)
-    table.cell(st, 1, 3, str.tostring(cnt2d) + "  (" + str.tostring(100.0 * cnt2d / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 4, "Outside (3)", text_color=c3Color,     text_size=size.tiny)
-    table.cell(st, 1, 4, str.tostring(cnt3)  + "  (" + str.tostring(100.0 * cnt3  / total, "#.#") + "%)", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 5, "Composite 3s", text_color=c3Color,    text_size=size.tiny)
-    table.cell(st, 1, 5, str.tostring(cntC3), text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 6, "Formations",  text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 6, str.tostring(cntBF), text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 7, "Breakouts ▲ / ▼", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 7, str.tostring(cntBOup) + " / " + str.tostring(cntBOdn), text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 8, "Tests ▲ / ▼", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 8, str.tostring(cntTestUp) + " / " + str.tostring(cntTestDn), text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 9, "BF Breaks ▲ / ▼", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 9, str.tostring(cntBrkUp) + " / " + str.tostring(cntBrkDn), text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 10, "Resolution Bias", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 10, str.tostring(100.0 * cntBrkUp / resTotal, "#.#") + "% up", text_color=color.white, text_size=size.tiny)
+    int decided = math.max(cntWins + cntLoss, 1)
+    int r = 0
+    table.cell(st, 0, r, "QBF Statistics", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, r, "", text_color=color.white, text_size=size.small)
+    r += 1
+    if full
+        r := statRow(st, r, "Inside (1)",  str.tostring(cnt1)  + "  (" + str.tostring(100.0 * cnt1  / total, "#.#") + "%)", color.gray, color.white)
+        r := statRow(st, r, "2 Up",        str.tostring(cnt2u) + "  (" + str.tostring(100.0 * cnt2u / total, "#.#") + "%)", color.teal, color.white)
+        r := statRow(st, r, "2 Down",      str.tostring(cnt2d) + "  (" + str.tostring(100.0 * cnt2d / total, "#.#") + "%)", color.red, color.white)
+        r := statRow(st, r, "Outside (3)", str.tostring(cnt3)  + "  (" + str.tostring(100.0 * cnt3  / total, "#.#") + "%)", c3Color, color.white)
+        r := statRow(st, r, "Composite 3s", str.tostring(cntC3), c3Color, color.white)
+    r := statRow(st, r, "Formations", str.tostring(cntBF), color.white, color.white)
+    if full
+        r := statRow(st, r, "Breakouts ▲ / ▼", str.tostring(cntBOup) + " / " + str.tostring(cntBOdn), color.white, color.white)
+        r := statRow(st, r, "Tests ▲ / ▼", str.tostring(cntTestUp) + " / " + str.tostring(cntTestDn), color.white, color.white)
+        r := statRow(st, r, "BF Breaks ▲ / ▼", str.tostring(cntBrkUp) + " / " + str.tostring(cntBrkDn), color.white, color.white)
+        r := statRow(st, r, "Resolution Bias", str.tostring(100.0 * cntBrkUp / resTotal, "#.#") + "% up", color.white, color.white)
     string maTxt = "—"
     color  maCol = color.gray
     if not na(major) and major.active
         maTxt := str.tostring(major.hi, format.mintick) + " / " + str.tostring(major.lo, format.mintick)
         maCol := majorColor
-    table.cell(st, 0, 11, "Active BF", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 11, maTxt, text_color=maCol, text_size=size.tiny)
-    string saTxt = "—"
-    color  saCol = color.gray
-    if not na(sub) and sub.active
-        saTxt := str.tostring(sub.hi, format.mintick) + " / " + str.tostring(sub.lo, format.mintick)
-        saCol := subColor
-    table.cell(st, 0, 12, "Active Sub BF", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 12, saTxt, text_color=saCol, text_size=size.tiny)
-    int decided = math.max(cntWins + cntLoss, 1)
-    table.cell(st, 0, 13, "Trades (closed)", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 13, str.tostring(cntTrades), text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 14, "Win / Loss / Scratch", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 14, str.tostring(cntWins) + " / " + str.tostring(cntLoss) + " / " + str.tostring(cntScratch), text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 15, "Win Rate", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 15, str.tostring(100.0 * cntWins / decided, "#.#") + "%", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 0, 16, "Total R", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 16, (sumR >= 0 ? "+" : "") + str.tostring(sumR, "#.##") + "R", text_color=sumR >= 0 ? color.green : color.red, text_size=size.tiny)
+    r := statRow(st, r, "Active BF", maTxt, color.white, maCol)
+    if full
+        string saTxt = "—"
+        color  saCol = color.gray
+        if not na(sub) and sub.active
+            saTxt := str.tostring(sub.hi, format.mintick) + " / " + str.tostring(sub.lo, format.mintick)
+            saCol := subColor
+        r := statRow(st, r, "Active Sub BF", saTxt, color.white, saCol)
+    r := statRow(st, r, "Trades (closed)", str.tostring(cntTrades), color.white, color.white)
+    if full
+        r := statRow(st, r, "Win / Loss / Scratch", str.tostring(cntWins) + " / " + str.tostring(cntLoss) + " / " + str.tostring(cntScratch), color.white, color.white)
+    r := statRow(st, r, "Win Rate", str.tostring(100.0 * cntWins / decided, "#.#") + "%", color.white, color.white)
+    r := statRow(st, r, "Total R", (sumR >= 0 ? "+" : "") + str.tostring(sumR, "#.##") + "R", color.white, sumR >= 0 ? color.green : color.red)
     string trTxt = "—"
     color  trCol = color.gray
     if not na(tr) and tr.open
         trTxt := (tr.dir == 1 ? "Long " : "Short ") + tr.kind + " @ " + str.tostring(tr.entry, format.mintick)
         trCol := tr.dir == 1 ? color.green : color.red
-    table.cell(st, 0, 17, "Open Trade", text_color=color.white, text_size=size.tiny)
-    table.cell(st, 1, 17, trTxt, text_color=trCol, text_size=size.tiny)
+    r := statRow(st, r, "Open Trade", trTxt, color.white, trCol)
 
 // ====================== ALERTS ======================
 alertcondition(is3,                "Outside Bar (3)",       "Outside bar detected — single-bar expansion")
