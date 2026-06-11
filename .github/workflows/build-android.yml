@@ -1,0 +1,60 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --no-install
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+
+      - name: Build release APK
+        run: cd android && ./gradlew assembleRelease --no-daemon
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk StratScanner.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StratScanner-apk
+          path: strat-scanner/StratScanner.apk
+
+      - name: Publish GitHub Release with APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="android-build-${{ github.run_number }}"
+          gh release create "$TAG" StratScanner.apk \
+            --repo "${{ github.repository }}" \
+            --title "Strat Scanner Android build ${{ github.run_number }}" \
+            --notes "Standalone Android APK. Download StratScanner.apk on your phone and open it to install (allow 'install from unknown sources' if prompted). Installs as an upgrade over previous builds — your watchlist is preserved."

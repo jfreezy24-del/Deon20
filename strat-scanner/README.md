@@ -73,6 +73,24 @@ src/components/             — signal cards + FTFC strip
 src/__tests__/strat.test.ts — engine unit tests (npm test)
 ```
 
+## Standalone Android app (no Expo Go)
+
+The *Build Android APK* GitHub Actions workflow produces an installable APK:
+
+1. Repo → Actions → **Build Android APK** → Run workflow.
+2. When it finishes (~10–15 min), open the repo's **Releases** page on your
+   phone and download `StratScanner.apk` from the newest release.
+3. Open the downloaded file to install (Android will ask you to allow
+   installs from your browser the first time).
+
+Each build installs as an upgrade over the previous one, so your watchlist
+survives updates. Note: builds are signed with the standard Android debug
+keystore — fine for personal sideloading, but generate a private keystore
+before ever distributing the app publicly.
+
+Standalone **iOS** builds require an Apple Developer account ($99/year);
+without one, use Expo Go (above) on iPhone.
+
 ## Real-time alerts with the app closed (alert server)
 
 The same engine runs headless on a schedule via GitHub Actions
