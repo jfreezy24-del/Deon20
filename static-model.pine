@@ -2,7 +2,9 @@
 // © staticdotsol
 
 //@version=6
-strategy("STATIC MODEL [Strategy]", overlay=true, dynamic_requests=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, pyramiding=0)
+// calc_on_every_tick=false (explicit): orders are evaluated on confirmed bars
+// only, so realtime execution matches the bar-by-bar backtest.
+strategy("STATIC MODEL [Strategy]", overlay=true, dynamic_requests=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, pyramiding=0, calc_on_every_tick=false)
 
 C2 = true
 
@@ -1016,7 +1018,13 @@ if timeframe.change(auto_tf) and (c2_had_bull_sweep or c2_had_bear_sweep)
         c2_already_invalidated_bull := false
         c2_already_invalidated_bear := false
 
-htf_c2_close = request.security(syminfo.tickerid, auto_tf, close[1], lookahead=barmerge.lookahead_off)
+// Non-repainting CISD confirmation: c1 holds the close of the HTF candle that
+// just completed, computed on the chart timeframe at the boundary. The former
+// request.security(close[1], lookahead_off) returned a value one full HTF
+// candle older on historical bars than in realtime, so backtests confirmed
+// against C2's close while live confirmed against C3's. c1 is C3's close
+// during the count == 2 window, identical on historical and realtime bars.
+htf_c2_close = c1
 
 if c2_had_bull_sweep and htf_count_since_sweep == 2 and not na(c2_bull_level) and htf_c2_close > c2_bull_level
     bull_cisd_confirmed := true
