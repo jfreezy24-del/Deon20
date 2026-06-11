@@ -73,6 +73,46 @@ src/components/             — signal cards + FTFC strip
 src/__tests__/strat.test.ts — engine unit tests (npm test)
 ```
 
+## Real-time alerts with the app closed (alert server)
+
+The same engine runs headless on a schedule via GitHub Actions
+(`.github/workflows/strat-alerts.yml`) and pushes notifications to your phone
+through [ntfy.sh](https://ntfy.sh) — free, no account needed. You get pinged
+when a signal **fires** (trigger breaks) or a new high-confidence setup
+appears, even with the app closed.
+
+### One-time setup (~3 minutes)
+
+1. **Pick a secret topic name** — anything long and unguessable, e.g.
+   `deon20-strat-7g3kq9x2`. Anyone who knows the topic name can read your
+   alerts, so treat it like a password.
+2. **Install the ntfy app** ([iOS](https://apps.apple.com/app/ntfy/id1625396347) /
+   [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)),
+   tap **+**, and subscribe to that topic.
+3. **Add the topic to GitHub**: repo → Settings → Secrets and variables →
+   Actions → New repository secret → name `NTFY_TOPIC`, value = your topic.
+4. **Test it**: repo → Actions → *Strat Alerts* → Run workflow. The first run
+   establishes a baseline and sends a "Strat alerts armed ✅" notification;
+   subsequent runs alert only on *new* signals.
+
+After that it runs automatically every 15 minutes during US market hours
+(Mon–Fri). Edit the `cron` lines in the workflow to change the cadence or add
+overnight/crypto coverage — but note that scheduled runs consume GitHub
+Actions minutes on private repos (~1–2 min per run).
+
+### Tuning (optional repo *variables*, not secrets)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MIN_CONFIDENCE` | `50` | Minimum confidence for TRIGGERED alerts |
+| `NOTIFY_SETUPS` | `true` | Also alert on new pending setups |
+| `SETUP_MIN_CONFIDENCE` | `65` | Minimum confidence for pending-setup alerts |
+
+The server scans the symbols in `server/watchlist.json` — edit that file to
+change the alert universe (the in-app watchlist stays separate, on your
+device). You can also run it anywhere with Node 18+: `npm run alert` with
+`NTFY_TOPIC=... ` set, e.g. from cron on a Raspberry Pi or VPS.
+
 ## Development
 
 ```bash

@@ -1,24 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DEFAULT_WATCHLIST } from './defaultWatchlist';
 
 const KEY = 'strat-scanner/watchlist';
 
-export const DEFAULT_WATCHLIST = [
-  'SPY',
-  'QQQ',
-  'IWM',
-  'AAPL',
-  'MSFT',
-  'NVDA',
-  'TSLA',
-  'AMZN',
-  'META',
-  'GOOGL',
-  'AMD',
-  'BTC-USD',
-  'ETH-USD',
-  'EURUSD=X',
-  'GC=F',
-];
+export { DEFAULT_WATCHLIST };
 
 export async function loadWatchlist(): Promise<string[]> {
   try {
