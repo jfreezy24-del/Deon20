@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Strat Scanner",
+    "slug": "strat-scanner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "backgroundColor": "#0b0f14",
+    "splash": {
+      "backgroundColor": "#0b0f14"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.deon20.stratscanner"
+    },
+    "android": {
+      "package": "com.deon20.stratscanner",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
