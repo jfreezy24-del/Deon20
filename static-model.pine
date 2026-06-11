@@ -14,6 +14,7 @@ coloroftext = color.gray
 
 biasFilter = input.string("Neutral", "Bias", options=["Neutral", "Bullish", "Bearish"], group="BIAS", inline="k")
 
+entryMode      = input.string("Break of C2 High/Low", "Entry", options=["Break of C2 High/Low", "Setup Confirmation (market)"], group="Strategy", tooltip="'Break of C2 High/Low' places a stop entry at C2's high (longs) or low (shorts) that fills when the following candle breaks the level; unfilled entries are cancelled if the setup invalidates or the break hasn't come by the end of C4. 'Setup Confirmation' enters at market as soon as the setup confirms.")
 tpMode         = input.string("100% (C1 High/Low)", "Take Profit Target", options=["50% (C1 EQ)", "100% (C1 High/Low)", "Both (50/50 scale out)"], group="Strategy", tooltip="Which C2 target closes the trade. 'Both' takes half off at the 50% target and the rest at the 100% target. The stop loss is always the invalidation level (the C2 sweep wick).")
 allowReversals = input.bool(false, "Allow Reversals", group="Strategy", tooltip="When on, an opposite-direction setup closes the open position and reverses into the new trade. When off, new setups are ignored while a position is open.")
 
@@ -358,6 +359,8 @@ var float c2_bull_tgt_eq   = na
 var float c2_bull_tgt_full = na
 var float c2_bear_tgt_eq   = na
 var float c2_bear_tgt_full = na
+var float c2_bull_entry_level = na
+var float c2_bear_entry_level = na
 var int   c2_bull_tgt_full_time = na
 var int   c2_bear_tgt_full_time = na
 var int   htf_count_since_sweep = 0
@@ -408,6 +411,7 @@ var array<StdDevData> activeStdDevData = array.new<StdDevData>()
 var array<TargetData> activeTargets = array.new<TargetData>()
 var array<line>  activeInvLines  = array.new<line>()
 var array<label> activeInvLabels = array.new<label>()
+var array<string> activeEntryIds = array.new<string>()
 var array<SetupHistory> historySetups = array.new<SetupHistory>()
 
 var array<cisdNeo> cisdLevelsBu = array.new<cisdNeo>()
@@ -983,6 +987,8 @@ if timeframe.change(auto_tf)
         c2_bull_tgt_eq        := (h2 + l2) / 2
         c2_bull_tgt_full      := h2
         c2_bull_tgt_full_time := prevHighTime2
+        // Break-entry trigger for longs: C2's high (h1 was just rolled to C2).
+        c2_bull_entry_level   := h1
         if showCISDNeo and cisdMode == "Hybrid"
             f_addCISD(true, c2_bull_index, c2_bull_level, 0)
         c2_already_invalidated_bull := false
@@ -999,6 +1005,8 @@ if timeframe.change(auto_tf)
         c2_bear_tgt_eq        := (h2 + l2) / 2
         c2_bear_tgt_full      := l2
         c2_bear_tgt_full_time := prevLowTime2
+        // Break-entry trigger for shorts: C2's low.
+        c2_bear_entry_level   := l1
         if showCISDNeo and cisdMode == "Hybrid"
             f_addCISD(false, c2_bear_index, c2_bear_level, 0)
         c2_already_invalidated_bear := false
@@ -1084,7 +1092,7 @@ f_pushHistory(SetupHistory h) =>
             old = array.shift(historySetups)
             f_deleteHistory(old)
 
-createC2Setup(bool isShort, int setupTime, float setupPrice, float _htfOpen, float midPoint, float cisdLevel, int cisdIndex, int currentCount, float tgtEQ, float tgtFull, int tgtFullTime) =>
+createC2Setup(bool isShort, int setupTime, float setupPrice, float _htfOpen, float midPoint, float cisdLevel, int cisdIndex, int currentCount, float tgtEQ, float tgtFull, int tgtFullTime, float entryLevel) =>
     shouldCreate = biasFilter == "Neutral" or (biasFilter == "Bullish" and not isShort) or (biasFilter == "Bearish" and isShort)
     if shouldCreate
         lbl = label.new(setupTime, setupPrice, "C2",
@@ -1212,29 +1220,36 @@ createC2Setup(bool isShort, int setupTime, float setupPrice, float _htfOpen, flo
         array.push(activeInvLines, invLine)
         array.push(activeInvLabels, invLbl)
 
-        // Trade the setup: stop at the invalidation level (C2 sweep wick),
-        // take profit at the selected C2 target(s).
+        // Trade the setup: stop loss at the invalidation level (C2 sweep wick),
+        // take profit at the selected C2 target(s). In break-entry mode the
+        // entry is a stop order at C2's high (longs) / low (shorts) that fills
+        // when a following candle breaks the level; otherwise enter at market.
+        // IDs are unique per setup so a pending entry can be cancelled without
+        // touching orders from other setups.
+        string entryId = na
         if allowReversals or strategy.position_size == 0
-            entryId = isShort ? "C2 Short" : "C2 Long"
+            entryId := (isShort ? "C2 Short " : "C2 Long ") + str.format_time(setupTime, "MM-dd HH:mm", "America/New_York")
+            breakEntry = entryMode == "Break of C2 High/Low" and not na(entryLevel)
             if isShort
-                strategy.entry(entryId, strategy.short)
+                strategy.entry(entryId, strategy.short, stop=breakEntry ? entryLevel : na)
             else
-                strategy.entry(entryId, strategy.long)
+                strategy.entry(entryId, strategy.long, stop=breakEntry ? entryLevel : na)
             if tpMode == "Both (50/50 scale out)" and not na(tgtEQ) and not na(tgtFull)
                 strategy.exit(entryId + " TP1", from_entry=entryId, stop=setupPrice, limit=tgtEQ, qty_percent=50)
                 strategy.exit(entryId + " TP2", from_entry=entryId, stop=setupPrice, limit=tgtFull, qty_percent=100)
             else
                 tp = tpMode == "50% (C1 EQ)" ? tgtEQ : tgtFull
                 strategy.exit(entryId + " TP", from_entry=entryId, stop=setupPrice, limit=tp)
+        array.push(activeEntryIds, entryId)
 
 if period_changed
     if prevC2Buy and bull_cisd_confirmed and not c2_already_invalidated_bull
         midPoint = not na(prevHTFHigh) and not na(prevHTFLow) ? (prevHTFHigh + prevHTFLow) / 2 : na
-        createC2Setup(false, prevLowTime, prevLowPrice, htfO, midPoint, c2_bull_level, c2_bull_index, 0, c2_bull_tgt_eq, c2_bull_tgt_full, c2_bull_tgt_full_time)
+        createC2Setup(false, prevLowTime, prevLowPrice, htfO, midPoint, c2_bull_level, c2_bull_index, 0, c2_bull_tgt_eq, c2_bull_tgt_full, c2_bull_tgt_full_time, c2_bull_entry_level)
 
     if prevC2Sell and bear_cisd_confirmed and not c2_already_invalidated_bear
         midPoint = not na(prevHTFHigh) and not na(prevHTFLow) ? (prevHTFHigh + prevHTFLow) / 2 : na
-        createC2Setup(true, prevHighTime, prevHighPrice, htfO, midPoint, c2_bear_level, c2_bear_index, 0, c2_bear_tgt_eq, c2_bear_tgt_full, c2_bear_tgt_full_time)
+        createC2Setup(true, prevHighTime, prevHighPrice, htfO, midPoint, c2_bear_level, c2_bear_index, 0, c2_bear_tgt_eq, c2_bear_tgt_full, c2_bear_tgt_full_time, c2_bear_entry_level)
 
 if bull_cisd_confirmed and c2_had_bull_sweep and not c2_already_invalidated_bull and htf_count_since_sweep <= 2
     needsCreation = true
@@ -1245,7 +1260,7 @@ if bull_cisd_confirmed and c2_had_bull_sweep and not c2_already_invalidated_bull
                 break
     if needsCreation
         midPoint = not na(prevHTFHigh) and not na(prevHTFLow) ? (prevHTFHigh + prevHTFLow) / 2 : na
-        createC2Setup(false, prevLowTime, prevLowPrice, htfO, midPoint, c2_bull_level, c2_bull_index, htf_count_since_sweep, c2_bull_tgt_eq, c2_bull_tgt_full, c2_bull_tgt_full_time)
+        createC2Setup(false, prevLowTime, prevLowPrice, htfO, midPoint, c2_bull_level, c2_bull_index, htf_count_since_sweep, c2_bull_tgt_eq, c2_bull_tgt_full, c2_bull_tgt_full_time, c2_bull_entry_level)
 
 if bear_cisd_confirmed and c2_had_bear_sweep and not c2_already_invalidated_bear and htf_count_since_sweep <= 2
     needsCreation = true
@@ -1256,7 +1271,7 @@ if bear_cisd_confirmed and c2_had_bear_sweep and not c2_already_invalidated_bear
                 break
     if needsCreation
         midPoint = not na(prevHTFHigh) and not na(prevHTFLow) ? (prevHTFHigh + prevHTFLow) / 2 : na
-        createC2Setup(true, prevHighTime, prevHighPrice, htfO, midPoint, c2_bear_level, c2_bear_index, htf_count_since_sweep, c2_bear_tgt_eq, c2_bear_tgt_full, c2_bear_tgt_full_time)
+        createC2Setup(true, prevHighTime, prevHighPrice, htfO, midPoint, c2_bear_level, c2_bear_index, htf_count_since_sweep, c2_bear_tgt_eq, c2_bear_tgt_full, c2_bear_tgt_full_time, c2_bear_entry_level)
 
 if array.size(activeLabels) > 0
     for i = array.size(activeLabels) - 1 to 0
@@ -1271,6 +1286,13 @@ if array.size(activeLabels) > 0
         if period_changed
             count += 1
             array.set(activeCounts, i, count)
+
+            // Break-entry window is C3/C4 — cancel any still-unfilled stop
+            // entry once C5 starts (no-op for filled or market entries).
+            if count == 3 and array.size(activeEntryIds) > i
+                eidW = array.get(activeEntryIds, i)
+                if not na(eidW)
+                    strategy.cancel(eidW)
 
             if count == 2 and not isInvalidated
                 c3Mid := (c3HighForMid + c3LowForMid) / 2
@@ -1314,6 +1336,11 @@ if array.size(activeLabels) > 0
             hist.tgt        := array.get(activeTargets, i)
             hist.inv_ln     := array.get(activeInvLines, i)
             hist.inv_lbl    := array.get(activeInvLabels, i)
+
+            eidR = array.get(activeEntryIds, i)
+            if not na(eidR)
+                strategy.cancel(eidR)
+            array.remove(activeEntryIds, i)
 
             array.remove(activeLabels, i)
             array.remove(activeStops, i)
@@ -1385,6 +1412,14 @@ if array.size(activeLabels) > 0
                         line.delete(tdr.ln_full)
                         label.delete(tdr.lb_full)
                     array.remove(activeTargets, i)
+
+                // Setup is dead — cancel its entry if it never filled (a
+                // filled position is closed by its stop-loss exit instead).
+                if array.size(activeEntryIds) > i
+                    eidX = array.get(activeEntryIds, i)
+                    if not na(eidX)
+                        strategy.cancel(eidX)
+                    array.remove(activeEntryIds, i)
 
                 // The XC2 marker and the breached invalidation line survive —
                 // hand them to history so the Show Historical / max count
