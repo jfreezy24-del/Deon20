@@ -1,4 +1,4 @@
-name: Strat Alerts
+name: Market Scan Alerts
 
 on:
   schedule:

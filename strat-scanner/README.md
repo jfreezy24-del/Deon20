@@ -76,7 +76,7 @@ src/__tests__/strat.test.ts — engine unit tests (npm test)
 ## Real-time alerts with the app closed (alert server)
 
 The same engine runs headless on a schedule via GitHub Actions
-(`.github/workflows/strat-alerts.yml`) and pushes notifications to your phone
+(`.github/workflows/market-scan-alerts.yml`) and pushes notifications to your phone
 through [ntfy.sh](https://ntfy.sh) — free, no account needed. You get pinged
 when a signal **fires** (trigger breaks) or a new high-confidence setup
 appears, even with the app closed.
@@ -91,7 +91,7 @@ appears, even with the app closed.
    tap **+**, and subscribe to that topic.
 3. **Add the topic to GitHub**: repo → Settings → Secrets and variables →
    Actions → New repository secret → name `NTFY_TOPIC`, value = your topic.
-4. **Test it**: repo → Actions → *Strat Alerts* → Run workflow. The first run
+4. **Test it**: repo → Actions → *Market Scan Alerts* → Run workflow. The first run
    establishes a baseline and sends a "Strat alerts armed ✅" notification;
    subsequent runs alert only on *new* signals.
 
