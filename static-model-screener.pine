@@ -1,0 +1,112 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © staticdotsol
+
+//@version=6
+indicator("STATIC MODEL — Screener", overlay=false, dynamic_requests=true)
+
+// Scans up to 40 symbols for Static Model C2 setups on the chosen HTF and
+// fires alert() calls for TradingView push notifications. Two stages:
+//   Forming   — the live HTF candle swept the prior candle's low/high and is
+//               trading back inside (can still un-form before the close).
+//   Confirmed — the HTF candle closed back above the swept low (buy) or below
+//               the swept high (sell): a valid C2.
+// For CISD confirmation and entries, open the full STATIC MODEL indicator on
+// that symbol's chart.
+//
+// Setup: add this to a 1–5m chart of any liquid symbol, then create ONE alert
+// on this indicator with condition "Any alert() function call" and push
+// notifications enabled.
+
+symListInput = input.text_area("BINANCE:BTCUSDT,BINANCE:ETHUSDT,BINANCE:SOLUSDT,BINANCE:XRPUSDT,NASDAQ:AAPL,NASDAQ:MSFT,NASDAQ:NVDA,NASDAQ:TSLA,NASDAQ:AMZN,NASDAQ:META,NASDAQ:GOOGL,AMEX:SPY,NASDAQ:QQQ", "Symbols (comma or newline separated, max 40)", group="Scanner")
+scanTF     = input.timeframe("240", "Scan Timeframe (HTF)", group="Scanner", tooltip="The HTF the C2 model runs on — same idea as the indicator's HTF. Keep the chart timeframe at or below this; a 1–5m chart gives the fastest updates.")
+biasFilter = input.string("Neutral", "Bias", options=["Neutral", "Bullish", "Bearish"], group="Scanner")
+
+alertForming   = input.bool(true, "Alert when a C2 is forming (intra-candle sweep + reclaim)", group="Alerts")
+alertConfirmed = input.bool(true, "Alert when a C2 confirms (candle close)", group="Alerts")
+
+tablePos  = input.string("Top Right", "Table Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group="Table")
+tableSize = input.string(size.small, "Text Size", options=[size.tiny, size.small, size.normal, size.large], group="Table")
+
+if timeframe.in_seconds() > timeframe.in_seconds(scanTF)
+    runtime.error("Chart timeframe must be at or below the scan timeframe.")
+
+f_parseSymbols(string raw) =>
+    out = array.new<string>()
+    cleaned = str.replace_all(raw, "\n", ",")
+    parts = str.split(cleaned, ",")
+    for p in parts
+        s = str.replace_all(p, " ", "")
+        if str.length(s) > 0 and array.size(out) < 40
+            array.push(out, s)
+    out
+
+var array<string> syms = f_parseSymbols(symListInput)
+var int nSyms = array.size(syms)
+
+// Per-symbol HTF candle time already alerted for each stage/direction, so
+// every stage alerts at most once per HTF candle per symbol.
+var array<int> formingBullAt = array.new<int>(nSyms, 0)
+var array<int> formingBearAt = array.new<int>(nSyms, 0)
+var array<int> confBullAt    = array.new<int>(nSyms, 0)
+var array<int> confBearAt    = array.new<int>(nSyms, 0)
+
+_getPos(string pos) =>
+    pos == "Top Left" ? position.top_left :
+     pos == "Top Right" ? position.top_right :
+     pos == "Bottom Left" ? position.bottom_left :
+     position.bottom_right
+
+colBull  = color.new(color.green, 70)
+colBear  = color.new(color.red, 70)
+colSweep = color.new(color.orange, 70)
+colNone  = color.new(color.gray, 90)
+colHdr   = color.new(color.gray, 80)
+colText  = color.new(color.white, 0)
+
+allowBull = biasFilter != "Bearish"
+allowBear = biasFilter != "Bullish"
+
+var table tbl = table.new(_getPos(tablePos), 3, nSyms + 1, border_width=1)
+
+if (barstate.islast or barstate.isrealtime) and nSyms > 0
+    table.cell(tbl, 0, 0, "Symbol", text_color=colText, bgcolor=colHdr, text_size=tableSize, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, 0, "Forming (" + scanTF + ")", text_color=colText, bgcolor=colHdr, text_size=tableSize, text_font_family=font.family_monospace)
+    table.cell(tbl, 2, 0, "Confirmed (last close)", text_color=colText, bgcolor=colHdr, text_size=tableSize, text_font_family=font.family_monospace)
+
+    for i = 0 to nSyms - 1
+        sym = array.get(syms, i)
+        [pH, pL, pC, ppH, ppL, cH, cL, cC, t] = request.security(sym, scanTF,
+             [high[1], low[1], close[1], high[2], low[2], high, low, close, time],
+             lookahead=barmerge.lookahead_off)
+
+        // Live candle vs prior candle (C2 forming against C1)
+        buyForming    = cL < pL and cC > pL
+        sellForming   = cH > pH and cC < pH
+        sweptLowOnly  = cL < pL and not buyForming
+        sweptHighOnly = cH > pH and not sellForming
+
+        // Last closed candle vs its predecessor (confirmed C2)
+        buyConfirmed  = pL < ppL and pC > ppL
+        sellConfirmed = pH > ppH and pC < ppH
+
+        if alertForming and allowBull and buyForming and array.get(formingBullAt, i) != t
+            array.set(formingBullAt, i, t)
+            alert(sym + " · " + scanTF + " · C2 BUY forming — swept prior low " + str.tostring(pL) + ", trading back above", alert.freq_all)
+        if alertForming and allowBear and sellForming and array.get(formingBearAt, i) != t
+            array.set(formingBearAt, i, t)
+            alert(sym + " · " + scanTF + " · C2 SELL forming — swept prior high " + str.tostring(pH) + ", trading back below", alert.freq_all)
+        if alertConfirmed and allowBull and buyConfirmed and array.get(confBullAt, i) != t
+            array.set(confBullAt, i, t)
+            alert(sym + " · " + scanTF + " · C2 BUY confirmed — candle closed back above the swept low", alert.freq_all)
+        if alertConfirmed and allowBear and sellConfirmed and array.get(confBearAt, i) != t
+            array.set(confBearAt, i, t)
+            alert(sym + " · " + scanTF + " · C2 SELL confirmed — candle closed back below the swept high", alert.freq_all)
+
+        formTxt = buyForming and allowBull ? "C2 Buy" : sellForming and allowBear ? "C2 Sell" : sweptLowOnly ? "Sweep ↓" : sweptHighOnly ? "Sweep ↑" : "—"
+        formCol = buyForming and allowBull ? colBull : sellForming and allowBear ? colBear : (sweptLowOnly or sweptHighOnly) ? colSweep : colNone
+        confTxt = buyConfirmed and allowBull ? "C2 Buy ✓" : sellConfirmed and allowBear ? "C2 Sell ✓" : "—"
+        confCol = buyConfirmed and allowBull ? colBull : sellConfirmed and allowBear ? colBear : colNone
+
+        table.cell(tbl, 0, i + 1, sym, text_color=colText, bgcolor=colNone, text_size=tableSize, text_font_family=font.family_monospace, text_halign=text.align_left)
+        table.cell(tbl, 1, i + 1, formTxt, text_color=colText, bgcolor=formCol, text_size=tableSize, text_font_family=font.family_monospace)
+        table.cell(tbl, 2, i + 1, confTxt, text_color=colText, bgcolor=confCol, text_size=tableSize, text_font_family=font.family_monospace)
