@@ -15,18 +15,22 @@ function LevelRow({ label, value, color }: { label: string; value: string; color
   );
 }
 
-export function SignalCard({ signal }: { signal: Signal }) {
+export function SignalCard({ signal, isNew = false }: { signal: Signal; isNew?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const bull = signal.direction === 'bullish';
   const dirColor = bull ? colors.bull : colors.bear;
   const confColor = confidenceColor(signal.confidence);
 
   return (
-    <Pressable style={styles.card} onPress={() => setExpanded((e) => !e)}>
+    <Pressable
+      style={[styles.card, isNew && { borderColor: colors.warn }]}
+      onPress={() => setExpanded((e) => !e)}
+    >
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
           <Text style={styles.symbol}>
             {signal.symbol} <Text style={styles.price}>{fmt(signal.lastPrice)}</Text>
+            {isNew ? <Text style={styles.newBadge}>  NEW</Text> : null}
           </Text>
           <Text style={[styles.pattern, { color: dirColor }]}>
             {bull ? '▲' : '▼'} {signal.pattern} <Text style={styles.sequence}>({signal.sequence})</Text>
@@ -115,6 +119,7 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: 'row', alignItems: 'flex-start' },
   symbol: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  newBadge: { color: colors.warn, fontSize: 11, fontWeight: '900' },
   price: { color: colors.textDim, fontSize: 13, fontWeight: '500' },
   pattern: { fontSize: 14, fontWeight: '700', marginTop: 2 },
   sequence: { color: colors.textDim, fontWeight: '500', fontSize: 12 },
