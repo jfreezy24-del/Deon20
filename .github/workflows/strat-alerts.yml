@@ -3,10 +3,13 @@ name: Strat Alerts
 on:
   schedule:
     # Every 15 minutes during US market hours, Mon-Fri (13:00-20:59 UTC
-    # covers 9:30-16:00 ET during daylight saving). Add more cron lines for
-    # crypto/overnight coverage, but mind your GitHub Actions minutes on
-    # private repos.
+    # covers 9:30-16:00 ET during daylight saving).
     - cron: '*/15 13-20 * * 1-5'
+    # Hourly outside market hours for 24/7 markets (crypto, FX): overnight
+    # on weekdays plus all weekend. Trim these lines to save Actions minutes
+    # if the repo ever goes private.
+    - cron: '0 0-12,21-23 * * 1-5'
+    - cron: '0 * * * 0,6'
   workflow_dispatch:
 
 permissions:
