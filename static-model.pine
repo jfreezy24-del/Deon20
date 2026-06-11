@@ -2,7 +2,7 @@
 // © staticdotsol
 
 //@version=6
-indicator("STATIC MODEL", overlay=true, dynamic_requests=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+strategy("STATIC MODEL [Strategy]", overlay=true, dynamic_requests=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, pyramiding=0)
 
 C2 = true
 
@@ -11,6 +11,9 @@ MQmarkers   = input.bool(false, "Show Market Structure", group="Marker Settings"
 coloroftext = color.gray
 
 biasFilter = input.string("Neutral", "Bias", options=["Neutral", "Bullish", "Bearish"], group="BIAS", inline="k")
+
+tpMode         = input.string("100% (C1 High/Low)", "Take Profit Target", options=["50% (C1 EQ)", "100% (C1 High/Low)", "Both (50/50 scale out)"], group="Strategy", tooltip="Which C2 target closes the trade. 'Both' takes half off at the 50% target and the rest at the 100% target. The stop loss is always the invalidation level (the C2 sweep wick).")
+allowReversals = input.bool(false, "Allow Reversals", group="Strategy", tooltip="When on, an opposite-direction setup closes the open position and reverses into the new trade. When off, new setups are ignored while a position is open.")
 
 useAutoTF = input.bool(true, "Use Auto Timeframe Selection", group="HTF Settings")
 manualTF  = input.timeframe("240", "Manual HTF (If Auto is Off)", group="HTF Settings")
@@ -1200,6 +1203,21 @@ createC2Setup(bool isShort, int setupTime, float setupPrice, float _htfOpen, flo
              text_font_family=font.family_monospace) : na
         array.push(activeInvLines, invLine)
         array.push(activeInvLabels, invLbl)
+
+        // Trade the setup: stop at the invalidation level (C2 sweep wick),
+        // take profit at the selected C2 target(s).
+        if allowReversals or strategy.position_size == 0
+            entryId = isShort ? "C2 Short" : "C2 Long"
+            if isShort
+                strategy.entry(entryId, strategy.short)
+            else
+                strategy.entry(entryId, strategy.long)
+            if tpMode == "Both (50/50 scale out)" and not na(tgtEQ) and not na(tgtFull)
+                strategy.exit(entryId + " TP1", from_entry=entryId, stop=setupPrice, limit=tgtEQ, qty_percent=50)
+                strategy.exit(entryId + " TP2", from_entry=entryId, stop=setupPrice, limit=tgtFull, qty_percent=100)
+            else
+                tp = tpMode == "50% (C1 EQ)" ? tgtEQ : tgtFull
+                strategy.exit(entryId + " TP", from_entry=entryId, stop=setupPrice, limit=tp)
 
 if period_changed
     if prevC2Buy and bull_cisd_confirmed and not c2_already_invalidated_bull
