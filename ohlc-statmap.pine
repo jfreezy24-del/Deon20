@@ -2,24 +2,17 @@
 // © notprofessorgreen
 
 //@version=6
-indicator("OHLC StatMap (Multi-Timeframe)", shorttitle = 'OHLC', overlay=true, max_bars_back = 5000)
+indicator("OHLC StatMap (Multi-Timeframe)", shorttitle = 'OHLC', overlay = true, max_bars_back = 5000, max_lines_count = 100, max_labels_count = 100)
 
-// === Timeframe Conversion Function ===
+// === Timeframe Conversion ===
 get_timeframe(tf_string) =>
-    string tf = ""
-    if tf_string == "None"
-        tf := ""
-    else if tf_string == "1H"
-        tf := "60"
-    else if tf_string == "4H"
-        tf := "240"
-    else if tf_string == "1D"
-        tf := "D"
-    else if tf_string == "1W"
-        tf := "W"
-    else if tf_string == "1M"
-        tf := "M"
-    tf
+    switch tf_string
+        "1H" => "60"
+        "4H" => "240"
+        "1D" => "D"
+        "1W" => "W"
+        "1M" => "M"
+        => ""
 
 // === Input Definitions ===
 // Timeframe Selection
@@ -70,7 +63,7 @@ show_manipulation_label = input.bool(true, "Show Manipulation Labels")
 
 // Distribution Settings
 show_distribution = input.bool(true, "Show Distribution Levels", inline="distribution", group = 'Distribution levels')
-distribution_style = input.string("Dotted", "Distribution line sty;e", options=["Solid", "Dashed", "Dotted"], inline="distribution")
+distribution_style = input.string("Dotted", "Distribution line style", options=["Solid", "Dashed", "Dotted"], inline="distribution")
 distribution_color_tf1 = input.color(color.blue, "TF1 Color", inline="distribution")
 distribution_color_tf2 = input.color(color.blue, "TF2 Color", inline="distribution")
 distribution_color_tf3 = input.color(color.blue, "TF3 Color", inline="distribution")
@@ -129,875 +122,237 @@ get_quantile(arr, q) =>
         index = math.round((q / 100) * (array.size(sorted) - 1))
         array.get(sorted, index)
 
-// === Timeframe Logic for TF1 ===
-is_new_candle_tf1 = tf1_converted != "" ? timeframe.change(tf1_converted) : false
-var float tf1_open = na
-var float tf1_high = na
-var float tf1_low = na
-var float tf1_close = na
-if is_new_candle_tf1
-    tf1_open := open
-    tf1_high := high
-    tf1_low := low
-    tf1_close := close
-else
-    tf1_high := math.max(tf1_high, high)
-    tf1_low := math.min(tf1_low, low)
-    tf1_close := close
-var float[] tf1_manip_distances = array.new_float(0)
-var float[] tf1_dist_distances = array.new_float(0)
-var float[] tf1_highs = array.new_float(0)  // Stores High - Open distances
-var float[] tf1_lows = array.new_float(0)    // Stores Open - Low distances
-if is_new_candle_tf1 and not na(tf1_open[1])
-    float manip = na
-    float dist = na
-    float high_dist = tf1_high[1] - tf1_open[1]  // Distance from open to high
-    float low_dist = tf1_open[1] - tf1_low[1]    // Distance from open to low
-    if tf1_close[1] > tf1_open[1]
-        manip := tf1_open[1] - tf1_low[1]
-        dist := tf1_high[1] - tf1_open[1]
-    else if tf1_close[1] < tf1_open[1]
-        manip := tf1_high[1] - tf1_open[1]
-        dist := tf1_open[1] - tf1_low[1]
-    if not na(manip)
-        array.push(tf1_manip_distances, manip)
-        array.push(tf1_dist_distances, dist)
-        array.push(tf1_highs, high_dist)
-        array.push(tf1_lows, low_dist)
-        if array.size(tf1_manip_distances) > hist_candles
-            array.shift(tf1_manip_distances)
-            array.shift(tf1_dist_distances)
-            array.shift(tf1_highs)
-            array.shift(tf1_lows)
+// === Types ===
+// A symmetric pair of projected levels (upper/lower line plus their labels).
+type LevelPair
+    line  upper_ln
+    line  lower_ln
+    label upper_lb
+    label lower_lb
 
-tf1_avg_manip = array.size(tf1_manip_distances) > 0 ? array.avg(tf1_manip_distances) : na
-tf1_avg_dist = array.size(tf1_dist_distances) > 0 ? array.avg(tf1_dist_distances) : na
-tf1_med_manip = array.size(tf1_manip_distances) > 0 ? array.median(tf1_manip_distances) : na
-tf1_med_dist = array.size(tf1_dist_distances) > 0 ? array.median(tf1_dist_distances) : na
-tf1_avg_high = array.size(tf1_highs) > 0 ? array.avg(tf1_highs) : na  // Average of High - Open
-tf1_avg_low = array.size(tf1_lows) > 0 ? array.avg(tf1_lows) : na     // Average of Open - Low
+type Shading
+    box upper_manip
+    box lower_manip
+    box upper_dist
+    box lower_dist
 
-// Quantile Calculations
-tf1_quant_manip_low = use_quantiles ? get_quantile(tf1_manip_distances, quantile_manip_low) : na
-tf1_quant_manip_high = use_quantiles ? get_quantile(tf1_manip_distances, quantile_manip_high) : na
-tf1_quant_dist_low = use_quantiles ? get_quantile(tf1_dist_distances, quantile_dist_low) : na
-tf1_quant_dist_high = use_quantiles ? get_quantile(tf1_dist_distances, quantile_dist_high) : na
+// All state for one tracked timeframe: the running OHLC of the current
+// higher-timeframe candle, the rolling stat arrays of completed candles,
+// and the drawing objects that get repositioned on each new candle.
+type Tf
+    string       name
+    bool         was_new
+    float        o
+    float        h
+    float        l
+    float        c
+    array<float> manips
+    array<float> dists
+    array<float> highs
+    array<float> lows
+    line         anchor_ln
+    label        anchor_lb
+    line         open_ln
+    label        open_lb
+    LevelPair    manip
+    LevelPair    dist
+    LevelPair    med_manip
+    LevelPair    med_dist
+    LevelPair    avg_hl
+    LevelPair    quant_manip
+    LevelPair    quant_dist
+    Shading      shading
 
+// === Constructors ===
+new_level_pair(string upper_txt, string lower_txt, color col, string style, int width) =>
+    ln_style = get_line_style(style)
+    lb_size = get_label_size(label_size)
+    bg = color.new(col, 100)
+    LevelPair.new(
+         line.new(bar_index, na, bar_index + 1, na, color = col, style = ln_style, width = width),
+         line.new(bar_index, na, bar_index + 1, na, color = col, style = ln_style, width = width),
+         label.new(bar_index, na, upper_txt, color = bg, textcolor = col, size = lb_size),
+         label.new(bar_index, na, lower_txt, color = bg, textcolor = col, size = lb_size))
 
-// === Timeframe Logic for TF2 ===
-is_new_candle_tf2 = tf2_converted != "" ? timeframe.change(tf2_converted) : false
-var float tf2_open = na
-var float tf2_high = na
-var float tf2_low = na
-var float tf2_close = na
-if is_new_candle_tf2
-    tf2_open := open
-    tf2_high := high
-    tf2_low := low
-    tf2_close := close
-else
-    tf2_high := math.max(tf2_high, high)
-    tf2_low := math.min(tf2_low, low)
-    tf2_close := close
-var float[] tf2_manip_distances = array.new_float(0)
-var float[] tf2_dist_distances = array.new_float(0)
-var float[] tf2_highs = array.new_float(0)  // Stores High - Open distances
-var float[] tf2_lows = array.new_float(0)    // Stores Open - Low distances
-if is_new_candle_tf2 and not na(tf2_open[1])
-    float manip = na
-    float dist = na
-    float high_dist = tf2_high[1] - tf2_open[1]  // Distance from open to high
-    float low_dist = tf2_open[1] - tf2_low[1]    // Distance from open to low
-    if tf2_close[1] > tf2_open[1]
-        manip := tf2_open[1] - tf2_low[1]
-        dist := tf2_high[1] - tf2_open[1]
-    else if tf2_close[1] < tf2_open[1]
-        manip := tf2_high[1] - tf2_open[1]
-        dist := tf2_open[1] - tf2_low[1]
-    if not na(manip)
-        array.push(tf2_manip_distances, manip)
-        array.push(tf2_dist_distances, dist)
-        array.push(tf2_highs, high_dist)
-        array.push(tf2_lows, low_dist)
-        if array.size(tf2_manip_distances) > hist_candles
-            array.shift(tf2_manip_distances)
-            array.shift(tf2_dist_distances)
-            array.shift(tf2_highs)
-            array.shift(tf2_lows)
-tf2_avg_manip = array.size(tf2_manip_distances) > 0 ? array.avg(tf2_manip_distances) : na
-tf2_avg_dist = array.size(tf2_dist_distances) > 0 ? array.avg(tf2_dist_distances) : na
-tf2_med_manip = array.size(tf2_manip_distances) > 0 ? array.median(tf2_manip_distances) : na
-tf2_med_dist = array.size(tf2_dist_distances) > 0 ? array.median(tf2_dist_distances) : na
-tf2_avg_high = array.size(tf2_highs) > 0 ? array.avg(tf2_highs) : na  // Average of High - Open
-tf2_avg_low = array.size(tf2_lows) > 0 ? array.avg(tf2_lows) : na     // Average of Open - Low
+new_shading(color manip_col, color dist_col) =>
+    Shading.new(
+         box.new(bar_index, na, bar_index + 1, na, bgcolor = manip_col, border_width = 0),
+         box.new(bar_index, na, bar_index + 1, na, bgcolor = manip_col, border_width = 0),
+         box.new(bar_index, na, bar_index + 1, na, bgcolor = dist_col, border_width = 0),
+         box.new(bar_index, na, bar_index + 1, na, bgcolor = dist_col, border_width = 0))
 
-// === Timeframe Logic for TF3 ===
-is_new_candle_tf3 = tf3_converted != "" ? timeframe.change(tf3_converted) : false
-var float tf3_open = na
-var float tf3_high = na
-var float tf3_low = na
-var float tf3_close = na
-if is_new_candle_tf3
-    tf3_open := open
-    tf3_high := high
-    tf3_low := low
-    tf3_close := close
-else
-    tf3_high := math.max(tf3_high, high)
-    tf3_low := math.min(tf3_low, low)
-    tf3_close := close
-var float[] tf3_manip_distances = array.new_float(0)
-var float[] tf3_dist_distances = array.new_float(0)
-var float[] tf3_highs = array.new_float(0)  // Stores High - Open distances
-var float[] tf3_lows = array.new_float(0)    // Stores Open - Low distances
-if is_new_candle_tf3 and not na(tf3_open[1])
-    float manip = na
-    float dist = na
-    float high_dist = tf3_high[1] - tf3_open[1]  // Distance from open to high
-    float low_dist = tf3_open[1] - tf3_low[1]    // Distance from open to low
-    if tf3_close[1] > tf3_open[1]
-        manip := tf3_open[1] - tf3_low[1]
-        dist := tf3_high[1] - tf3_open[1]
-    else if tf3_close[1] < tf3_open[1]
-        manip := tf3_high[1] - tf3_open[1]
-        dist := tf3_open[1] - tf3_low[1]
-    if not na(manip)
-        array.push(tf3_manip_distances, manip)
-        array.push(tf3_dist_distances, dist)
-        array.push(tf3_highs, high_dist)
-        array.push(tf3_lows, low_dist)
-        if array.size(tf3_manip_distances) > hist_candles
-            array.shift(tf3_manip_distances)
-            array.shift(tf3_dist_distances)
-            array.shift(tf3_highs)
-            array.shift(tf3_lows)
-tf3_avg_manip = array.size(tf3_manip_distances) > 0 ? array.avg(tf3_manip_distances) : na
-tf3_avg_dist = array.size(tf3_dist_distances) > 0 ? array.avg(tf3_dist_distances) : na
-tf3_med_manip = array.size(tf3_manip_distances) > 0 ? array.median(tf3_manip_distances) : na
-tf3_med_dist = array.size(tf3_dist_distances) > 0 ? array.median(tf3_dist_distances) : na
-tf3_avg_high = array.size(tf3_highs) > 0 ? array.avg(tf3_highs) : na  // Average of High - Open
-tf3_avg_low = array.size(tf3_lows) > 0 ? array.avg(tf3_lows) : na     // Average of Open - Low
+// Quantile levels are only drawn for TF1, matching the available inputs.
+new_tf(string name, color manip_col, color dist_col, color med_col, color avg_col, color shade_manip_col, color shade_dist_col, bool with_quantiles) =>
+    lb_size = get_label_size(label_size)
+    Tf t = Tf.new()
+    t.name := name
+    t.was_new := false
+    t.manips := array.new_float()
+    t.dists := array.new_float()
+    t.highs := array.new_float()
+    t.lows := array.new_float()
+    t.anchor_ln := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
+    t.anchor_lb := label.new(bar_index, na, "Start " + name, color = color.new(anchor_color, 100), textcolor = anchor_color, size = lb_size)
+    t.open_ln := line.new(bar_index, na, bar_index + 1, na, color = open_color, style = get_line_style(open_style), width = open_width)
+    t.open_lb := label.new(bar_index, na, "Open " + name, color = color.new(open_color, 100), textcolor = open_color, size = lb_size)
+    t.manip := new_level_pair("-M " + name, "+M " + name, manip_col, manipulation_style, manipulation_width)
+    t.dist := new_level_pair("+D " + name, "-D " + name, dist_col, distribution_style, distribution_width)
+    t.med_manip := new_level_pair("-M (Med) " + name, "+M (Med) " + name, med_col, median_style, median_width)
+    t.med_dist := new_level_pair("+D (Med) " + name, "-D (Med) " + name, med_col, median_style, median_width)
+    t.avg_hl := new_level_pair("Avg High " + name, "Avg Low " + name, avg_col, avg_hl_style, avg_hl_width)
+    if with_quantiles
+        t.quant_manip := new_level_pair("-Q" + str.tostring(quantile_manip_high) + "M " + name, "+Q" + str.tostring(quantile_manip_low) + "M " + name, quantile_color_tf1, quantile_style, quantile_width)
+        t.quant_dist := new_level_pair("+Q" + str.tostring(quantile_dist_high) + "D " + name, "-Q" + str.tostring(quantile_dist_low) + "D " + name, quantile_color_tf1, quantile_style, quantile_width)
+    t.shading := new_shading(shade_manip_col, shade_dist_col)
+    t
 
-// === Timeframe Logic for TF4 ===
-is_new_candle_tf4 = tf4_converted != "" ? timeframe.change(tf4_converted) : false
-var float tf4_open = na
-var float tf4_high = na
-var float tf4_low = na
-var float tf4_close = na
-if is_new_candle_tf4
-    tf4_open := open
-    tf4_high := high
-    tf4_low := low
-    tf4_close := close
-else
-    tf4_high := math.max(tf4_high, high)
-    tf4_low := math.min(tf4_low, low)
-    tf4_close := close
-var float[] tf4_manip_distances = array.new_float(0)
-var float[] tf4_dist_distances = array.new_float(0)
-var float[] tf4_highs = array.new_float(0)  // Stores High - Open distances
-var float[] tf4_lows = array.new_float(0)    // Stores Open - Low distances
-if is_new_candle_tf4 and not na(tf4_open[1])
-    float manip = na
-    float dist = na
-    float high_dist = tf4_high[1] - tf4_open[1]  // Distance from open to high
-    float low_dist = tf4_open[1] - tf4_low[1]    // Distance from open to low
-    if tf4_close[1] > tf4_open[1]
-        manip := tf4_open[1] - tf4_low[1]
-        dist := tf4_high[1] - tf4_open[1]
-    else if tf4_close[1] < tf4_open[1]
-        manip := tf4_high[1] - tf4_open[1]
-        dist := tf4_open[1] - tf4_low[1]
-    if not na(manip)
-        array.push(tf4_manip_distances, manip)
-        array.push(tf4_dist_distances, dist)
-        array.push(tf4_highs, high_dist)
-        array.push(tf4_lows, low_dist)
-        if array.size(tf4_manip_distances) > hist_candles
-            array.shift(tf4_manip_distances)
-            array.shift(tf4_dist_distances)
-            array.shift(tf4_highs)
-            array.shift(tf4_lows)
-tf4_avg_manip = array.size(tf4_manip_distances) > 0 ? array.avg(tf4_manip_distances) : na
-tf4_avg_dist = array.size(tf4_dist_distances) > 0 ? array.avg(tf4_dist_distances) : na
-tf4_med_manip = array.size(tf4_manip_distances) > 0 ? array.median(tf4_manip_distances) : na
-tf4_med_dist = array.size(tf4_dist_distances) > 0 ? array.median(tf4_dist_distances) : na
-tf4_avg_high = array.size(tf4_highs) > 0 ? array.avg(tf4_highs) : na  // Average of High - Open
-tf4_avg_low = array.size(tf4_lows) > 0 ? array.avg(tf4_lows) : na     // Average of Open - Low
+// === Drawing Methods ===
+method set_levels(LevelPair p, int x1, int x2, float base, float up_dist, float dn_dist, bool show_labels) =>
+    line.set_xy1(p.upper_ln, x1, base + up_dist)
+    line.set_xy2(p.upper_ln, x2, base + up_dist)
+    line.set_xy1(p.lower_ln, x1, base - dn_dist)
+    line.set_xy2(p.lower_ln, x2, base - dn_dist)
+    if show_labels
+        label.set_xy(p.upper_lb, x2, base + up_dist)
+        label.set_xy(p.lower_lb, x2, base - dn_dist)
 
-// === Plotting Levels ===
-var line tf1_anchor_line = na
-var label tf1_anchor_label = na
-var line tf1_open_line = na
-var label tf1_open_label = na
-var line tf1_upper_manip_line = na
-var label tf1_upper_manip_label = na
-var line tf1_lower_manip_line = na
-var label tf1_lower_manip_label = na
-var line tf1_upper_dist_line = na
-var label tf1_upper_dist_label = na
-var line tf1_lower_dist_line = na
-var label tf1_lower_dist_label = na
-var line tf1_upper_med_manip_line = na
-var label tf1_upper_med_manip_label = na
-var line tf1_lower_med_manip_line = na
-var label tf1_lower_med_manip_label = na
-var line tf1_upper_med_dist_line = na
-var label tf1_upper_med_dist_label = na
-var line tf1_lower_med_dist_line = na
-var label tf1_lower_med_dist_label = na
-var line tf1_avg_high_line = na
-var label tf1_avg_high_label = na
-var line tf1_avg_low_line = na
-var label tf1_avg_low_label = na
-var box tf1_upper_manip_shading = na
-var box tf1_lower_manip_shading = na
-var box tf1_upper_dist_shading = na
-var box tf1_lower_dist_shading = na
-var line tf1_upper_quant_manip_line = na
-var label tf1_upper_quant_manip_label = na
-var line tf1_lower_quant_manip_line = na
-var label tf1_lower_quant_manip_label = na
-var line tf1_upper_quant_dist_line = na
-var label tf1_upper_quant_dist_label = na
-var line tf1_lower_quant_dist_line = na
-var label tf1_lower_quant_dist_label = na
+method extend_to(LevelPair p, int x2, bool show_labels) =>
+    line.set_x2(p.upper_ln, x2)
+    line.set_x2(p.lower_ln, x2)
+    if show_labels
+        label.set_x(p.upper_lb, x2)
+        label.set_x(p.lower_lb, x2)
 
-var line tf2_anchor_line = na
-var label tf2_anchor_label = na
-var line tf2_open_line = na
-var label tf2_open_label = na
-var line tf2_upper_manip_line = na
-var label tf2_upper_manip_label = na
-var line tf2_lower_manip_line = na
-var label tf2_lower_manip_label = na
-var line tf2_upper_dist_line = na
-var label tf2_upper_dist_label = na
-var line tf2_lower_dist_line = na
-var label tf2_lower_dist_label = na
-var line tf2_upper_med_manip_line = na
-var label tf2_upper_med_manip_label = na
-var line tf2_lower_med_manip_line = na
-var label tf2_lower_med_manip_label = na
-var line tf2_upper_med_dist_line = na
-var label tf2_upper_med_dist_label = na
-var line tf2_lower_med_dist_line = na
-var label tf2_lower_med_dist_label = na
-var line tf2_avg_high_line = na
-var label tf2_avg_high_label = na
-var line tf2_avg_low_line = na
-var label tf2_avg_low_label = na
-var box tf2_upper_manip_shading = na
-var box tf2_lower_manip_shading = na
-var box tf2_upper_dist_shading = na
-var box tf2_lower_dist_shading = na
+// Shades the band between the average and median level on one side of the open.
+set_band(box b, int x1, int x2, float level_a, float level_b) =>
+    box.set_lefttop(b, x1, math.max(level_a, level_b))
+    box.set_rightbottom(b, x2, math.min(level_a, level_b))
 
-var line tf3_anchor_line = na
-var label tf3_anchor_label = na
-var line tf3_open_line = na
-var label tf3_open_label = na
-var line tf3_upper_manip_line = na
-var label tf3_upper_manip_label = na
-var line tf3_lower_manip_line = na
-var label tf3_lower_manip_label = na
-var line tf3_upper_dist_line = na
-var label tf3_upper_dist_label = na
-var line tf3_lower_dist_line = na
-var label tf3_lower_dist_label = na
-var line tf3_upper_med_manip_line = na
-var label tf3_upper_med_manip_label = na
-var line tf3_lower_med_manip_line = na
-var label tf3_lower_med_manip_label = na
-var line tf3_upper_med_dist_line = na
-var label tf3_upper_med_dist_label = na
-var line tf3_lower_med_dist_line = na
-var label tf3_lower_med_dist_label = na
-var line tf3_avg_high_line = na
-var label tf3_avg_high_label = na
-var line tf3_avg_low_line = na
-var label tf3_avg_low_label = na
-var box tf3_upper_manip_shading = na
-var box tf3_lower_manip_shading = na
-var box tf3_upper_dist_shading = na
-var box tf3_lower_dist_shading = na
+// === Per-Bar Logic ===
+// Roll the running OHLC forward; when a candle completes, record its
+// manipulation/distribution distances relative to its open. For an up-close
+// the manipulation side is the low wick and distribution the high side, and
+// vice versa for a down-close. Doji candles (close == open) are skipped.
+method on_bar(Tf t, bool is_new) =>
+    if is_new
+        if not na(t.o)
+            float manip = na
+            float dist = na
+            if t.c > t.o
+                manip := t.o - t.l
+                dist := t.h - t.o
+            else if t.c < t.o
+                manip := t.h - t.o
+                dist := t.o - t.l
+            if not na(manip)
+                array.push(t.manips, manip)
+                array.push(t.dists, dist)
+                array.push(t.highs, t.h - t.o)
+                array.push(t.lows, t.o - t.l)
+                if array.size(t.manips) > hist_candles
+                    array.shift(t.manips)
+                    array.shift(t.dists)
+                    array.shift(t.highs)
+                    array.shift(t.lows)
+        t.o := open
+        t.h := high
+        t.l := low
+        t.c := close
+    else
+        t.h := math.max(t.h, high)
+        t.l := math.min(t.l, low)
+        t.c := close
 
-var line tf4_anchor_line = na
-var label tf4_anchor_label = na
-var line tf4_open_line = na
-var label tf4_open_label = na
-var line tf4_upper_manip_line = na
-var label tf4_upper_manip_label = na
-var line tf4_lower_manip_line = na
-var label tf4_lower_manip_label = na
-var line tf4_upper_dist_line = na
-var label tf4_upper_dist_label = na
-var line tf4_lower_dist_line = na
-var label tf4_lower_dist_label = na
-var line tf4_upper_med_manip_line = na
-var label tf4_upper_med_manip_label = na
-var line tf4_lower_med_manip_line = na
-var label tf4_lower_med_manip_label = na
-var line tf4_upper_med_dist_line = na
-var label tf4_upper_med_dist_label = na
-var line tf4_lower_med_dist_line = na
-var label tf4_lower_med_dist_label = na
-var line tf4_avg_high_line = na
-var label tf4_avg_high_label = na
-var line tf4_avg_low_line = na
-var label tf4_avg_low_label = na
-var box tf4_upper_manip_shading = na
-var box tf4_lower_manip_shading = na
-var box tf4_upper_dist_shading = na
-var box tf4_lower_dist_shading = na
-
-if bar_index == 0
-    // TF1 Initialization
-    tf1_anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
-    tf1_anchor_label := label.new(bar_index, na, "Start " + tf1_input, color=color.new(anchor_color, 100), textcolor=anchor_color, size=get_label_size(label_size))
-    tf1_open_line := line.new(bar_index, na, bar_index+1, na, color=open_color, style=get_line_style(open_style), width=open_width)
-    tf1_open_label := label.new(bar_index, na, "Open " + tf1_input, color=color.new(open_color, 100), textcolor=open_color, size=get_label_size(label_size))
-    tf1_upper_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf1, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf1_upper_manip_label := label.new(bar_index, na, "-M " + tf1_input, color=color.new(manipulation_color_tf1, 100), textcolor=manipulation_color_tf1, size=get_label_size(label_size))
-    tf1_lower_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf1, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf1_lower_manip_label := label.new(bar_index, na, "+M " + tf1_input, color=color.new(manipulation_color_tf1, 100), textcolor=manipulation_color_tf1, size=get_label_size(label_size))
-    tf1_upper_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf1, style=get_line_style(distribution_style), width=distribution_width)
-    tf1_upper_dist_label := label.new(bar_index, na, "+D " + tf1_input, color=color.new(distribution_color_tf1, 100), textcolor=distribution_color_tf1, size=get_label_size(label_size))
-    tf1_lower_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf1, style=get_line_style(distribution_style), width=distribution_width)
-    tf1_lower_dist_label := label.new(bar_index, na, "-D " + tf1_input, color=color.new(distribution_color_tf1, 100), textcolor=distribution_color_tf1, size=get_label_size(label_size))
-    tf1_upper_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf1, style=get_line_style(median_style), width=median_width)
-    tf1_upper_med_manip_label := label.new(bar_index, na, "-M (Med) " + tf1_input, color=color.new(median_color_tf1, 100), textcolor=median_color_tf1, size=get_label_size(label_size))
-    tf1_lower_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf1, style=get_line_style(median_style), width=median_width)
-    tf1_lower_med_manip_label := label.new(bar_index, na, "+M (Med) " + tf1_input, color=color.new(median_color_tf1, 100), textcolor=median_color_tf1, size=get_label_size(label_size))
-    tf1_upper_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf1, style=get_line_style(median_style), width=median_width)
-    tf1_upper_med_dist_label := label.new(bar_index, na, "+D (Med) " + tf1_input, color=color.new(distribution_color_tf1, 100), textcolor=distribution_color_tf1, size=get_label_size(label_size))
-    tf1_lower_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf1, style=get_line_style(median_style), width=median_width)
-    tf1_lower_med_dist_label := label.new(bar_index, na, "-D (Med) " + tf1_input, color=color.new(distribution_color_tf1, 100), textcolor=distribution_color_tf1, size=get_label_size(label_size))
-    tf1_avg_high_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf1, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf1_avg_high_label := label.new(bar_index, na, "Avg High " + tf1_input, color=color.new(avg_hl_color_tf1, 100), textcolor=avg_hl_color_tf1, size=get_label_size(label_size))
-    tf1_avg_low_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf1, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf1_avg_low_label := label.new(bar_index, na, "Avg Low " + tf1_input, color=color.new(avg_hl_color_tf1, 100), textcolor=avg_hl_color_tf1, size=get_label_size(label_size))
-    tf1_upper_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf1, border_width=0)
-    tf1_lower_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf1, border_width=0)
-    tf1_upper_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf1, border_width=0)
-    tf1_lower_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf1, border_width=0)
-    tf1_upper_quant_manip_line := line.new(bar_index, na, bar_index+1, na, color=quantile_color_tf1, style=get_line_style(quantile_style), width=quantile_width)
-    tf1_upper_quant_manip_label := label.new(bar_index, na, "-Q" + str.tostring(quantile_manip_high) + "M " + tf1_input, color=color.new(quantile_color_tf1, 100), textcolor=quantile_color_tf1, size=get_label_size(label_size))
-    tf1_lower_quant_manip_line := line.new(bar_index, na, bar_index+1, na, color=quantile_color_tf1, style=get_line_style(quantile_style), width=quantile_width)
-    tf1_lower_quant_manip_label := label.new(bar_index, na, "+Q" + str.tostring(quantile_manip_low) + "M " + tf1_input, color=color.new(quantile_color_tf1, 100), textcolor=quantile_color_tf1, size=get_label_size(label_size))
-    tf1_upper_quant_dist_line := line.new(bar_index, na, bar_index+1, na, color=quantile_color_tf1, style=get_line_style(quantile_style), width=quantile_width)
-    tf1_upper_quant_dist_label := label.new(bar_index, na, "+Q" + str.tostring(quantile_dist_high) + "D " + tf1_input, color=color.new(quantile_color_tf1, 100), textcolor=quantile_color_tf1, size=get_label_size(label_size))
-    tf1_lower_quant_dist_line := line.new(bar_index, na, bar_index+1, na, color=quantile_color_tf1, style=get_line_style(quantile_style), width=quantile_width)
-    tf1_lower_quant_dist_label := label.new(bar_index, na, "-Q" + str.tostring(quantile_dist_low) + "D " + tf1_input, color=color.new(quantile_color_tf1, 100), textcolor=quantile_color_tf1, size=get_label_size(label_size))
-
-    // TF2 Initialization
-    tf2_anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
-    tf2_anchor_label := label.new(bar_index, na, "Start " + tf2_input, color=color.new(anchor_color, 100), textcolor=anchor_color, size=get_label_size(label_size))
-    tf2_open_line := line.new(bar_index, na, bar_index+1, na, color=open_color, style=get_line_style(open_style), width=open_width)
-    tf2_open_label := label.new(bar_index, na, "Open " + tf2_input, color=color.new(open_color, 100), textcolor=open_color, size=get_label_size(label_size))
-    tf2_upper_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf2, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf2_upper_manip_label := label.new(bar_index, na, "-M " + tf2_input, color=color.new(manipulation_color_tf2, 100), textcolor=manipulation_color_tf2, size=get_label_size(label_size))
-    tf2_lower_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf2, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf2_lower_manip_label := label.new(bar_index, na, "+M " + tf2_input, color=color.new(manipulation_color_tf2, 100), textcolor=manipulation_color_tf2, size=get_label_size(label_size))
-    tf2_upper_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf2, style=get_line_style(distribution_style), width=distribution_width)
-    tf2_upper_dist_label := label.new(bar_index, na, "+D " + tf2_input, color=color.new(distribution_color_tf2, 100), textcolor=distribution_color_tf2, size=get_label_size(label_size))
-    tf2_lower_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf2, style=get_line_style(distribution_style), width=distribution_width)
-    tf2_lower_dist_label := label.new(bar_index, na, "-D " + tf2_input, color=color.new(distribution_color_tf2, 100), textcolor=distribution_color_tf2, size=get_label_size(label_size))
-    tf2_upper_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf2, style=get_line_style(median_style), width=median_width)
-    tf2_upper_med_manip_label := label.new(bar_index, na, "-M (Med) " + tf2_input, color=color.new(median_color_tf2, 100), textcolor=median_color_tf2, size=get_label_size(label_size))
-    tf2_lower_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf2, style=get_line_style(median_style), width=median_width)
-    tf2_lower_med_manip_label := label.new(bar_index, na, "+M (Med) " + tf2_input, color=color.new(median_color_tf2, 100), textcolor=median_color_tf2, size=get_label_size(label_size))
-    tf2_upper_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf2, style=get_line_style(median_style), width=median_width)
-    tf2_upper_med_dist_label := label.new(bar_index, na, "+D (Med) " + tf2_input, color=color.new(median_color_tf2, 100), textcolor=median_color_tf2, size=get_label_size(label_size))
-    tf2_lower_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf2, style=get_line_style(median_style), width=median_width)
-    tf2_lower_med_dist_label := label.new(bar_index, na, "-D (Med) " + tf2_input, color=color.new(median_color_tf2, 100), textcolor=median_color_tf2, size=get_label_size(label_size))
-    tf2_avg_high_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf2, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf2_avg_high_label := label.new(bar_index, na, "Avg High " + tf2_input, color=color.new(avg_hl_color_tf2, 100), textcolor=avg_hl_color_tf2, size=get_label_size(label_size))
-    tf2_avg_low_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf2, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf2_avg_low_label := label.new(bar_index, na, "Avg Low " + tf2_input, color=color.new(avg_hl_color_tf2, 100), textcolor=avg_hl_color_tf2, size=get_label_size(label_size))
-    tf2_upper_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf2, border_width=0)
-    tf2_lower_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf2, border_width=0)
-    tf2_upper_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf2, border_width=0)
-    tf2_lower_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf2, border_width=0)
-
-    // TF3 Initialization
-    tf3_anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
-    tf3_anchor_label := label.new(bar_index, na, "Start " + tf3_input, color=color.new(anchor_color, 100), textcolor=anchor_color, size=get_label_size(label_size))
-    tf3_open_line := line.new(bar_index, na, bar_index+1, na, color=open_color, style=get_line_style(open_style), width=open_width)
-    tf3_open_label := label.new(bar_index, na, "Open " + tf3_input, color=color.new(open_color, 100), textcolor=open_color, size=get_label_size(label_size))
-    tf3_upper_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf3, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf3_upper_manip_label := label.new(bar_index, na, "-M " + tf3_input, color=color.new(manipulation_color_tf3, 100), textcolor=manipulation_color_tf3, size=get_label_size(label_size))
-    tf3_lower_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf3, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf3_lower_manip_label := label.new(bar_index, na, "+M " + tf3_input, color=color.new(manipulation_color_tf3, 100), textcolor=manipulation_color_tf3, size=get_label_size(label_size))
-    tf3_upper_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf3, style=get_line_style(distribution_style), width=distribution_width)
-    tf3_upper_dist_label := label.new(bar_index, na, "+D " + tf3_input, color=color.new(distribution_color_tf3, 100), textcolor=distribution_color_tf3, size=get_label_size(label_size))
-    tf3_lower_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf3, style=get_line_style(distribution_style), width=distribution_width)
-    tf3_lower_dist_label := label.new(bar_index, na, "-D " + tf3_input, color=color.new(distribution_color_tf3, 100), textcolor=distribution_color_tf3, size=get_label_size(label_size))
-    tf3_upper_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf3, style=get_line_style(median_style), width=median_width)
-    tf3_upper_med_manip_label := label.new(bar_index, na, "-M (Med) " + tf3_input, color=color.new(median_color_tf3, 100), textcolor=median_color_tf3, size=get_label_size(label_size))
-    tf3_lower_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf3, style=get_line_style(median_style), width=median_width)
-    tf3_lower_med_manip_label := label.new(bar_index, na, "+M (Med) " + tf3_input, color=color.new(median_color_tf3, 100), textcolor=median_color_tf3, size=get_label_size(label_size))
-    tf3_upper_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf3, style=get_line_style(median_style), width=median_width)
-    tf3_upper_med_dist_label := label.new(bar_index, na, "+D (Med) " + tf3_input, color=color.new(median_color_tf3, 100), textcolor=median_color_tf3, size=get_label_size(label_size))
-    tf3_lower_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf3, style=get_line_style(median_style), width=median_width)
-    tf3_lower_med_dist_label := label.new(bar_index, na, "-D (Med) " + tf3_input, color=color.new(median_color_tf3, 100), textcolor=median_color_tf3, size=get_label_size(label_size))
-    tf3_avg_high_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf3, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf3_avg_high_label := label.new(bar_index, na, "Avg High " + tf3_input, color=color.new(avg_hl_color_tf3, 100), textcolor=avg_hl_color_tf3, size=get_label_size(label_size))
-    tf3_avg_low_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf3, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf3_avg_low_label := label.new(bar_index, na, "Avg Low " + tf3_input, color=color.new(avg_hl_color_tf3, 100), textcolor=avg_hl_color_tf3, size=get_label_size(label_size))
-    tf3_upper_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf3, border_width=0)
-    tf3_lower_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf3, border_width=0)
-    tf3_upper_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf3, border_width=0)
-    tf3_lower_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf3, border_width=0)
-
-    // TF4 Initialization
-    tf4_anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
-    tf4_anchor_label := label.new(bar_index, na, "Start " + tf4_input, color=color.new(anchor_color, 100), textcolor=anchor_color, size=get_label_size(label_size))
-    tf4_open_line := line.new(bar_index, na, bar_index+1, na, color=open_color, style=get_line_style(open_style), width=open_width)
-    tf4_open_label := label.new(bar_index, na, "Open " + tf4_input, color=color.new(open_color, 100), textcolor=open_color, size=get_label_size(label_size))
-    tf4_upper_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf4, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf4_upper_manip_label := label.new(bar_index, na, "-M " + tf4_input, color=color.new(manipulation_color_tf4, 100), textcolor=manipulation_color_tf4, size=get_label_size(label_size))
-    tf4_lower_manip_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color_tf4, style=get_line_style(manipulation_style), width=manipulation_width)
-    tf4_lower_manip_label := label.new(bar_index, na, "+M " + tf4_input, color=color.new(manipulation_color_tf4, 100), textcolor=manipulation_color_tf4, size=get_label_size(label_size))
-    tf4_upper_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf4, style=get_line_style(distribution_style), width=distribution_width)
-    tf4_upper_dist_label := label.new(bar_index, na, "+D " + tf4_input, color=color.new(distribution_color_tf4, 100), textcolor=distribution_color_tf4, size=get_label_size(label_size))
-    tf4_lower_dist_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color_tf4, style=get_line_style(distribution_style), width=distribution_width)
-    tf4_lower_dist_label := label.new(bar_index, na, "-D " + tf4_input, color=color.new(distribution_color_tf4, 100), textcolor=distribution_color_tf4, size=get_label_size(label_size))
-    tf4_upper_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf4, style=get_line_style(median_style), width=median_width)
-    tf4_upper_med_manip_label := label.new(bar_index, na, "-M (Med) " + tf4_input, color=color.new(median_color_tf4, 100), textcolor=median_color_tf4, size=get_label_size(label_size))
-    tf4_lower_med_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf4, style=get_line_style(median_style), width=median_width)
-    tf4_lower_med_manip_label := label.new(bar_index, na, "+M (Med) " + tf4_input, color=color.new(median_color_tf4, 100), textcolor=median_color_tf4, size=get_label_size(label_size))
-    tf4_upper_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf4, style=get_line_style(median_style), width=median_width)
-    tf4_upper_med_dist_label := label.new(bar_index, na, "+D (Med) " + tf4_input, color=color.new(median_color_tf4, 100), textcolor=median_color_tf4, size=get_label_size(label_size))
-    tf4_lower_med_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color_tf4, style=get_line_style(median_style), width=median_width)
-    tf4_lower_med_dist_label := label.new(bar_index, na, "-D (Med) " + tf4_input, color=color.new(median_color_tf4, 100), textcolor=median_color_tf4, size=get_label_size(label_size))
-    tf4_avg_high_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf4, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf4_avg_high_label := label.new(bar_index, na, "Avg High " + tf4_input, color=color.new(avg_hl_color_tf4, 100), textcolor=avg_hl_color_tf4, size=get_label_size(label_size))
-    tf4_avg_low_line := line.new(bar_index, na, bar_index+1, na, color=avg_hl_color_tf4, style=get_line_style(avg_hl_style), width=avg_hl_width)
-    tf4_avg_low_label := label.new(bar_index, na, "Avg Low " + tf4_input, color=color.new(avg_hl_color_tf4, 100), textcolor=avg_hl_color_tf4, size=get_label_size(label_size))
-    tf4_upper_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf4, border_width=0)
-    tf4_lower_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color_tf4, border_width=0)
-    tf4_upper_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf4, border_width=0)
-    tf4_lower_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color_tf4, border_width=0)
-
-// TF1 Plotting
-if is_new_candle_tf1
+// Reposition every drawing at the open of a new higher-timeframe candle.
+method draw(Tf t) =>
+    int x1 = bar_index
+    int x2 = bar_index + projection_offset
+    bool has_stats = array.size(t.manips) > 0
+    float avg_manip = has_stats ? array.avg(t.manips) : na
+    float avg_dist = has_stats ? array.avg(t.dists) : na
+    float med_manip = has_stats ? array.median(t.manips) : na
+    float med_dist = has_stats ? array.median(t.dists) : na
+    float avg_high = array.size(t.highs) > 0 ? array.avg(t.highs) : na
+    float avg_low = array.size(t.lows) > 0 ? array.avg(t.lows) : na
     if show_anchor
-        line.set_xy1(tf1_anchor_line, bar_index, tf1_open)
-        line.set_xy2(tf1_anchor_line, bar_index, tf1_open)
+        line.set_xy1(t.anchor_ln, x1, t.o)
+        line.set_xy2(t.anchor_ln, x1, t.o)
         if show_anchor_label
-            label.set_xy(tf1_anchor_label, bar_index, tf1_open + (not na(tf1_avg_dist) ? tf1_avg_dist : 0))
+            label.set_xy(t.anchor_lb, x1, t.o + (not na(avg_dist) ? avg_dist : 0))
     if show_open
-        line.set_xy1(tf1_open_line, bar_index, tf1_open)
-        line.set_xy2(tf1_open_line, bar_index + projection_offset, tf1_open)
+        line.set_xy1(t.open_ln, x1, t.o)
+        line.set_xy2(t.open_ln, x2, t.o)
         if show_open_label
-            label.set_xy(tf1_open_label, bar_index + projection_offset, tf1_open)
-    if show_manipulation and not na(tf1_avg_manip)
-        line.set_xy1(tf1_upper_manip_line, bar_index, tf1_open + tf1_avg_manip)
-        line.set_xy2(tf1_upper_manip_line, bar_index + projection_offset, tf1_open + tf1_avg_manip)
-        line.set_xy1(tf1_lower_manip_line, bar_index, tf1_open - tf1_avg_manip)
-        line.set_xy2(tf1_lower_manip_line, bar_index + projection_offset, tf1_open - tf1_avg_manip)
-        if show_manipulation_label
-            label.set_xy(tf1_upper_manip_label, bar_index + projection_offset, tf1_open + tf1_avg_manip)
-            label.set_xy(tf1_lower_manip_label, bar_index + projection_offset, tf1_open - tf1_avg_manip)
-    if show_distribution and not na(tf1_avg_dist)
-        line.set_xy1(tf1_upper_dist_line, bar_index, tf1_open + tf1_avg_dist)
-        line.set_xy2(tf1_upper_dist_line, bar_index + projection_offset, tf1_open + tf1_avg_dist)
-        line.set_xy1(tf1_lower_dist_line, bar_index, tf1_open - tf1_avg_dist)
-        line.set_xy2(tf1_lower_dist_line, bar_index + projection_offset, tf1_open - tf1_avg_dist)
-        if show_distribution_label
-            label.set_xy(tf1_upper_dist_label, bar_index + projection_offset, tf1_open + tf1_avg_dist)
-            label.set_xy(tf1_lower_dist_label, bar_index + projection_offset, tf1_open - tf1_avg_dist)
-    if show_median and not na(tf1_med_manip) and not na(tf1_med_dist)
-        line.set_xy1(tf1_upper_med_manip_line, bar_index, tf1_open + tf1_med_manip)
-        line.set_xy2(tf1_upper_med_manip_line, bar_index + projection_offset, tf1_open + tf1_med_manip)
-        line.set_xy1(tf1_lower_med_manip_line, bar_index, tf1_open - tf1_med_manip)
-        line.set_xy2(tf1_lower_med_manip_line, bar_index + projection_offset, tf1_open - tf1_med_manip)
-        line.set_xy1(tf1_upper_med_dist_line, bar_index, tf1_open + tf1_med_dist)
-        line.set_xy2(tf1_upper_med_dist_line, bar_index + projection_offset, tf1_open + tf1_med_dist)
-        line.set_xy1(tf1_lower_med_dist_line, bar_index, tf1_open - tf1_med_dist)
-        line.set_xy2(tf1_lower_med_dist_line, bar_index + projection_offset, tf1_open - tf1_med_dist)
-        if show_median_label
-            label.set_xy(tf1_upper_med_manip_label, bar_index + projection_offset, tf1_open + tf1_med_manip)
-            label.set_xy(tf1_lower_med_manip_label, bar_index + projection_offset, tf1_open - tf1_med_manip)
-            label.set_xy(tf1_upper_med_dist_label, bar_index + projection_offset, tf1_open + tf1_med_dist)
-            label.set_xy(tf1_lower_med_dist_label, bar_index + projection_offset, tf1_open - tf1_med_dist)
-    if show_avg_hl and not na(tf1_avg_high) and not na(tf1_avg_low)
-        line.set_xy1(tf1_avg_high_line, bar_index, tf1_open + tf1_avg_high)
-        line.set_xy2(tf1_avg_high_line, bar_index + projection_offset, tf1_open + tf1_avg_high)
-        line.set_xy1(tf1_avg_low_line, bar_index, tf1_open - tf1_avg_low)
-        line.set_xy2(tf1_avg_low_line, bar_index + projection_offset, tf1_open - tf1_avg_low)
-        if show_avg_hl_label
-            label.set_xy(tf1_avg_high_label, bar_index + projection_offset, tf1_open + tf1_avg_high)
-            label.set_xy(tf1_avg_low_label, bar_index + projection_offset, tf1_open - tf1_avg_low)
-    if use_quantiles and not na(tf1_quant_manip_low) and not na(tf1_quant_manip_high) and not na(tf1_quant_dist_low) and not na(tf1_quant_dist_high)
-        line.set_xy1(tf1_upper_quant_manip_line, bar_index, tf1_open + tf1_quant_manip_high)
-        line.set_xy2(tf1_upper_quant_manip_line, bar_index + projection_offset, tf1_open + tf1_quant_manip_high)
-        line.set_xy1(tf1_lower_quant_manip_line, bar_index, tf1_open - tf1_quant_manip_low)
-        line.set_xy2(tf1_lower_quant_manip_line, bar_index + projection_offset, tf1_open - tf1_quant_manip_low)
-        line.set_xy1(tf1_upper_quant_dist_line, bar_index, tf1_open + tf1_quant_dist_high)
-        line.set_xy2(tf1_upper_quant_dist_line, bar_index + projection_offset, tf1_open + tf1_quant_dist_high)
-        line.set_xy1(tf1_lower_quant_dist_line, bar_index, tf1_open - tf1_quant_dist_low)
-        line.set_xy2(tf1_lower_quant_dist_line, bar_index + projection_offset, tf1_open - tf1_quant_dist_low)
-        if show_quantile_label
-            label.set_xy(tf1_upper_quant_manip_label, bar_index + projection_offset, tf1_open + tf1_quant_manip_high)
-            label.set_xy(tf1_lower_quant_manip_label, bar_index + projection_offset, tf1_open - tf1_quant_manip_low)
-            label.set_xy(tf1_upper_quant_dist_label, bar_index + projection_offset, tf1_open + tf1_quant_dist_high)
-            label.set_xy(tf1_lower_quant_dist_label, bar_index + projection_offset, tf1_open - tf1_quant_dist_low)
+            label.set_xy(t.open_lb, x2, t.o)
+    if show_manipulation and not na(avg_manip)
+        t.manip.set_levels(x1, x2, t.o, avg_manip, avg_manip, show_manipulation_label)
+    if show_distribution and not na(avg_dist)
+        t.dist.set_levels(x1, x2, t.o, avg_dist, avg_dist, show_distribution_label)
+    if show_median and not na(med_manip) and not na(med_dist)
+        t.med_manip.set_levels(x1, x2, t.o, med_manip, med_manip, show_median_label)
+        t.med_dist.set_levels(x1, x2, t.o, med_dist, med_dist, show_median_label)
+    if show_avg_hl and not na(avg_high) and not na(avg_low)
+        t.avg_hl.set_levels(x1, x2, t.o, avg_high, avg_low, show_avg_hl_label)
+    if use_quantiles and not na(t.quant_manip)
+        float qm_low = get_quantile(t.manips, quantile_manip_low)
+        float qm_high = get_quantile(t.manips, quantile_manip_high)
+        float qd_low = get_quantile(t.dists, quantile_dist_low)
+        float qd_high = get_quantile(t.dists, quantile_dist_high)
+        if not na(qm_low) and not na(qm_high) and not na(qd_low) and not na(qd_high)
+            t.quant_manip.set_levels(x1, x2, t.o, qm_high, qm_low, show_quantile_label)
+            t.quant_dist.set_levels(x1, x2, t.o, qd_high, qd_low, show_quantile_label)
+    if show_shading and not na(avg_manip) and not na(med_manip) and not na(avg_dist) and not na(med_dist)
+        set_band(t.shading.upper_manip, x1, x2, t.o + avg_manip, t.o + med_manip)
+        set_band(t.shading.lower_manip, x1, x2, t.o - avg_manip, t.o - med_manip)
+        set_band(t.shading.upper_dist, x1, x2, t.o + avg_dist, t.o + med_dist)
+        set_band(t.shading.lower_dist, x1, x2, t.o - avg_dist, t.o - med_dist)
 
-    if show_shading and not na(tf1_avg_manip) and not na(tf1_med_manip) and not na(tf1_avg_dist) and not na(tf1_med_dist)
-        box.set_lefttop(tf1_upper_manip_shading, bar_index, math.max(tf1_open + tf1_avg_manip, tf1_open + tf1_med_manip))
-        box.set_rightbottom(tf1_upper_manip_shading, bar_index + projection_offset, math.min(tf1_open + tf1_avg_manip, tf1_open + tf1_med_manip))
-        box.set_lefttop(tf1_lower_manip_shading, bar_index, math.max(tf1_open - tf1_avg_manip, tf1_open - tf1_med_manip))
-        box.set_rightbottom(tf1_lower_manip_shading, bar_index + projection_offset, math.min(tf1_open - tf1_avg_manip, tf1_open - tf1_med_manip))
-        box.set_lefttop(tf1_upper_dist_shading, bar_index, math.max(tf1_open + tf1_avg_dist, tf1_open + tf1_med_dist))
-        box.set_rightbottom(tf1_upper_dist_shading, bar_index + projection_offset, math.min(tf1_open + tf1_avg_dist, tf1_open + tf1_med_dist))
-        box.set_lefttop(tf1_lower_dist_shading, bar_index, math.max(tf1_open - tf1_avg_dist, tf1_open - tf1_med_dist))
-        box.set_rightbottom(tf1_lower_dist_shading, bar_index + projection_offset, math.min(tf1_open - tf1_avg_dist, tf1_open - tf1_med_dist))
-
-// TF2 Plotting
-if is_new_candle_tf2
-    if show_anchor
-        line.set_xy1(tf2_anchor_line, bar_index, tf2_open)
-        line.set_xy2(tf2_anchor_line, bar_index, tf2_open)
-        if show_anchor_label
-            label.set_xy(tf2_anchor_label, bar_index, tf2_open + (not na(tf2_avg_dist) ? tf2_avg_dist : 0))
+// Push the projected right edge one bar further on the bar after a new candle.
+method extend_projection(Tf t) =>
+    int x2 = bar_index + projection_offset
     if show_open
-        line.set_xy1(tf2_open_line, bar_index, tf2_open)
-        line.set_xy2(tf2_open_line, bar_index + projection_offset, tf2_open)
+        line.set_x2(t.open_ln, x2)
         if show_open_label
-            label.set_xy(tf2_open_label, bar_index + projection_offset, tf2_open)
-    if show_manipulation and not na(tf2_avg_manip)
-        line.set_xy1(tf2_upper_manip_line, bar_index, tf2_open + tf2_avg_manip)
-        line.set_xy2(tf2_upper_manip_line, bar_index + projection_offset, tf2_open + tf2_avg_manip)
-        line.set_xy1(tf2_lower_manip_line, bar_index, tf2_open - tf2_avg_manip)
-        line.set_xy2(tf2_lower_manip_line, bar_index + projection_offset, tf2_open - tf2_avg_manip)
-        if show_manipulation_label
-            label.set_xy(tf2_upper_manip_label, bar_index + projection_offset, tf2_open + tf2_avg_manip)
-            label.set_xy(tf2_lower_manip_label, bar_index + projection_offset, tf2_open - tf2_avg_manip)
-    if show_distribution and not na(tf2_avg_dist)
-        line.set_xy1(tf2_upper_dist_line, bar_index, tf2_open + tf2_avg_dist)
-        line.set_xy2(tf2_upper_dist_line, bar_index + projection_offset, tf2_open + tf2_avg_dist)
-        line.set_xy1(tf2_lower_dist_line, bar_index, tf2_open - tf2_avg_dist)
-        line.set_xy2(tf2_lower_dist_line, bar_index + projection_offset, tf2_open - tf2_avg_dist)
-        if show_distribution_label
-            label.set_xy(tf2_upper_dist_label, bar_index + projection_offset, tf2_open + tf2_avg_dist)
-            label.set_xy(tf2_lower_dist_label, bar_index + projection_offset, tf2_open - tf2_avg_dist)
-    if show_median and not na(tf2_med_manip) and not na(tf2_med_dist)
-        line.set_xy1(tf2_upper_med_manip_line, bar_index, tf2_open + tf2_med_manip)
-        line.set_xy2(tf2_upper_med_manip_line, bar_index + projection_offset, tf2_open + tf2_med_manip)
-        line.set_xy1(tf2_lower_med_manip_line, bar_index, tf2_open - tf2_med_manip)
-        line.set_xy2(tf2_lower_med_manip_line, bar_index + projection_offset, tf2_open - tf2_med_manip)
-        line.set_xy1(tf2_upper_med_dist_line, bar_index, tf2_open + tf2_med_dist)
-        line.set_xy2(tf2_upper_med_dist_line, bar_index + projection_offset, tf2_open + tf2_med_dist)
-        line.set_xy1(tf2_lower_med_dist_line, bar_index, tf2_open - tf2_med_dist)
-        line.set_xy2(tf2_lower_med_dist_line, bar_index + projection_offset, tf2_open - tf2_med_dist)
-        if show_median_label
-            label.set_xy(tf2_upper_med_manip_label, bar_index + projection_offset, tf2_open + tf2_med_manip)
-            label.set_xy(tf2_lower_med_manip_label, bar_index + projection_offset, tf2_open - tf2_med_manip)
-            label.set_xy(tf2_upper_med_dist_label, bar_index + projection_offset, tf2_open + tf2_med_dist)
-            label.set_xy(tf2_lower_med_dist_label, bar_index + projection_offset, tf2_open - tf2_med_dist)
-    if show_avg_hl and not na(tf2_avg_high) and not na(tf2_avg_low)
-        line.set_xy1(tf2_avg_high_line, bar_index, tf2_open + tf2_avg_high)
-        line.set_xy2(tf2_avg_high_line, bar_index + projection_offset, tf2_open + tf2_avg_high)
-        line.set_xy1(tf2_avg_low_line, bar_index, tf2_open - tf2_avg_low)
-        line.set_xy2(tf2_avg_low_line, bar_index + projection_offset, tf2_open - tf2_avg_low)
-        if show_avg_hl_label
-            label.set_xy(tf2_avg_high_label, bar_index + projection_offset, tf2_open + tf2_avg_high)
-            label.set_xy(tf2_avg_low_label, bar_index + projection_offset, tf2_open - tf2_avg_low)
-    if show_shading and not na(tf2_avg_manip) and not na(tf2_med_manip) and not na(tf2_avg_dist) and not na(tf2_med_dist)
-        box.set_lefttop(tf2_upper_manip_shading, bar_index, math.max(tf2_open + tf2_avg_manip, tf2_open + tf2_med_manip))
-        box.set_rightbottom(tf2_upper_manip_shading, bar_index + projection_offset, math.min(tf2_open + tf2_avg_manip, tf2_open + tf2_med_manip))
-        box.set_lefttop(tf2_lower_manip_shading, bar_index, math.max(tf2_open - tf2_avg_manip, tf2_open - tf2_med_manip))
-        box.set_rightbottom(tf2_lower_manip_shading, bar_index + projection_offset, math.min(tf2_open - tf2_avg_manip, tf2_open - tf2_med_manip))
-        box.set_lefttop(tf2_upper_dist_shading, bar_index, math.max(tf2_open + tf2_avg_dist, tf2_open + tf2_med_dist))
-        box.set_rightbottom(tf2_upper_dist_shading, bar_index + projection_offset, math.min(tf2_open + tf2_avg_dist, tf2_open + tf2_med_dist))
-        box.set_lefttop(tf2_lower_dist_shading, bar_index, math.max(tf2_open - tf2_avg_dist, tf2_open - tf2_med_dist))
-        box.set_rightbottom(tf2_lower_dist_shading, bar_index + projection_offset, math.min(tf2_open - tf2_avg_dist, tf2_open - tf2_med_dist))
+            label.set_x(t.open_lb, x2)
+    if show_manipulation
+        t.manip.extend_to(x2, show_manipulation_label)
+    if show_distribution
+        t.dist.extend_to(x2, show_distribution_label)
+    if show_median
+        t.med_manip.extend_to(x2, show_median_label)
+        t.med_dist.extend_to(x2, show_median_label)
+    if show_avg_hl
+        t.avg_hl.extend_to(x2, show_avg_hl_label)
+    if use_quantiles and not na(t.quant_manip)
+        t.quant_manip.extend_to(x2, show_quantile_label)
+        t.quant_dist.extend_to(x2, show_quantile_label)
+    if show_shading
+        box.set_right(t.shading.upper_manip, x2)
+        box.set_right(t.shading.lower_manip, x2)
+        box.set_right(t.shading.upper_dist, x2)
+        box.set_right(t.shading.lower_dist, x2)
 
-// TF3 Plotting
-if is_new_candle_tf3
-    if show_anchor
-        line.set_xy1(tf3_anchor_line, bar_index, tf3_open)
-        line.set_xy2(tf3_anchor_line, bar_index, tf3_open)
-        if show_anchor_label
-            label.set_xy(tf3_anchor_label, bar_index, tf3_open + (not na(tf3_avg_dist) ? tf3_avg_dist : 0))
-    if show_open
-        line.set_xy1(tf3_open_line, bar_index, tf3_open)
-        line.set_xy2(tf3_open_line, bar_index + projection_offset, tf3_open)
-        if show_open_label
-            label.set_xy(tf3_open_label, bar_index + projection_offset, tf3_open)
-    if show_manipulation and not na(tf3_avg_manip)
-        line.set_xy1(tf3_upper_manip_line, bar_index, tf3_open + tf3_avg_manip)
-        line.set_xy2(tf3_upper_manip_line, bar_index + projection_offset, tf3_open + tf3_avg_manip)
-        line.set_xy1(tf3_lower_manip_line, bar_index, tf3_open - tf3_avg_manip)
-        line.set_xy2(tf3_lower_manip_line, bar_index + projection_offset, tf3_open - tf3_avg_manip)
-        if show_manipulation_label
-            label.set_xy(tf3_upper_manip_label, bar_index + projection_offset, tf3_open + tf3_avg_manip)
-            label.set_xy(tf3_lower_manip_label, bar_index + projection_offset, tf3_open - tf3_avg_manip)
-    if show_distribution and not na(tf3_avg_dist)
-        line.set_xy1(tf3_upper_dist_line, bar_index, tf3_open + tf3_avg_dist)
-        line.set_xy2(tf3_upper_dist_line, bar_index + projection_offset, tf3_open + tf3_avg_dist)
-        line.set_xy1(tf3_lower_dist_line, bar_index, tf3_open - tf3_avg_dist)
-        line.set_xy2(tf3_lower_dist_line, bar_index + projection_offset, tf3_open - tf3_avg_dist)
-        if show_distribution_label
-            label.set_xy(tf3_upper_dist_label, bar_index + projection_offset, tf3_open + tf3_avg_dist)
-            label.set_xy(tf3_lower_dist_label, bar_index + projection_offset, tf3_open - tf3_avg_dist)
-    if show_median and not na(tf3_med_manip) and not na(tf3_med_dist)
-        line.set_xy1(tf3_upper_med_manip_line, bar_index, tf3_open + tf3_med_manip)
-        line.set_xy2(tf3_upper_med_manip_line, bar_index + projection_offset, tf3_open + tf3_med_manip)
-        line.set_xy1(tf3_lower_med_manip_line, bar_index, tf3_open - tf3_med_manip)
-        line.set_xy2(tf3_lower_med_manip_line, bar_index + projection_offset, tf3_open - tf3_med_manip)
-        line.set_xy1(tf3_upper_med_dist_line, bar_index, tf3_open + tf3_med_dist)
-        line.set_xy2(tf3_upper_med_dist_line, bar_index + projection_offset, tf3_open + tf3_med_dist)
-        line.set_xy1(tf3_lower_med_dist_line, bar_index, tf3_open - tf3_med_dist)
-        line.set_xy2(tf3_lower_med_dist_line, bar_index + projection_offset, tf3_open - tf3_med_dist)
-        if show_median_label
-            label.set_xy(tf3_upper_med_manip_label, bar_index + projection_offset, tf3_open + tf3_med_manip)
-            label.set_xy(tf3_lower_med_manip_label, bar_index + projection_offset, tf3_open - tf3_med_manip)
-            label.set_xy(tf3_upper_med_dist_label, bar_index + projection_offset, tf3_open + tf3_med_dist)
-            label.set_xy(tf3_lower_med_dist_label, bar_index + projection_offset, tf3_open - tf3_med_dist)
-    if show_avg_hl and not na(tf3_avg_high) and not na(tf3_avg_low)
-        line.set_xy1(tf3_avg_high_line, bar_index, tf3_open + tf3_avg_high)
-        line.set_xy2(tf3_avg_high_line, bar_index + projection_offset, tf3_open + tf3_avg_high)
-        line.set_xy1(tf3_avg_low_line, bar_index, tf3_open - tf3_avg_low)
-        line.set_xy2(tf3_avg_low_line, bar_index + projection_offset, tf3_open - tf3_avg_low)
-        if show_avg_hl_label
-            label.set_xy(tf3_avg_high_label, bar_index + projection_offset, tf3_open + tf3_avg_high)
-            label.set_xy(tf3_avg_low_label, bar_index + projection_offset, tf3_open - tf3_avg_low)
-    if show_shading and not na(tf3_avg_manip) and not na(tf3_med_manip) and not na(tf3_avg_dist) and not na(tf3_med_dist)
-        box.set_lefttop(tf3_upper_manip_shading, bar_index, math.max(tf3_open + tf3_avg_manip, tf3_open + tf3_med_manip))
-        box.set_rightbottom(tf3_upper_manip_shading, bar_index + projection_offset, math.min(tf3_open + tf3_avg_manip, tf3_open + tf3_med_manip))
-        box.set_lefttop(tf3_lower_manip_shading, bar_index, math.max(tf3_open - tf3_avg_manip, tf3_open - tf3_med_manip))
-        box.set_rightbottom(tf3_lower_manip_shading, bar_index + projection_offset, math.min(tf3_open - tf3_avg_manip, tf3_open - tf3_med_manip))
-        box.set_lefttop(tf3_upper_dist_shading, bar_index, math.max(tf3_open + tf3_avg_dist, tf3_open + tf3_med_dist))
-        box.set_rightbottom(tf3_upper_dist_shading, bar_index + projection_offset, math.min(tf3_open + tf3_avg_dist, tf3_open + tf3_med_dist))
-        box.set_lefttop(tf3_lower_dist_shading, bar_index, math.max(tf3_open - tf3_avg_dist, tf3_open - tf3_med_dist))
-        box.set_rightbottom(tf3_lower_dist_shading, bar_index + projection_offset, math.min(tf3_open - tf3_avg_dist, tf3_open - tf3_med_dist))
+process(Tf t, bool is_new) =>
+    bool was_new = t.was_new
+    t.was_new := is_new
+    t.on_bar(is_new)
+    if is_new
+        t.draw()
+    if was_new
+        t.extend_projection()
 
-// TF4 Plotting
-if is_new_candle_tf4
-    if show_anchor
-        line.set_xy1(tf4_anchor_line, bar_index, tf4_open)
-        line.set_xy2(tf4_anchor_line, bar_index, tf4_open)
-        if show_anchor_label
-            label.set_xy(tf4_anchor_label, bar_index, tf4_open + (not na(tf4_avg_dist) ? tf4_avg_dist : 0))
-    if show_open
-        line.set_xy1(tf4_open_line, bar_index, tf4_open)
-        line.set_xy2(tf4_open_line, bar_index + projection_offset, tf4_open)
-        if show_open_label
-            label.set_xy(tf4_open_label, bar_index + projection_offset, tf4_open)
-    if show_manipulation and not na(tf4_avg_manip)
-        line.set_xy1(tf4_upper_manip_line, bar_index, tf4_open + tf4_avg_manip)
-        line.set_xy2(tf4_upper_manip_line, bar_index + projection_offset, tf4_open + tf4_avg_manip)
-        line.set_xy1(tf4_lower_manip_line, bar_index, tf4_open - tf4_avg_manip)
-        line.set_xy2(tf4_lower_manip_line, bar_index + projection_offset, tf4_open - tf4_avg_manip)
-        if show_manipulation_label
-            label.set_xy(tf4_upper_manip_label, bar_index + projection_offset, tf4_open + tf4_avg_manip)
-            label.set_xy(tf4_lower_manip_label, bar_index + projection_offset, tf4_open - tf4_avg_manip)
-    if show_distribution and not na(tf4_avg_dist)
-        line.set_xy1(tf4_upper_dist_line, bar_index, tf4_open + tf4_avg_dist)
-        line.set_xy2(tf4_upper_dist_line, bar_index + projection_offset, tf4_open + tf4_avg_dist)
-        line.set_xy1(tf4_lower_dist_line, bar_index, tf4_open - tf4_avg_dist)
-        line.set_xy2(tf4_lower_dist_line, bar_index + projection_offset, tf4_open - tf4_avg_dist)
-        if show_distribution_label
-            label.set_xy(tf4_upper_dist_label, bar_index + projection_offset, tf4_open + tf4_avg_dist)
-            label.set_xy(tf4_lower_dist_label, bar_index + projection_offset, tf4_open - tf4_avg_dist)
-    if show_median and not na(tf4_med_manip) and not na(tf4_med_dist)
-        line.set_xy1(tf4_upper_med_manip_line, bar_index, tf4_open + tf4_med_manip)
-        line.set_xy2(tf4_upper_med_manip_line, bar_index + projection_offset, tf4_open + tf4_med_manip)
-        line.set_xy1(tf4_lower_med_manip_line, bar_index, tf4_open - tf4_med_manip)
-        line.set_xy2(tf4_lower_med_manip_line, bar_index + projection_offset, tf4_open - tf4_med_manip)
-        line.set_xy1(tf4_upper_med_dist_line, bar_index, tf4_open + tf4_med_dist)
-        line.set_xy2(tf4_upper_med_dist_line, bar_index + projection_offset, tf4_open + tf4_med_dist)
-        line.set_xy1(tf4_lower_med_dist_line, bar_index, tf4_open - tf4_med_dist)
-        line.set_xy2(tf4_lower_med_dist_line, bar_index + projection_offset, tf4_open - tf4_med_dist)
-        if show_median_label
-            label.set_xy(tf4_upper_med_manip_label, bar_index + projection_offset, tf4_open + tf4_med_manip)
-            label.set_xy(tf4_lower_med_manip_label, bar_index + projection_offset, tf4_open - tf4_med_manip)
-            label.set_xy(tf4_upper_med_dist_label, bar_index + projection_offset, tf4_open + tf4_med_dist)
-            label.set_xy(tf4_lower_med_dist_label, bar_index + projection_offset, tf4_open - tf4_med_dist)
-    if show_avg_hl and not na(tf4_avg_high) and not na(tf4_avg_low)
-        line.set_xy1(tf4_avg_high_line, bar_index, tf4_open + tf4_avg_high)
-        line.set_xy2(tf4_avg_high_line, bar_index + projection_offset, tf4_open + tf4_avg_high)
-        line.set_xy1(tf4_avg_low_line, bar_index, tf4_open - tf4_avg_low)
-        line.set_xy2(tf4_avg_low_line, bar_index + projection_offset, tf4_open - tf4_avg_low)
-        if show_avg_hl_label
-            label.set_xy(tf4_avg_high_label, bar_index + projection_offset, tf4_open + tf4_avg_high)
-            label.set_xy(tf4_avg_low_label, bar_index + projection_offset, tf4_open - tf4_avg_low)
-    if show_shading and not na(tf4_avg_manip) and not na(tf4_med_manip) and not na(tf4_avg_dist) and not na(tf4_med_dist)
-        box.set_lefttop(tf4_upper_manip_shading, bar_index, math.max(tf4_open + tf4_avg_manip, tf4_open + tf4_med_manip))
-        box.set_rightbottom(tf4_upper_manip_shading, bar_index + projection_offset, math.min(tf4_open + tf4_avg_manip, tf4_open + tf4_med_manip))
-        box.set_lefttop(tf4_lower_manip_shading, bar_index, math.max(tf4_open - tf4_avg_manip, tf4_open - tf4_med_manip))
-        box.set_rightbottom(tf4_lower_manip_shading, bar_index + projection_offset, math.min(tf4_open - tf4_avg_manip, tf4_open - tf4_med_manip))
-        box.set_lefttop(tf4_upper_dist_shading, bar_index, math.max(tf4_open + tf4_avg_dist, tf4_open + tf4_med_dist))
-        box.set_rightbottom(tf4_upper_dist_shading, bar_index + projection_offset, math.min(tf4_open + tf4_avg_dist, tf4_open + tf4_med_dist))
-        box.set_lefttop(tf4_lower_dist_shading, bar_index, math.max(tf4_open - tf4_avg_dist, tf4_open - tf4_med_dist))
-        box.set_rightbottom(tf4_lower_dist_shading, bar_index + projection_offset, math.min(tf4_open - tf4_avg_dist, tf4_open - tf4_med_dist))
+// === Main ===
+var Tf tf1 = new_tf(tf1_input, manipulation_color_tf1, distribution_color_tf1, median_color_tf1, avg_hl_color_tf1, shading_manip_color_tf1, shading_dist_color_tf1, true)
+var Tf tf2 = new_tf(tf2_input, manipulation_color_tf2, distribution_color_tf2, median_color_tf2, avg_hl_color_tf2, shading_manip_color_tf2, shading_dist_color_tf2, false)
+var Tf tf3 = new_tf(tf3_input, manipulation_color_tf3, distribution_color_tf3, median_color_tf3, avg_hl_color_tf3, shading_manip_color_tf3, shading_dist_color_tf3, false)
+var Tf tf4 = new_tf(tf4_input, manipulation_color_tf4, distribution_color_tf4, median_color_tf4, avg_hl_color_tf4, shading_manip_color_tf4, shading_dist_color_tf4, false)
 
-// Extend Lines and Boxes
-if bar_index > bar_index[1]
-    // TF1 Extensions
-    if show_open and is_new_candle_tf1[1]
-        line.set_x2(tf1_open_line, bar_index + projection_offset)
-        if show_open_label
-            label.set_x(tf1_open_label, bar_index + projection_offset)
-    if show_manipulation and is_new_candle_tf1[1]
-        line.set_x2(tf1_upper_manip_line, bar_index + projection_offset)
-        line.set_x2(tf1_lower_manip_line, bar_index + projection_offset)
-        if show_manipulation_label
-            label.set_x(tf1_upper_manip_label, bar_index + projection_offset)
-            label.set_x(tf1_lower_manip_label, bar_index + projection_offset)
-    if show_distribution and is_new_candle_tf1[1]
-        line.set_x2(tf1_upper_dist_line, bar_index + projection_offset)
-        line.set_x2(tf1_lower_dist_line, bar_index + projection_offset)
-        if show_distribution_label
-            label.set_x(tf1_upper_dist_label, bar_index + projection_offset)
-            label.set_x(tf1_lower_dist_label, bar_index + projection_offset)
-    if show_median and is_new_candle_tf1[1]
-        line.set_x2(tf1_upper_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf1_lower_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf1_upper_med_dist_line, bar_index + projection_offset)
-        line.set_x2(tf1_lower_med_dist_line, bar_index + projection_offset)
-        if show_median_label
-            label.set_x(tf1_upper_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf1_lower_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf1_upper_med_dist_label, bar_index + projection_offset)
-            label.set_x(tf1_lower_med_dist_label, bar_index + projection_offset)
-    if show_avg_hl and is_new_candle_tf1[1]
-        line.set_x2(tf1_avg_high_line, bar_index + projection_offset)
-        line.set_x2(tf1_avg_low_line, bar_index + projection_offset)
-        if show_avg_hl_label
-            label.set_x(tf1_avg_high_label, bar_index + projection_offset)
-            label.set_x(tf1_avg_low_label, bar_index + projection_offset)
-    if use_quantiles and is_new_candle_tf1[1]
-        line.set_x2(tf1_upper_quant_manip_line, bar_index + projection_offset)
-        line.set_x2(tf1_lower_quant_manip_line, bar_index + projection_offset)
-        line.set_x2(tf1_upper_quant_dist_line, bar_index + projection_offset)
-        line.set_x2(tf1_lower_quant_dist_line, bar_index + projection_offset)
-        if show_quantile_label
-            label.set_x(tf1_upper_quant_manip_label, bar_index + projection_offset)
-            label.set_x(tf1_lower_quant_manip_label, bar_index + projection_offset)
-            label.set_x(tf1_upper_quant_dist_label, bar_index + projection_offset)
-            label.set_x(tf1_lower_quant_dist_label, bar_index + projection_offset)
-    if show_shading and is_new_candle_tf1[1]
-        box.set_right(tf1_upper_manip_shading, bar_index + projection_offset)
-        box.set_right(tf1_lower_manip_shading, bar_index + projection_offset)
-        box.set_right(tf1_upper_dist_shading, bar_index + projection_offset)
-        box.set_right(tf1_lower_dist_shading, bar_index + projection_offset)
+is_new_tf1 = tf1_converted != "" ? timeframe.change(tf1_converted) : false
+is_new_tf2 = tf2_converted != "" ? timeframe.change(tf2_converted) : false
+is_new_tf3 = tf3_converted != "" ? timeframe.change(tf3_converted) : false
+is_new_tf4 = tf4_converted != "" ? timeframe.change(tf4_converted) : false
 
-    // TF2 Extensions
-    if show_open and is_new_candle_tf2[1]
-        line.set_x2(tf2_open_line, bar_index + projection_offset)
-        if show_open_label
-            label.set_x(tf2_open_label, bar_index + projection_offset)
-    if show_manipulation and is_new_candle_tf2[1]
-        line.set_x2(tf2_upper_manip_line, bar_index + projection_offset)
-        line.set_x2(tf2_lower_manip_line, bar_index + projection_offset)
-        if show_manipulation_label
-            label.set_x(tf2_upper_manip_label, bar_index + projection_offset)
-            label.set_x(tf2_lower_manip_label, bar_index + projection_offset)
-    if show_distribution and is_new_candle_tf2[1]
-        line.set_x2(tf2_upper_dist_line, bar_index + projection_offset)
-        line.set_x2(tf2_lower_dist_line, bar_index + projection_offset)
-        if show_distribution_label
-            label.set_x(tf2_upper_dist_label, bar_index + projection_offset)
-            label.set_x(tf2_lower_dist_label, bar_index + projection_offset)
-    if show_median and is_new_candle_tf2[1]
-        line.set_x2(tf2_upper_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf2_lower_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf2_upper_med_dist_line, bar_index + projection_offset)
-        line.set_x2(tf2_lower_med_dist_line, bar_index + projection_offset)
-        if show_median_label
-            label.set_x(tf2_upper_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf2_lower_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf2_upper_med_dist_label, bar_index + projection_offset)
-            label.set_x(tf2_lower_med_dist_label, bar_index + projection_offset)
-    if show_avg_hl and is_new_candle_tf2[1]
-        line.set_x2(tf2_avg_high_line, bar_index + projection_offset)
-        line.set_x2(tf2_avg_low_line, bar_index + projection_offset)
-        if show_avg_hl_label
-            label.set_x(tf2_avg_high_label, bar_index + projection_offset)
-            label.set_x(tf2_avg_low_label, bar_index + projection_offset)
-    if show_shading and is_new_candle_tf2[1]
-        box.set_right(tf2_upper_manip_shading, bar_index + projection_offset)
-        box.set_right(tf2_lower_manip_shading, bar_index + projection_offset)
-        box.set_right(tf2_upper_dist_shading, bar_index + projection_offset)
-        box.set_right(tf2_lower_dist_shading, bar_index + projection_offset)
-
-    // TF3 Extensions
-    if show_open and is_new_candle_tf3[1]
-        line.set_x2(tf3_open_line, bar_index + projection_offset)
-        if show_open_label
-            label.set_x(tf3_open_label, bar_index + projection_offset)
-    if show_manipulation and is_new_candle_tf3[1]
-        line.set_x2(tf3_upper_manip_line, bar_index + projection_offset)
-        line.set_x2(tf3_lower_manip_line, bar_index + projection_offset)
-        if show_manipulation_label
-            label.set_x(tf3_upper_manip_label, bar_index + projection_offset)
-            label.set_x(tf3_lower_manip_label, bar_index + projection_offset)
-    if show_distribution and is_new_candle_tf3[1]
-        line.set_x2(tf3_upper_dist_line, bar_index + projection_offset)
-        line.set_x2(tf3_lower_dist_line, bar_index + projection_offset)
-        if show_distribution_label
-            label.set_x(tf3_upper_dist_label, bar_index + projection_offset)
-            label.set_x(tf3_lower_dist_label, bar_index + projection_offset)
-    if show_median and is_new_candle_tf3[1]
-        line.set_x2(tf3_upper_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf3_lower_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf3_upper_med_dist_line, bar_index + projection_offset)
-        line.set_x2(tf3_lower_med_dist_line, bar_index + projection_offset)
-        if show_median_label
-            label.set_x(tf3_upper_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf3_lower_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf3_upper_med_dist_label, bar_index + projection_offset)
-            label.set_x(tf3_lower_med_dist_label, bar_index + projection_offset)
-    if show_avg_hl and is_new_candle_tf3[1]
-        line.set_x2(tf3_avg_high_line, bar_index + projection_offset)
-        line.set_x2(tf3_avg_low_line, bar_index + projection_offset)
-        if show_avg_hl_label
-            label.set_x(tf3_avg_high_label, bar_index + projection_offset)
-            label.set_x(tf3_avg_low_label, bar_index + projection_offset)
-    if show_shading and is_new_candle_tf3[1]
-        box.set_right(tf3_upper_manip_shading, bar_index + projection_offset)
-        box.set_right(tf3_lower_manip_shading, bar_index + projection_offset)
-        box.set_right(tf3_upper_dist_shading, bar_index + projection_offset)
-        box.set_right(tf3_lower_dist_shading, bar_index + projection_offset)
-
-    // TF4 Extensions
-    if show_open and is_new_candle_tf4[1]
-        line.set_x2(tf4_open_line, bar_index + projection_offset)
-        if show_open_label
-            label.set_x(tf4_open_label, bar_index + projection_offset)
-    if show_manipulation and is_new_candle_tf4[1]
-        line.set_x2(tf4_upper_manip_line, bar_index + projection_offset)
-        line.set_x2(tf4_lower_manip_line, bar_index + projection_offset)
-        if show_manipulation_label
-            label.set_x(tf4_upper_manip_label, bar_index + projection_offset)
-            label.set_x(tf4_lower_manip_label, bar_index + projection_offset)
-    if show_distribution and is_new_candle_tf4[1]
-        line.set_x2(tf4_upper_dist_line, bar_index + projection_offset)
-        line.set_x2(tf4_lower_dist_line, bar_index + projection_offset)
-        if show_distribution_label
-            label.set_x(tf4_upper_dist_label, bar_index + projection_offset)
-            label.set_x(tf4_lower_dist_label, bar_index + projection_offset)
-    if show_median and is_new_candle_tf4[1]
-        line.set_x2(tf4_upper_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf4_lower_med_manip_line, bar_index + projection_offset)
-        line.set_x2(tf4_upper_med_dist_line, bar_index + projection_offset)
-        line.set_x2(tf4_lower_med_dist_line, bar_index + projection_offset)
-        if show_median_label
-            label.set_x(tf4_upper_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf4_lower_med_manip_label, bar_index + projection_offset)
-            label.set_x(tf4_upper_med_dist_label, bar_index + projection_offset)
-            label.set_x(tf4_lower_med_dist_label, bar_index + projection_offset)
-    if show_avg_hl and is_new_candle_tf4[1]
-        line.set_x2(tf4_avg_high_line, bar_index + projection_offset)
-        line.set_x2(tf4_avg_low_line, bar_index + projection_offset)
-        if show_avg_hl_label
-            label.set_x(tf4_avg_high_label, bar_index + projection_offset)
-            label.set_x(tf4_avg_low_label, bar_index + projection_offset)
-    if show_shading and is_new_candle_tf4[1]
-        box.set_right(tf4_upper_manip_shading, bar_index + projection_offset)
-        box.set_right(tf4_lower_manip_shading, bar_index + projection_offset)
-        box.set_right(tf4_upper_dist_shading, bar_index + projection_offset)
-        box.set_right(tf4_lower_dist_shading, bar_index + projection_offset)
+process(tf1, is_new_tf1)
+process(tf2, is_new_tf2)
+process(tf3, is_new_tf3)
+process(tf4, is_new_tf4)
