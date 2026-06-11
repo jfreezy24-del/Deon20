@@ -19,7 +19,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { scanMarket } from '../src/scanner';
 import { DEFAULT_WATCHLIST } from '../src/defaultWatchlist';
-import { DEFAULT_OPTIONS, formatMessage, selectNotifications, signalKey } from './lib';
+import {
+  buildNtfyPayload,
+  DEFAULT_OPTIONS,
+  formatMessage,
+  PushMessage,
+  selectNotifications,
+  signalKey,
+} from './lib';
 
 const SERVER_DIR = __dirname;
 const STATE_FILE = path.join(SERVER_DIR, '.state', 'prev-keys.json');
@@ -48,19 +55,11 @@ function saveKeys(keys: Set<string>): void {
   writeFileSync(STATE_FILE, JSON.stringify([...keys]));
 }
 
-async function sendNtfy(
-  server: string,
-  topic: string,
-  msg: { title: string; body: string; priority: string; tags: string },
-): Promise<void> {
-  const res = await fetch(`${server.replace(/\/$/, '')}/${encodeURIComponent(topic)}`, {
+async function sendNtfy(server: string, topic: string, msg: PushMessage): Promise<void> {
+  const res = await fetch(server.replace(/\/$/, ''), {
     method: 'POST',
-    headers: {
-      Title: msg.title,
-      Priority: msg.priority,
-      Tags: msg.tags,
-    },
-    body: msg.body,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildNtfyPayload(topic, msg)),
   });
   if (!res.ok) throw new Error(`ntfy responded ${res.status}: ${await res.text()}`);
 }
@@ -98,32 +97,43 @@ async function main() {
     console.log('NTFY_TOPIC not set — dry run, nothing will be pushed.');
   }
 
+  // Sends must not prevent the state save: an unsaved baseline would re-fire
+  // (or re-suppress) everything on the next run.
+  const sendErrors: string[] = [];
+  const trySend = async (msg: PushMessage) => {
+    console.log(`  -> ${msg.title}`);
+    if (!topic) return;
+    try {
+      await sendNtfy(server, topic, msg);
+    } catch (e) {
+      sendErrors.push(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   if (firstRun) {
     console.log('No previous state — baseline established; alerts start next run.');
-    if (topic) {
-      const top = result.signals[0];
-      await sendNtfy(server, topic, {
-        title: 'Strat alerts armed ✅',
-        body:
-          `Watching ${watchlist.length} symbols on 4H/D/W/M. ` +
-          `${result.signals.length} signals currently active` +
-          (top ? `; top: ${top.symbol} ${top.pattern} (${top.timeframe}) ${top.confidence}%.` : '.') +
-          ' You will be pinged when a new one fires.',
-        priority: 'default',
-        tags: 'white_check_mark',
-      });
-    }
+    const top = result.signals[0];
+    await trySend({
+      title: 'Strat alerts armed ✅',
+      body:
+        `Watching ${watchlist.length} symbols on 4H/D/W/M. ` +
+        `${result.signals.length} signals currently active` +
+        (top ? `; top: ${top.symbol} ${top.pattern} (${top.timeframe}) ${top.confidence}%.` : '.') +
+        ' You will be pinged when a new one fires.',
+      priority: 'default',
+      tags: 'white_check_mark',
+    });
   } else {
     console.log(`${toNotify.length} new signal(s) to notify.`);
-    for (const s of toNotify) {
-      const msg = formatMessage(s);
-      console.log(`  -> ${msg.title}`);
-      if (topic) await sendNtfy(server, topic, msg);
-    }
+    for (const s of toNotify) await trySend(formatMessage(s));
   }
 
   saveKeys(new Set(result.signals.map(signalKey)));
   console.log('State saved. Done.');
+
+  if (sendErrors.length > 0) {
+    throw new Error(`${sendErrors.length} notification(s) failed to send: ${sendErrors[0]}`);
+  }
 }
 
 main().catch((e) => {

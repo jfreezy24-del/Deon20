@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_OPTIONS, formatMessage, selectNotifications, signalKey } from './lib';
+import {
+  buildNtfyPayload,
+  DEFAULT_OPTIONS,
+  formatMessage,
+  selectNotifications,
+  signalKey,
+} from './lib';
 import { Signal } from '../src/strat/types';
 
 const sig = (over: Partial<Signal>): Signal => ({
@@ -73,5 +79,28 @@ describe('formatMessage', () => {
     expect(msg.body).toContain('4H▲ D▲ W▲ M▼');
     expect(msg.priority).toBe('high');
     expect(formatMessage(sig({ status: 'SETUP' })).priority).toBe('default');
+  });
+});
+
+describe('buildNtfyPayload', () => {
+  it('keeps non-Latin-1 characters in the title (JSON publish, not headers)', () => {
+    // Regression: ▲/▼/✅ in titles crashed header-based publishing because
+    // HTTP header values are Latin-1 only.
+    const payload = buildNtfyPayload('my-topic', {
+      title: 'Strat alerts armed ✅',
+      body: 'NVDA ▲ details',
+      priority: 'high',
+      tags: 'white_check_mark',
+    });
+    expect(payload.topic).toBe('my-topic');
+    expect(payload.title).toBe('Strat alerts armed ✅');
+    expect(payload.message).toContain('▲');
+    expect(payload.priority).toBe(4);
+    expect(payload.tags).toEqual(['white_check_mark']);
+    expect(
+      buildNtfyPayload('t', { title: 'x', body: 'y', priority: 'default', tags: 'z' }).priority,
+    ).toBe(3);
+    // The whole payload must serialize cleanly.
+    expect(() => JSON.stringify(payload)).not.toThrow();
   });
 });

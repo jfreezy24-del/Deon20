@@ -65,6 +65,21 @@ export interface PushMessage {
   tags: string;
 }
 
+/**
+ * ntfy JSON publish payload (POST to the server root). The JSON API is used
+ * instead of header-based publishing because HTTP headers are Latin-1 only —
+ * the ▲/▼/✅ characters in our titles are not representable there.
+ */
+export function buildNtfyPayload(topic: string, msg: PushMessage) {
+  return {
+    topic,
+    title: msg.title,
+    message: msg.body,
+    priority: msg.priority === 'high' ? 4 : 3,
+    tags: [msg.tags],
+  };
+}
+
 export function formatMessage(s: Signal): PushMessage {
   const bull = s.direction === 'bullish';
   return {
