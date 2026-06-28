@@ -67,6 +67,30 @@ async function sendNtfy(server: string, topic: string, msg: PushMessage): Promis
 async function main() {
   const topic = process.env.NTFY_TOPIC?.trim();
   const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
+
+  // Deterministic delivery test: when TEST_PING is set we send a single
+  // notification (independent of the scan/dedupe logic) and exit. This is the
+  // reliable way to confirm the secret -> ntfy.sh -> app -> phone chain works.
+  const testPing = (process.env.TEST_PING ?? '').trim().toLowerCase();
+  if (testPing === '1' || testPing === 'true' || testPing === 'yes') {
+    if (!topic) {
+      throw new Error('TEST_PING set but NTFY_TOPIC is empty — set the NTFY_TOPIC secret first.');
+    }
+    // Log the topic length and last 2 chars so a trailing space / wrong value
+    // is visible in the run log without exposing the secret itself.
+    console.log(
+      `Sending test ping to topic on ${server} (length ${topic.length}, ends "…${topic.slice(-2)}").`,
+    );
+    await sendNtfy(server, topic, {
+      title: 'Strat alerts test ✅',
+      body: 'If this reached your phone, ntfy delivery is working — your topic, app and permissions are all correct.',
+      priority: 'high',
+      tags: 'white_check_mark',
+    });
+    console.log('Test ping sent successfully (ntfy accepted it).');
+    return;
+  }
+
   const opts = {
     ...DEFAULT_OPTIONS,
     minConfidence: Number(process.env.MIN_CONFIDENCE ?? DEFAULT_OPTIONS.minConfidence),

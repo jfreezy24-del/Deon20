@@ -11,6 +11,11 @@ on:
     - cron: '0 0-12,21-23 * * 1-5'
     - cron: '0 * * * 0,6'
   workflow_dispatch:
+    inputs:
+      test_ping:
+        description: 'Send one test notification to verify ntfy delivery (skips the scan)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,6 +55,7 @@ jobs:
       - name: Scan and notify
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TEST_PING: ${{ inputs.test_ping }}
           MIN_CONFIDENCE: ${{ vars.MIN_CONFIDENCE || '50' }}
           NOTIFY_SETUPS: ${{ vars.NOTIFY_SETUPS || 'true' }}
           SETUP_MIN_CONFIDENCE: ${{ vars.SETUP_MIN_CONFIDENCE || '65' }}
