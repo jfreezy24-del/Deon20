@@ -35,6 +35,23 @@ export function SignalCard({ signal, isNew = false }: { signal: Signal; isNew?: 
           <Text style={[styles.pattern, { color: dirColor }]}>
             {bull ? '▲' : '▼'} {signal.pattern} <Text style={styles.sequence}>({signal.sequence})</Text>
           </Text>
+          <View style={styles.tagRow}>
+            <View
+              style={[
+                styles.scenarioTag,
+                { backgroundColor: signal.scenario === 'reversal' ? colors.warn : colors.chipActive },
+              ]}
+            >
+              <Text style={styles.scenarioText}>
+                {signal.scenario === 'reversal' ? 'REVERSAL' : 'CONTINUATION'}
+              </Text>
+            </View>
+            {signal.compression ? (
+              <View style={styles.compTag}>
+                <Text style={styles.compText}>X-1-? COMPRESSION</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
         <View style={styles.badges}>
           <View style={[styles.tfBadge]}>
@@ -123,6 +140,18 @@ const styles = StyleSheet.create({
   price: { color: colors.textDim, fontSize: 13, fontWeight: '500' },
   pattern: { fontSize: 14, fontWeight: '700', marginTop: 2 },
   sequence: { color: colors.textDim, fontWeight: '500', fontSize: 12 },
+  tagRow: { flexDirection: 'row', gap: 6, marginTop: 5 },
+  scenarioTag: { borderRadius: 5, paddingHorizontal: 7, paddingVertical: 2 },
+  scenarioText: { color: '#0b0f14', fontWeight: '900', fontSize: 9, letterSpacing: 0.5 },
+  compTag: {
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    backgroundColor: colors.chip,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+  },
+  compText: { color: colors.textDim, fontWeight: '800', fontSize: 9, letterSpacing: 0.5 },
   badges: { alignItems: 'flex-end', gap: 4 },
   tfBadge: {
     backgroundColor: colors.chipActive,

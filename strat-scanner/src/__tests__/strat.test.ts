@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyCandle, classifySeries } from '../strat/classify';
-import { detectSetups } from '../strat/patterns';
+import { detectPotentialSetups } from '../strat/patterns';
 import { computeLevels } from '../strat/levels';
 import { buildContinuity, scoreContinuity } from '../strat/continuity';
 import { scoreConfidence } from '../strat/confidence';
@@ -38,71 +38,81 @@ describe('classifyCandle', () => {
   });
 });
 
-describe('detectSetups', () => {
-  it('finds 2-1-2 bullish reversal and bearish continuation off 2d-1', () => {
+describe('detectPotentialSetups', () => {
+  it('finds the 2d-1-? fork: bullish reversal and bearish continuation', () => {
     const candles = [
       bar(100, 110, 90, 105),
       bar(104, 109, 92, 95), // inside-ish baseline
       bar(95, 105, 85, 88), // 2d (broke low)
       bar(89, 95, 87, 93), // 1 (inside the 2d bar)
     ];
-    const setups = detectSetups(candles);
-    const names = setups.map((s) => s.name);
-    expect(names).toContain('2-1-2 Bullish Reversal');
-    expect(names).toContain('2-1-2 Bearish Continuation');
-    const bull = setups.find((s) => s.name === '2-1-2 Bullish Reversal')!;
-    expect(bull.direction).toBe('bullish');
+    const setups = detectPotentialSetups(candles);
+    const bull = setups.find((s) => s.direction === 'bullish')!;
+    expect(bull.name).toBe('2-1-2 Reversal');
+    expect(bull.sequence).toBe('2d-1-?');
+    expect(bull.scenario).toBe('reversal');
     expect(bull.isReversal).toBe(true);
+    expect(bull.compression).toBe(true);
     expect(bull.triggerBar).toBe(candles[3]);
+    const bear = setups.find((s) => s.direction === 'bearish')!;
+    expect(bear.name).toBe('2-1-2 Continuation');
+    expect(bear.scenario).toBe('continuation');
   });
 
-  it('finds 3-1-2 off an outside bar then inside bar', () => {
+  it('finds the 3-1-? fork off an outside bar then inside bar', () => {
     const candles = [
       bar(100, 110, 90, 105),
       bar(104, 109, 92, 95),
       bar(95, 112, 88, 108), // 3 (broke both sides of previous bar)
       bar(105, 110, 100, 102), // 1
     ];
-    const names = detectSetups(candles).map((s) => s.name);
-    expect(names).toContain('3-1-2 Bullish');
-    expect(names).toContain('3-1-2 Bearish');
+    const setups = detectPotentialSetups(candles);
+    expect(setups.every((s) => s.name === '3-1-2 Reversal')).toBe(true);
+    expect(setups.every((s) => s.sequence === '3-1-?')).toBe(true);
+    expect(setups.map((s) => s.direction).sort()).toEqual(['bearish', 'bullish']);
   });
 
-  it('finds Rev Strat 1-2-2 bullish off 1 then failed 2d', () => {
+  it('finds the Rev Strat 1-2d-? bullish fork off a failing breakdown', () => {
     const candles = [
       bar(100, 110, 90, 105),
       bar(102, 108, 95, 100), // 1
       bar(99, 106, 92, 94), // 2d out of the inside bar
       // (the trigger is a break back above 106)
     ];
-    const names = detectSetups(candles).map((s) => s.name);
-    expect(names).toContain('Rev Strat (1-2-2) Bullish');
+    const setups = detectPotentialSetups(candles);
+    const m = setups.find((s) => s.name === 'Rev Strat (1-2-2) Reversal')!;
+    expect(m.sequence).toBe('1-2d-?');
+    expect(m.direction).toBe('bullish');
+    expect(m.compression).toBe(false);
   });
 
-  it('finds plain 2-2 reversal/continuation off a lone 2d', () => {
+  it('finds the 2d-? fork off a lone 2d (reversal up / continuation down)', () => {
     const candles = [
       bar(100, 110, 90, 105),
       bar(105, 115, 95, 112), // 2u
       bar(110, 113, 88, 92), // 2d
     ];
-    const names = detectSetups(candles).map((s) => s.name);
-    expect(names).toContain('2-2 Bullish Reversal');
-    expect(names).toContain('2-2 Bearish Continuation');
+    const setups = detectPotentialSetups(candles);
+    const bull = setups.find((s) => s.direction === 'bullish')!;
+    expect(bull.name).toBe('2-2 Reversal');
+    expect(bull.sequence).toBe('2d-?');
+    const bear = setups.find((s) => s.direction === 'bearish')!;
+    expect(bear.name).toBe('2-2 Continuation');
   });
 
-  it('finds 1-1-2 off double inside bars', () => {
+  it('finds the 1-1-? fork off double inside bars', () => {
     const candles = [
       bar(100, 110, 90, 105),
       bar(102, 108, 95, 100), // 1
       bar(101, 106, 97, 103), // 1
     ];
-    const names = detectSetups(candles).map((s) => s.name);
-    expect(names).toContain('1-1-2 Bullish');
-    expect(names).toContain('1-1-2 Bearish');
+    const setups = detectPotentialSetups(candles);
+    expect(setups.every((s) => s.name === '1-1-2 Continuation')).toBe(true);
+    expect(setups.every((s) => s.sequence === '1-1-?' && s.compression)).toBe(true);
   });
 
-  it('returns nothing with fewer than 4 bars only for 3-bar patterns needing context', () => {
-    expect(detectSetups([bar(1, 2, 0.5, 1.5)])).toEqual([]);
+  it('returns nothing with fewer than 3 bars', () => {
+    expect(detectPotentialSetups([bar(1, 2, 0.5, 1.5)])).toEqual([]);
   });
 });
 
@@ -180,8 +190,8 @@ describe('scoreConfidence', () => {
       bar(104, 112, 95, 98),
       bar(99, 105, 97, 104), // closes near high
     ];
-    const setups = detectSetups(candles);
-    const m = setups.find((s) => s.name === '2-1-2 Bullish Reversal')!;
+    const setups = detectPotentialSetups(candles);
+    const m = setups.find((s) => s.name === '2-1-2 Reversal' && s.direction === 'bullish')!;
     const levels = computeLevels(candles, 'bullish');
     const res = scoreConfidence({
       pattern: m,
@@ -265,9 +275,11 @@ describe('signalsForSymbol (end-to-end on fixtures)', () => {
     ];
     const signals = signalsForSymbol('TEST', series);
     expect(signals.length).toBeGreaterThan(0);
-    const bull = signals.find((s) => s.pattern === '2-1-2 Bullish Reversal')!;
+    const bull = signals.find((s) => s.pattern === '2-1-2 Reversal' && s.direction === 'bullish')!;
     expect(bull.timeframe).toBe('D');
     expect(bull.status).toBe('TRIGGERED');
+    expect(bull.scenario).toBe('reversal');
+    expect(bull.compression).toBe(true);
     expect(bull.levels.entry).toBeGreaterThan(bull.levels.stop);
     expect(bull.explanation).toContain('2-1-2');
     expect(bull.explanation).toContain(String(bull.levels.entry));

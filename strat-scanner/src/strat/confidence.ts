@@ -27,6 +27,12 @@ export function scoreConfidence(input: ConfidenceInput): ConfidenceResult {
 
   add(`${pattern.name} base pattern quality`, pattern.baseScore);
 
+  // Compression forks (X-1-?) are the cleanest potential setups: an inside bar
+  // gives the tightest, best-defined risk and the direction is still undecided.
+  if (pattern.compression) {
+    add('Inside-bar compression (tight, undecided X-1-? fork)', 6);
+  }
+
   // Full timeframe continuity
   if (continuity.full) {
     add('Full timeframe continuity (all timeframes pointed with the trade)', 24);
@@ -69,7 +75,7 @@ export function scoreConfidence(input: ConfidenceInput): ConfidenceResult {
     add('Reversal sequence already backed by higher-timeframe direction', 4);
   }
 
-  if (triggered) add('Trigger level already broken — signal is in force', 6);
+  if (triggered) add('Trigger already broken — the "?" resolved, setup in force', 6);
 
   const raw = factors.reduce((a, f) => a + f.points, 0);
   const score = Math.max(5, Math.min(95, Math.round(raw)));

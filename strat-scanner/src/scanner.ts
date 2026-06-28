@@ -1,4 +1,4 @@
-import { detectSetups } from './strat/patterns';
+import { detectPotentialSetups } from './strat/patterns';
 import { buildContinuity, scoreContinuity } from './strat/continuity';
 import { computeLevels } from './strat/levels';
 import { scoreConfidence } from './strat/confidence';
@@ -35,7 +35,7 @@ function signalsForSymbol(symbol: string, series: TimeframeSeries[]): Signal[] {
   const signals: Signal[] = [];
   for (const s of series) {
     if (s.completed.length < MIN_BARS) continue;
-    const matches = detectSetups(s.completed);
+    const matches = detectPotentialSetups(s.completed);
     for (const m of matches) {
       const levels = computeLevels(s.completed, m.direction);
       const triggered = s.forming
@@ -59,7 +59,9 @@ function signalsForSymbol(symbol: string, series: TimeframeSeries[]): Signal[] {
         direction: m.direction,
         pattern: m.name,
         sequence: m.sequence,
-        status: triggered ? 'TRIGGERED' : 'SETUP',
+        status: triggered ? 'TRIGGERED' : 'POTENTIAL',
+        scenario: m.scenario,
+        compression: m.compression,
         isReversal: m.isReversal,
         confidence: conf.score,
         confidenceLabel: conf.label,

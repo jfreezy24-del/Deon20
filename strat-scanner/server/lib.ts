@@ -83,7 +83,7 @@ export function buildNtfyPayload(topic: string, msg: PushMessage) {
 export function formatMessage(s: Signal): PushMessage {
   const bull = s.direction === 'bullish';
   return {
-    title: `${s.symbol} ${bull ? '▲' : '▼'} ${s.pattern} — ${s.status} (${s.timeframe})`,
+    title: `${s.symbol} ${bull ? '▲' : '▼'} ${s.pattern} (${s.sequence}) — ${s.status} (${s.timeframe})`,
     body:
       `Confidence ${s.confidence}% (${s.confidenceLabel}) · ` +
       `Entry ${fmt(s.levels.entry)} · Stop ${fmt(s.levels.stop)} · ` +

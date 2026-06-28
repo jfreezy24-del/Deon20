@@ -1,10 +1,16 @@
 # Strat Scanner 📱
 
-A React Native (Expo) mobile app that scans the financial markets for actionable
-**#TheStrat** setups and tells you, for every signal:
+A React Native (Expo) mobile app that scans the financial markets for **potential
+#TheStrat setups** — unresolved `X-1-?` forks where the *next* bar (the "?") is
+still to come — rather than sequences that have already completed. For every
+signal it tells you:
 
-- **The actionable signal** — the Strat sequence (2-1-2, 3-1-2, 2-2 Reversal,
-  Rev Strat 1-2-2, 3-2-2, 1-1-2, 2-2 Continuation, 3-2) and its direction.
+- **The potential signal** — the unresolved Strat fork (`2u-1-?`, `2d-1-?`,
+  `3-1-?`, `1-1-?`, `2d-?`, `1-2d-?`, `3-2d-?`, `3-?` …) and which side it plays
+  out: a **reversal** if it breaks one way, a **continuation** if it breaks the
+  other. The classic headline case is a directional bar followed by an inside
+  bar (`2u-1-?`): break the inside-bar high and the move continues, break its low
+  and it reverses.
 - **Confidence level** — a transparent 0–100 score (High / Medium / Low) with a
   full point-by-point breakdown of why it scored what it did.
 - **Why the setup is valid and forming** — a plain-English explanation of the
@@ -41,11 +47,15 @@ persisted on the device.
    00/04/08… bars for 24h markets, 9:30/13:30-style bars for equities).
 2. **Classification** — every candle is typed against the bar before it:
    `1` inside, `2u` broke the high only, `2d` broke the low only, `3` outside.
-3. **Setup detection** — the *last completed candle* on each timeframe is the
-   actionable bar. Its high/low are the trigger levels, and the engine maps
-   which known Strat sequence completes on a break of each side. If the
-   currently forming candle has already taken a trigger out, the signal is
-   marked **TRIGGERED** (in force) rather than **SETUP** (pending).
+3. **Potential-setup detection** — the *last completed candle* on each timeframe
+   is the actionable bar and the next bar is the "?". Its high/low are the
+   trigger levels, and the engine lays out the fork: which Strat scenario plays
+   out (reversal vs continuation) on a break of each side, *before* it happens.
+   Inside-bar (`X-1-?`) forks are flagged as **compression** — the cleanest
+   potential setups, with the tightest risk and a genuinely undecided direction.
+   If the currently forming candle has already taken a trigger out, the signal is
+   marked **TRIGGERED** (the "?" resolved, in force) rather than **POTENTIAL**
+   (pending).
 4. **Full timeframe continuity (FTFC)** — the current 4H/D/W/M candles are
    checked against their opens; alignment with the trade adds confidence,
    conflict subtracts it. The FTFC strip is shown on every signal card.
@@ -61,7 +71,7 @@ persisted on the device.
 ```
 App.tsx                     — main screen (scan, filters, watchlist editor)
 src/strat/classify.ts       — 1 / 2u / 2d / 3 candle typing
-src/strat/patterns.ts       — actionable sequence detection
+src/strat/patterns.ts       — potential X-1-? fork detection
 src/strat/continuity.ts     — FTFC map + scoring
 src/strat/levels.ts         — entry / stop / targets / R:R
 src/strat/confidence.ts     — transparent confidence model

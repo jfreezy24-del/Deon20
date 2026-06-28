@@ -23,6 +23,9 @@ export const TIMEFRAMES: Timeframe[] = ['4H', 'D', 'W', 'M'];
 
 export type Direction = 'bullish' | 'bearish';
 
+/** Whether breaking the trigger that way reverses or continues the order flow. */
+export type Scenario = 'reversal' | 'continuation';
+
 export type TFTrend = 'up' | 'down' | 'flat';
 
 /** Direction of the currently forming candle on each timeframe (close vs open). */
@@ -54,12 +57,19 @@ export interface Signal {
   lastPrice: number;
   timeframe: Timeframe;
   direction: Direction;
-  /** e.g. "2-1-2 Bullish Reversal" */
+  /** e.g. "2-1-2 Reversal" */
   pattern: string;
-  /** Candle sequence as traders write it, e.g. "2d-1-?" */
+  /** Unresolved candle sequence ending in the "?" next bar, e.g. "2d-1-?" */
   sequence: string;
-  /** SETUP = waiting for trigger, TRIGGERED = trigger level already broken by the forming bar */
-  status: 'SETUP' | 'TRIGGERED';
+  /**
+   * POTENTIAL = the fork is pending, waiting for the "?" bar to break a trigger.
+   * TRIGGERED = the trigger level has already been broken by the forming bar.
+   */
+  status: 'POTENTIAL' | 'TRIGGERED';
+  /** Whether a break this way reverses or continues order flow */
+  scenario: Scenario;
+  /** Actionable bar is an inside bar (1) — a clean X-1-? compression fork */
+  compression: boolean;
   isReversal: boolean;
   confidence: number; // 0-100
   confidenceLabel: 'High' | 'Medium' | 'Low';
