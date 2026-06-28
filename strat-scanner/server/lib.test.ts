@@ -13,9 +13,11 @@ const sig = (over: Partial<Signal>): Signal => ({
   lastPrice: 100,
   timeframe: 'D',
   direction: 'bullish',
-  pattern: '2-1-2 Bullish Reversal',
-  sequence: '2d-1-2u',
-  status: 'SETUP',
+  pattern: '2-1-2 Reversal',
+  sequence: '2d-1-?',
+  status: 'POTENTIAL',
+  scenario: 'reversal',
+  compression: true,
   isReversal: true,
   confidence: 70,
   confidenceLabel: 'High',
@@ -37,8 +39,8 @@ describe('selectNotifications', () => {
     expect(selectNotifications([s], new Set([signalKey(s)]))).toEqual([]);
   });
 
-  it('flags SETUP -> TRIGGERED transitions as new', () => {
-    const setup = sig({ status: 'SETUP' });
+  it('flags POTENTIAL -> TRIGGERED transitions as new', () => {
+    const setup = sig({ status: 'POTENTIAL' });
     const fired = sig({ status: 'TRIGGERED' });
     const out = selectNotifications([fired], new Set([signalKey(setup)]));
     expect(out).toHaveLength(1);
@@ -48,8 +50,8 @@ describe('selectNotifications', () => {
   it('applies confidence thresholds per status', () => {
     const weakTrig = sig({ status: 'TRIGGERED', confidence: 40, setupBarTime: 1 });
     const okTrig = sig({ status: 'TRIGGERED', confidence: 55, setupBarTime: 2 });
-    const weakSetup = sig({ status: 'SETUP', confidence: 55, setupBarTime: 3 });
-    const strongSetup = sig({ status: 'SETUP', confidence: 70, setupBarTime: 4 });
+    const weakSetup = sig({ status: 'POTENTIAL', confidence: 55, setupBarTime: 3 });
+    const strongSetup = sig({ status: 'POTENTIAL', confidence: 70, setupBarTime: 4 });
     const out = selectNotifications([weakTrig, okTrig, weakSetup, strongSetup], new Set());
     expect(out.map((s) => s.setupBarTime).sort()).toEqual([2, 4]);
   });
@@ -59,7 +61,7 @@ describe('selectNotifications', () => {
       sig({ status: 'TRIGGERED', confidence: 50 + i, setupBarTime: i }),
     );
     const out = selectNotifications(
-      [...many, sig({ status: 'SETUP', confidence: 90, setupBarTime: 99 })],
+      [...many, sig({ status: 'POTENTIAL', confidence: 90, setupBarTime: 99 })],
       new Set(),
       { ...DEFAULT_OPTIONS, notifySetups: false },
     );
@@ -72,13 +74,13 @@ describe('selectNotifications', () => {
 describe('formatMessage', () => {
   it('renders title, levels, FTFC and priority', () => {
     const msg = formatMessage(sig({ status: 'TRIGGERED' }));
-    expect(msg.title).toBe('TEST ▲ 2-1-2 Bullish Reversal — TRIGGERED (D)');
+    expect(msg.title).toBe('TEST ▲ 2-1-2 Reversal (2d-1-?) — TRIGGERED (D)');
     expect(msg.body).toContain('Entry 101.00');
     expect(msg.body).toContain('Stop 99.00');
     expect(msg.body).toContain('T1 104.00 (1.5R)');
     expect(msg.body).toContain('4H▲ D▲ W▲ M▼');
     expect(msg.priority).toBe('high');
-    expect(formatMessage(sig({ status: 'SETUP' })).priority).toBe('default');
+    expect(formatMessage(sig({ status: 'POTENTIAL' })).priority).toBe('default');
   });
 });
 

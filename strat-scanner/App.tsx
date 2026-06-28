@@ -40,6 +40,7 @@ export default function App() {
   const [tfFilter, setTfFilter] = useState<Timeframe | 'all'>('all');
   const [dirFilter, setDirFilter] = useState<DirFilter>('all');
   const [minConf, setMinConf] = useState(0);
+  const [compOnly, setCompOnly] = useState(false);
   const [autoMinutes, setAutoMinutes] = useState<(typeof AUTO_OPTIONS)[number]>(0);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
   const prevKeysRef = useRef<Set<string> | null>(null);
@@ -123,9 +124,10 @@ export default function App() {
       (s) =>
         (tfFilter === 'all' || s.timeframe === tfFilter) &&
         (dirFilter === 'all' || s.direction === dirFilter) &&
+        (!compOnly || s.compression) &&
         s.confidence >= minConf,
     );
-  }, [result, tfFilter, dirFilter, minConf]);
+  }, [result, tfFilter, dirFilter, minConf, compOnly]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -138,7 +140,7 @@ export default function App() {
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Strat Scanner</Text>
-            <Text style={styles.subtitle}>#TheStrat setups · 4H / D / W / M</Text>
+            <Text style={styles.subtitle}>Potential #TheStrat setups · X-1-? · 4H / D / W / M</Text>
           </View>
           <Pressable style={styles.wlButton} onPress={() => setShowWatchlist((v) => !v)}>
             <Text style={styles.wlButtonText}>{showWatchlist ? 'Done' : `Watchlist (${watchlist.length})`}</Text>
@@ -250,6 +252,12 @@ export default function App() {
               {minConf === 0 ? 'Any conf' : `≥${minConf}%`}
             </Text>
           </Pressable>
+          <Pressable
+            style={[styles.chip, compOnly && styles.chipActive]}
+            onPress={() => setCompOnly((v) => !v)}
+          >
+            <Text style={[styles.chipText, compOnly && styles.chipTextActive]}>X-1-? only</Text>
+          </Pressable>
         </View>
 
         {/* Results */}
@@ -272,12 +280,12 @@ export default function App() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>
-                {result ? 'No setups match the current filters' : 'Ready to scan'}
+                {result ? 'No potential setups match the current filters' : 'Ready to scan'}
               </Text>
               <Text style={styles.emptyText}>
                 {result
-                  ? 'Loosen the timeframe/direction/confidence filters, or rescan later — actionable Strat bars form and resolve constantly.'
-                  : 'Tap SCAN MARKETS to sweep your watchlist for actionable #TheStrat sequences (2-1-2, 3-1-2, 2-2 reversals, Rev Strats and more) on the 4H, Daily, Weekly and Monthly charts.'}
+                  ? 'Loosen the timeframe/direction/confidence filters (or the X-1-? toggle), or rescan later — actionable Strat bars form and resolve constantly.'
+                  : 'Tap SCAN MARKETS to sweep your watchlist for POTENTIAL #TheStrat setups — unresolved X-1-? forks (2-1-2, 3-1-2, 2-2, Rev Strats and more) where the next bar could break into a reversal or a continuation, on the 4H, Daily, Weekly and Monthly charts.'}
               </Text>
             </View>
           }

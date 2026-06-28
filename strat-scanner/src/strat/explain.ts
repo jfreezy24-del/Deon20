@@ -19,8 +19,9 @@ export function buildExplanation(
 ): string {
   const parts: string[] = [];
 
+  const breakSide = pattern.direction === 'bullish' ? 'high' : 'low';
   parts.push(
-    `${symbol} is setting up a ${pattern.name} (${pattern.sequence}) on the ${TF_NAME[timeframe]} chart.`,
+    `${symbol} is showing a potential ${pattern.name} (${pattern.sequence}) on the ${TF_NAME[timeframe]} chart — a ${pattern.scenario} that would play out to the ${pattern.direction === 'bullish' ? 'upside' : 'downside'} if the next bar (the "?") breaks the actionable bar's ${breakSide}.`,
   );
   parts.push(pattern.rationale);
 
@@ -44,8 +45,8 @@ export function buildExplanation(
 
   parts.push(
     triggered
-      ? `The trigger at ${levels.entry} has already been taken out, so the signal is in force. The setup is wrong if price trades back through ${levels.stop}.`
-      : `The signal is actionable only on a break of ${levels.entry}; until that prints, nothing is in force. The setup is invalidated at ${levels.stop} (the other side of the actionable bar).`,
+      ? `The trigger at ${levels.entry} has already been taken out, so the "?" has resolved this way and the setup is in force. It is wrong if price trades back through ${levels.stop}.`
+      : `This is still only potential: it becomes actionable on a break of ${levels.entry}, and until that prints nothing is in force — the "?" bar could just as easily break the other side. The setup is invalidated at ${levels.stop} (the other side of the actionable bar).`,
   );
 
   parts.push(
