@@ -19,10 +19,19 @@ import { StatusBar } from 'expo-status-bar';
 import { scanMarket, ScanResult } from './src/scanner';
 import { Signal, Timeframe, TIMEFRAMES } from './src/strat/types';
 import { DEFAULT_WATCHLIST, loadWatchlist, saveWatchlist } from './src/watchlist';
+import { ALGO_UNIVERSE } from './src/strat/universe';
+import { buildAlgoAlerts, RelatedPlay } from './src/strat/algoAlerts';
 import { SignalCard } from './src/components/SignalCard';
 import { colors } from './src/theme';
 
 type DirFilter = 'all' | 'bullish' | 'bearish';
+
+/**
+ * Scanner mode sweeps the personal watchlist for every potential setup;
+ * Algo mode replicates the Strat Algo Alerts service — Mag 7 + liquid ETFs,
+ * confirmed triggers only, daily structure and up, with related sector plays.
+ */
+type Mode = 'scanner' | 'algo';
 
 const AUTO_OPTIONS = [0, 1, 5, 15] as const; // minutes; 0 = off
 
@@ -31,6 +40,7 @@ const signalKey = (s: Signal) =>
   `${s.symbol}-${s.timeframe}-${s.direction}-${s.setupBarTime}-${s.status}`;
 
 export default function App() {
+  const [mode, setMode] = useState<Mode>('scanner');
   const [watchlist, setWatchlist] = useState<string[]>(DEFAULT_WATCHLIST);
   const [newSymbol, setNewSymbol] = useState('');
   const [showWatchlist, setShowWatchlist] = useState(false);
@@ -54,9 +64,10 @@ export default function App() {
     if (scanningRef.current) return;
     scanningRef.current = true;
     setScanning(true);
-    setProgress({ done: 0, total: watchlist.length });
+    const symbols = mode === 'algo' ? ALGO_UNIVERSE : watchlist;
+    setProgress({ done: 0, total: symbols.length });
     try {
-      const res = await scanMarket(watchlist, (done, total) => setProgress({ done, total }));
+      const res = await scanMarket(symbols, (done, total) => setProgress({ done, total }));
 
       // Diff against the previous sweep so fresh setups and SETUP -> TRIGGERED
       // transitions are flagged; buzz when a signal has newly fired.
@@ -81,7 +92,20 @@ export default function App() {
       scanningRef.current = false;
       setScanning(false);
     }
-  }, [watchlist]);
+  }, [watchlist, mode]);
+
+  // Each mode sweeps a different universe, so its results and NEW-badge
+  // baseline don't carry over.
+  const switchMode = useCallback((m: Mode) => {
+    setMode((prev) => {
+      if (prev !== m) {
+        setResult(null);
+        setNewKeys(new Set());
+        prevKeysRef.current = null;
+      }
+      return m;
+    });
+  }, []);
 
   // Auto-scan: re-sweep the watchlist on the chosen interval while the app is
   // in the foreground (intervals are throttled/suspended in the background).
@@ -118,8 +142,24 @@ export default function App() {
     [watchlist],
   );
 
+  // Algo mode: distill the sweep to confirmed algo-grade triggers, keeping
+  // the related sector plays each one surfaces.
+  const algoAlerts = useMemo(
+    () => (mode === 'algo' && result ? buildAlgoAlerts(result.signals) : []),
+    [mode, result],
+  );
+  const relatedFor = useMemo(
+    () => new Map<string, RelatedPlay[]>(algoAlerts.map((a) => [signalKey(a.signal), a.relatedPlays])),
+    [algoAlerts],
+  );
+
   const filtered: Signal[] = useMemo(() => {
     if (!result) return [];
+    if (mode === 'algo') {
+      return algoAlerts
+        .map((a) => a.signal)
+        .filter((s) => dirFilter === 'all' || s.direction === dirFilter);
+    }
     return result.signals.filter(
       (s) =>
         (tfFilter === 'all' || s.timeframe === tfFilter) &&
@@ -127,7 +167,7 @@ export default function App() {
         (!compOnly || s.compression) &&
         s.confidence >= minConf,
     );
-  }, [result, tfFilter, dirFilter, minConf, compOnly]);
+  }, [result, mode, algoAlerts, tfFilter, dirFilter, minConf, compOnly]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -139,16 +179,37 @@ export default function App() {
         {/* Header */}
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Strat Scanner</Text>
-            <Text style={styles.subtitle}>Potential #TheStrat setups · X-1-? · 4H / D / W / M</Text>
+            <Text style={styles.title}>{mode === 'algo' ? 'Strat Algo Alerts' : 'Strat Scanner'}</Text>
+            <Text style={styles.subtitle}>
+              {mode === 'algo'
+                ? 'Confirmed triggers only · Mag 7 + liquid ETFs · D / W / M'
+                : 'Potential #TheStrat setups · X-1-? · 4H / D / W / M'}
+            </Text>
           </View>
-          <Pressable style={styles.wlButton} onPress={() => setShowWatchlist((v) => !v)}>
-            <Text style={styles.wlButtonText}>{showWatchlist ? 'Done' : `Watchlist (${watchlist.length})`}</Text>
-          </Pressable>
+          {mode === 'scanner' && (
+            <Pressable style={styles.wlButton} onPress={() => setShowWatchlist((v) => !v)}>
+              <Text style={styles.wlButtonText}>{showWatchlist ? 'Done' : `Watchlist (${watchlist.length})`}</Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Mode switch */}
+        <View style={styles.modeRow}>
+          {(['scanner', 'algo'] as const).map((m) => (
+            <Pressable
+              key={m}
+              style={[styles.modeBtn, mode === m && styles.chipActive]}
+              onPress={() => switchMode(m)}
+            >
+              <Text style={[styles.chipText, mode === m && styles.chipTextActive]}>
+                {m === 'scanner' ? 'Scanner' : '⚡ Algo Alerts'}
+              </Text>
+            </Pressable>
+          ))}
         </View>
 
         {/* Watchlist editor */}
-        {showWatchlist && (
+        {mode === 'scanner' && showWatchlist && (
           <View style={styles.wlBox}>
             <View style={styles.wlInputRow}>
               <TextInput
@@ -189,7 +250,9 @@ export default function App() {
               </Text>
             </View>
           ) : (
-            <Text style={styles.scanBtnText}>SCAN MARKETS</Text>
+            <Text style={styles.scanBtnText}>
+              {mode === 'algo' ? 'SCAN ALGO UNIVERSE' : 'SCAN MARKETS'}
+            </Text>
           )}
         </Pressable>
 
@@ -212,19 +275,20 @@ export default function App() {
           )}
         </View>
 
-        {/* Filters */}
+        {/* Filters — Algo mode is pre-filtered by design, only direction applies */}
         <View style={styles.filterRow}>
-          {(['all', ...TIMEFRAMES] as const).map((tf) => (
-            <Pressable
-              key={tf}
-              style={[styles.chip, tfFilter === tf && styles.chipActive]}
-              onPress={() => setTfFilter(tf)}
-            >
-              <Text style={[styles.chipText, tfFilter === tf && styles.chipTextActive]}>
-                {tf === 'all' ? 'All TF' : tf}
-              </Text>
-            </Pressable>
-          ))}
+          {mode === 'scanner' &&
+            (['all', ...TIMEFRAMES] as const).map((tf) => (
+              <Pressable
+                key={tf}
+                style={[styles.chip, tfFilter === tf && styles.chipActive]}
+                onPress={() => setTfFilter(tf)}
+              >
+                <Text style={[styles.chipText, tfFilter === tf && styles.chipTextActive]}>
+                  {tf === 'all' ? 'All TF' : tf}
+                </Text>
+              </Pressable>
+            ))}
           <View style={styles.filterSpacer} />
           {(['all', 'bullish', 'bearish'] as const).map((d) => (
             <Pressable
@@ -244,20 +308,24 @@ export default function App() {
               </Text>
             </Pressable>
           ))}
-          <Pressable
-            style={[styles.chip, minConf > 0 && styles.chipActive]}
-            onPress={() => setMinConf((m) => (m === 0 ? 45 : m === 45 ? 65 : 0))}
-          >
-            <Text style={[styles.chipText, minConf > 0 && styles.chipTextActive]}>
-              {minConf === 0 ? 'Any conf' : `≥${minConf}%`}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.chip, compOnly && styles.chipActive]}
-            onPress={() => setCompOnly((v) => !v)}
-          >
-            <Text style={[styles.chipText, compOnly && styles.chipTextActive]}>X-1-? only</Text>
-          </Pressable>
+          {mode === 'scanner' && (
+            <>
+              <Pressable
+                style={[styles.chip, minConf > 0 && styles.chipActive]}
+                onPress={() => setMinConf((m) => (m === 0 ? 45 : m === 45 ? 65 : 0))}
+              >
+                <Text style={[styles.chipText, minConf > 0 && styles.chipTextActive]}>
+                  {minConf === 0 ? 'Any conf' : `≥${minConf}%`}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.chip, compOnly && styles.chipActive]}
+                onPress={() => setCompOnly((v) => !v)}
+              >
+                <Text style={[styles.chipText, compOnly && styles.chipTextActive]}>X-1-? only</Text>
+              </Pressable>
+            </>
+          )}
         </View>
 
         {/* Results */}
@@ -265,7 +333,11 @@ export default function App() {
           data={filtered}
           keyExtractor={(s) => `${s.symbol}-${s.timeframe}-${s.direction}-${s.setupBarTime}`}
           renderItem={({ item }) => (
-            <SignalCard signal={item} isNew={newKeys.has(signalKey(item))} />
+            <SignalCard
+              signal={item}
+              isNew={newKeys.has(signalKey(item))}
+              related={relatedFor.get(signalKey(item))}
+            />
           )}
           contentContainerStyle={{ paddingBottom: 24, paddingTop: 4 }}
           ListHeaderComponent={
@@ -280,12 +352,20 @@ export default function App() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>
-                {result ? 'No potential setups match the current filters' : 'Ready to scan'}
+                {result
+                  ? mode === 'algo'
+                    ? 'No confirmed triggers right now'
+                    : 'No potential setups match the current filters'
+                  : 'Ready to scan'}
               </Text>
               <Text style={styles.emptyText}>
                 {result
-                  ? 'Loosen the timeframe/direction/confidence filters (or the X-1-? toggle), or rescan later — actionable Strat bars form and resolve constantly.'
-                  : 'Tap SCAN MARKETS to sweep your watchlist for POTENTIAL #TheStrat setups — unresolved X-1-? forks (2-1-2, 3-1-2, 2-2, Rev Strats and more) where the next bar could break into a reversal or a continuation, on the 4H, Daily, Weekly and Monthly charts.'}
+                  ? mode === 'algo'
+                    ? 'The algo only alerts when a high-conviction Strat trigger has actually broken on daily structure or higher in the Mag 7 + liquid-ETF universe. Sometimes that is zero — the setup is either there or it isn\'t. Rescan later.'
+                    : 'Loosen the timeframe/direction/confidence filters (or the X-1-? toggle), or rescan later — actionable Strat bars form and resolve constantly.'
+                  : mode === 'algo'
+                    ? 'Tap SCAN ALGO UNIVERSE to sweep the Mag 7 and the most liquid ETFs for CONFIRMED #TheStrat triggers on the Daily, Weekly and Monthly charts — ticker, direction, setup, entry, risk line and related sector plays. No noise, no maybes.'
+                    : 'Tap SCAN MARKETS to sweep your watchlist for POTENTIAL #TheStrat setups — unresolved X-1-? forks (2-1-2, 3-1-2, 2-2, Rev Strats and more) where the next bar could break into a reversal or a continuation, on the 4H, Daily, Weekly and Monthly charts.'}
               </Text>
             </View>
           }
@@ -356,6 +436,19 @@ const styles = StyleSheet.create({
   scanBtnBusy: { opacity: 0.7 },
   scanBtnText: { color: '#fff', fontWeight: '900', fontSize: 15, letterSpacing: 1 },
   scanBusyRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  modeRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    gap: 6,
+  },
+  modeBtn: {
+    flex: 1,
+    backgroundColor: colors.chip,
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
   autoRow: {
     flexDirection: 'row',
     alignItems: 'center',
