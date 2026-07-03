@@ -66,21 +66,46 @@ persisted on the device.
    the actionable bar; Target 1 is the nearest prior pivot in the trade
    direction ("magnitude"), Target 2 the farther pivot or a 2.5R projection.
 
+## ⚡ Algo Alerts mode
+
+The app's second mode replicates a *Strat Algo Alerts*-style service: instead
+of sweeping your personal watchlist for every potential setup, it watches a
+fixed universe of **Mag 7 stocks + the most liquid US ETFs** (SPY, QQQ, IWM,
+DIA, SMH, the sector SPDRs, GLD, TLT — no penny stocks, no lottery tickets)
+and shows **confirmed triggers only**: high-conviction Strat breaks on
+**Daily / Weekly / Monthly** structure. No pending "maybes" — each card is a
+complete plan:
+
+- **Ticker + direction** (LONG / SHORT)
+- **The three-bar Strat setup** that triggered (e.g. 2-1-2 Reversal)
+- **Entry** (break of the trigger bar) and the **risk line** — the stop from
+  the setup's Strat structure
+- **Two magnitude targets** with reward-to-risk
+- **Related plays** — when a sector ETF fires it lists same-direction setups
+  in its heavy constituents (the ETF is often the spark for the whole
+  sector); when a stock fires it shows its sector ETFs confirming the move.
+
+Tap **⚡ Algo Alerts** at the top of the app, then **SCAN ALGO UNIVERSE**.
+Expect a handful of names on a good day and zero on most — the structure is
+either there or it isn't.
+
 ## Project layout
 
 ```
-App.tsx                     — main screen (scan, filters, watchlist editor)
+App.tsx                     — main screen (Scanner / Algo modes, filters)
 src/strat/classify.ts       — 1 / 2u / 2d / 3 candle typing
 src/strat/patterns.ts       — potential X-1-? fork detection
 src/strat/continuity.ts     — FTFC map + scoring
 src/strat/levels.ts         — entry / stop / targets / R:R
 src/strat/confidence.ts     — transparent confidence model
 src/strat/explain.ts        — plain-English setup explanations
+src/strat/universe.ts       — Algo universe (Mag 7 + liquid ETFs) + sector map
+src/strat/algoAlerts.ts     — confirmed-trigger selection + related plays
 src/data/yahoo.ts           — Yahoo Finance chart API client
 src/data/aggregate.ts       — 1H → 4H aggregation
 src/scanner.ts              — orchestration across symbols & timeframes
 src/components/             — signal cards + FTFC strip
-src/__tests__/strat.test.ts — engine unit tests (npm test)
+src/__tests__/              — engine unit tests (npm test)
 ```
 
 ## Real-time alerts with the app closed (alert server)
@@ -122,6 +147,33 @@ The server scans the symbols in `server/watchlist.json` — edit that file to
 change the alert universe (the in-app watchlist stays separate, on your
 device). You can also run it anywhere with Node 18+: `npm run alert` with
 `NTFY_TOPIC=... ` set, e.g. from cron on a Raspberry Pi or VPS.
+
+## Algo Alerts to your inbox (email + push)
+
+A second scheduled workflow (`.github/workflows/strat-algo-alerts.yml`) runs
+the **Algo Alerts** feed headless every 15 minutes during US market hours:
+Mag 7 + liquid ETFs, confirmed high-conviction triggers on Daily/Weekly/
+Monthly structure only. Expect **1–5 alerts per week, sometimes zero** — it
+never forces a setup. Each alert is a full plan: ticker, direction, the
+three-bar Strat setup, entry, **risk line**, targets with R:R, timeframe
+continuity, and related sector plays.
+
+Setup on top of the ntfy setup above (which gives you the push channel):
+
+1. **Email copies (optional but the point):** repo → Settings → Secrets and
+   variables → Actions → New repository secret → name `ALERT_EMAIL`, value =
+   your email address. Alerts are forwarded to that inbox by ntfy.sh's
+   e-mail bridge — no email account or SMTP setup needed. (First email may
+   land in spam; mark it as not-spam once.)
+2. **Test it:** repo → Actions → *Strat Algo Alerts* → Run workflow with
+   *test alert* checked — you should get a push and, if `ALERT_EMAIL` is
+   set, an email within a minute.
+3. The first real run establishes a baseline; alerts start on the next run.
+
+Tuning (optional repo *variables*): `ALGO_MIN_CONFIDENCE` (default `60`) and
+`ALGO_TIMEFRAMES` (default `D,W,M`). To change the universe, create
+`server/algo-watchlist.json` with a JSON array of symbols. Run it anywhere
+with Node 18+ via `npm run algo-alert`.
 
 ## Development
 

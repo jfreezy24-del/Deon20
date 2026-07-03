@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Signal } from '../strat/types';
+import { RelatedPlay } from '../strat/algoAlerts';
 import { colors, confidenceColor } from '../theme';
 import { ContinuityStrip } from './ContinuityStrip';
 
@@ -15,7 +16,15 @@ function LevelRow({ label, value, color }: { label: string; value: string; color
   );
 }
 
-export function SignalCard({ signal, isNew = false }: { signal: Signal; isNew?: boolean }) {
+export function SignalCard({
+  signal,
+  isNew = false,
+  related,
+}: {
+  signal: Signal;
+  isNew?: boolean;
+  related?: RelatedPlay[];
+}) {
   const [expanded, setExpanded] = useState(false);
   const bull = signal.direction === 'bullish';
   const dirColor = bull ? colors.bull : colors.bear;
@@ -105,6 +114,19 @@ export function SignalCard({ signal, isNew = false }: { signal: Signal; isNew?: 
 
       <ContinuityStrip map={signal.continuity} />
 
+      {related && related.length > 0 ? (
+        <View style={styles.relatedBox}>
+          <Text style={styles.relatedTitle}>Related plays · same direction</Text>
+          {related.map((p) => (
+            <Text key={`${p.symbol}-${p.timeframe}`} style={styles.relatedText}>
+              {p.symbol}
+              {p.name ? ` (${p.name})` : ''} — {p.pattern} ({p.sequence}) {p.timeframe}{' '}
+              {p.status === 'TRIGGERED' ? 'confirmed' : 'forming'} · {p.confidence}%
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
       {expanded ? (
         <View style={styles.explainBox}>
           <Text style={styles.explainTitle}>Why this setup is valid</Text>
@@ -182,6 +204,15 @@ const styles = StyleSheet.create({
   levelRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
   levelLabel: { color: colors.textDim, fontSize: 12 },
   levelValue: { color: colors.text, fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  relatedBox: {
+    marginTop: 8,
+    backgroundColor: colors.bg,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  relatedTitle: { color: colors.text, fontWeight: '800', fontSize: 11, marginBottom: 3 },
+  relatedText: { color: colors.textDim, fontSize: 12, lineHeight: 18 },
   explainBox: { marginTop: 10 },
   explainTitle: { color: colors.text, fontWeight: '800', fontSize: 12, marginTop: 8, marginBottom: 3 },
   explainText: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
