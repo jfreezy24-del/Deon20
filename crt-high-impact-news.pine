@@ -1,0 +1,197 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © staticdotsol
+
+//@version=6
+indicator("HIGH IMPACT NEWS CRT", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// Candle Range Theory (CRT) — "High Impact News CRT" model (concept credit: Bruce_Loki).
+//
+//   Candle 1 (range)        — sets the CRT High and CRT Low.
+//   Candle 2 (manipulation) — sweeps one side of the range with a wick and
+//                             closes back inside the range → the signal candle.
+//   Candle 3 (distribution) — expected to expand toward the opposite side.
+//
+// Session timing from the diagram (New York time):
+//   Daily — every candle is a potential CRT range (rolling mode).
+//   4H    — range opens 2:00AM → sweep 6:00AM → distribution 10:00AM.
+//   1H, high-impact-news day — range 8AM → sweep 9AM → distribution 10AM.
+//   1H, no-news day          — range 7AM → sweep 8AM → distribution 9AM.
+//
+// Auto mode runs Timed cycles on 1H/4H charts and Rolling everywhere else
+// (including Daily). Timed mode is designed for 1H and 4H charts whose candles
+// open on the hour in the selected timezone.
+
+// ---------------------------------------------------------------- Inputs ---
+grpS = "Setup"
+tzInput   = input.string("America/New_York", "Timezone", group=grpS, tooltip="Timezone used to locate the range candle's open hour. The diagram uses New York time.")
+modeInput = input.string("Auto", "Mode", options=["Auto", "Timed (session hours)", "Rolling (every candle)"], group=grpS, tooltip="Timed: the CRT cycle starts at a fixed session hour (per the diagram). Rolling: every candle is treated as a potential CRT range — the classic 3-candle CRT, used on the Daily. Auto: Timed on 1H/4H charts, Rolling elsewhere.")
+newsDay   = input.bool(true, "High impact news day (1H)", group=grpS, tooltip="1H chart only. News day: the 8AM candle sets the range (9AM sweeps, 10AM distributes). No news: the 7AM candle sets the range (8AM sweeps, 9AM distributes).")
+
+grpH = "Session Hours"
+h4Range     = input.int(2, "4H range candle open hour", minval=0, maxval=23, group=grpH, tooltip="Open hour of the range candle on 4H charts (diagram: 2AM NY → sweep 6AM → distribution 10AM).")
+h1News      = input.int(8, "1H range hour — news day", minval=0, maxval=23, group=grpH)
+h1NoNews    = input.int(7, "1H range hour — no news", minval=0, maxval=23, group=grpH)
+hOtherRange = input.int(2, "Range hour on other intraday TFs", minval=0, maxval=23, group=grpH, tooltip="Used only when Timed mode is forced on an intraday timeframe other than 1H/4H.")
+
+grpD = "Display"
+showLines  = input.bool(true, "CRT High / Low lines", group=grpD)
+showLabels = input.bool(true, "CRT H / CRT L labels", group=grpD)
+showSweeps = input.bool(true, "Sweep + target labels", group=grpD)
+showTable  = input.bool(true, "Status table", group=grpD)
+bullColor  = input.color(#089981, "Bullish", group=grpD)
+bearColor  = input.color(#f23645, "Bearish", group=grpD)
+rangeColor = input.color(#787b86, "Range lines", group=grpD)
+tablePos   = input.string("Top Right", "Table position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group=grpD)
+
+grpA = "Alerts"
+alertForming = input.bool(true, "Alert while sweep is forming (intra-candle)", group=grpA)
+alertConfirm = input.bool(true, "Alert when sweep confirms (candle close)", group=grpA)
+alertTarget  = input.bool(true, "Alert when the opposite CRT level is hit", group=grpA)
+
+// ------------------------------------------------------------ Mode logic ---
+tfSec = timeframe.in_seconds()
+is4h  = tfSec == 14400
+is1h  = tfSec == 3600
+
+timed   = timeframe.isintraday and (modeInput == "Timed (session hours)" or (modeInput == "Auto" and (is4h or is1h)))
+rolling = not timed
+
+rangeHour = is4h ? h4Range : is1h ? (newsDay ? h1News : h1NoNews) : hOtherRange
+
+openHour   = hour(time, tzInput)
+prevHour   = nz(hour(time[1], tzInput), -1)
+isRangeBar = timed and openHour == rangeHour and prevHour != rangeHour
+
+// ----------------------------------------------------------------- State ---
+// phase: 0 = waiting for range candle, 1 = sweep candle, 2 = distribution candle
+var int   phase = 0
+var float crtH  = na
+var float crtL  = na
+var int   dir   = 0 // +1 bullish (low swept, targeting CRT H), -1 bearish
+var line  hiLine = na
+var line  loLine = na
+var label hiLab  = na
+var label loLab  = na
+var int   lastFormAlertBar = -1
+
+// Global signal flags (drive plotshape + alertcondition)
+bool sigBullConfirm = false
+bool sigBearConfirm = false
+bool sigTargetHit   = false
+
+endCycle(color lineCol) =>
+    if not na(hiLine)
+        line.set_color(hiLine, lineCol)
+        line.set_color(loLine, lineCol)
+
+// ------------------------------------------------------ Timed CRT cycles ---
+if timed and barstate.isconfirmed
+    // Keep the active cycle's lines stretched to the current bar.
+    if phase > 0 and not na(hiLine)
+        line.set_x2(hiLine, bar_index)
+        line.set_x2(loLine, bar_index)
+        if showLabels
+            label.set_x(hiLab, bar_index)
+            label.set_x(loLab, bar_index)
+
+    // Candle 2 — manipulation / sweep.
+    if phase == 1
+        sweptLo = low < crtL
+        sweptHi = high > crtH
+        inside  = close > crtL and close < crtH
+        bull = sweptLo and inside
+        bear = sweptHi and inside
+        if bull and bear
+            mid = math.avg(crtH, crtL)
+            bull := close >= mid
+            bear := close < mid
+        if bull or bear
+            dir   := bull ? 1 : -1
+            phase := 2
+            sigBullConfirm := bull
+            sigBearConfirm := bear
+            if showSweeps
+                label.new(bar_index, bull ? low : high, bull ? "CRT sweep → CRT H" : "CRT sweep → CRT L", style=bull ? label.style_label_up : label.style_label_down, color=color.new(bull ? bullColor : bearColor, 20), textcolor=color.white, size=size.small)
+            if alertConfirm
+                alert("CRT " + (bull ? "BULLISH" : "BEARISH") + " sweep confirmed on " + syminfo.ticker + " " + timeframe.period + " — swept CRT " + (bull ? "Low " + str.tostring(crtL) : "High " + str.tostring(crtH)) + ", closed back inside. Target: CRT " + (bull ? "High " + str.tostring(crtH) : "Low " + str.tostring(crtL)), alert.freq_once_per_bar_close)
+        else
+            // No valid sweep (or closed through the level) — cycle is dead.
+            phase := 0
+            dir   := 0
+            endCycle(color.new(rangeColor, 60))
+
+    // Candle 3 — distribution.
+    else if phase == 2
+        hit = dir == 1 ? high >= crtH : low <= crtL
+        sigTargetHit := hit
+        if showSweeps
+            tgt = dir == 1 ? crtH : crtL
+            label.new(bar_index, tgt, hit ? "✓ target hit" : "✗ target missed", style=dir == 1 ? label.style_label_down : label.style_label_up, color=color.new(hit ? (dir == 1 ? bullColor : bearColor) : rangeColor, 20), textcolor=color.white, size=size.small)
+        if alertTarget and hit
+            alert("CRT target hit on " + syminfo.ticker + " " + timeframe.period + " — distribution candle reached CRT " + (dir == 1 ? "High " + str.tostring(crtH) : "Low " + str.tostring(crtL)), alert.freq_once_per_bar_close)
+        phase := 0
+        dir   := 0
+        endCycle(rangeColor)
+
+    // Candle 1 — the range candle closes: anchor CRT High / CRT Low.
+    if isRangeBar
+        crtH  := high
+        crtL  := low
+        phase := 1
+        dir   := 0
+        if showLines
+            hiLine := line.new(bar_index, crtH, bar_index + 1, crtH, color=chart.fg_color, width=1)
+            loLine := line.new(bar_index, crtL, bar_index + 1, crtL, color=chart.fg_color, width=1)
+        if showLabels
+            hiLab := label.new(bar_index + 1, crtH, "CRT H", style=label.style_label_left, color=color.new(chart.fg_color, 100), textcolor=chart.fg_color, size=size.small)
+            loLab := label.new(bar_index + 1, crtL, "CRT L", style=label.style_label_left, color=color.new(chart.fg_color, 100), textcolor=chart.fg_color, size=size.small)
+
+// Intra-candle "forming" alert while the live sweep candle has taken a level
+// and is currently trading back inside (can still un-form before the close).
+if timed and phase == 1 and not barstate.isconfirmed and alertForming and lastFormAlertBar != bar_index
+    formBull = low < crtL and close > crtL and close < crtH
+    formBear = high > crtH and close < crtH and close > crtL
+    if formBull or formBear
+        lastFormAlertBar := bar_index
+        alert("CRT " + (formBull ? "bullish" : "bearish") + " sweep FORMING on " + syminfo.ticker + " " + timeframe.period + " — price took CRT " + (formBull ? "Low" : "High") + " and is trading back inside. Confirms at candle close.", alert.freq_once_per_bar)
+
+// --------------------------------------------- Rolling CRT (Daily & rest) ---
+// Classic 3-candle CRT: the previous candle is the range; the current candle
+// sweeps one side only and closes back inside → next candle targets the far side.
+rollBull = rolling and low < low[1] and high <= high[1] and close > low[1] and close < high[1]
+rollBear = rolling and high > high[1] and low >= low[1] and close < high[1] and close > low[1]
+
+if barstate.isconfirmed and (rollBull or rollBear)
+    sigBullConfirm := rollBull
+    sigBearConfirm := rollBear
+    if showLines
+        tgt = rollBull ? high[1] : low[1]
+        line.new(bar_index - 1, tgt, bar_index + 1, tgt, color=rollBull ? bullColor : bearColor, style=line.style_dashed)
+    if alertConfirm
+        alert("CRT " + (rollBull ? "BULLISH" : "BEARISH") + " sweep confirmed on " + syminfo.ticker + " " + timeframe.period + " — swept previous candle " + (rollBull ? "low" : "high") + " and closed back inside. Target: previous candle " + (rollBull ? "high " + str.tostring(high[1]) : "low " + str.tostring(low[1])), alert.freq_once_per_bar_close)
+
+plotshape(rolling and rollBull, "Rolling CRT bullish", shape.triangleup, location.belowbar, bullColor, size=size.tiny)
+plotshape(rolling and rollBear, "Rolling CRT bearish", shape.triangledown, location.abovebar, bearColor, size=size.tiny)
+
+// ---------------------------------------------------------- Alert hookups ---
+alertcondition(sigBullConfirm, "CRT Bullish Sweep Confirmed", "CRT bullish sweep confirmed — low swept, closed back inside. Target: CRT High.")
+alertcondition(sigBearConfirm, "CRT Bearish Sweep Confirmed", "CRT bearish sweep confirmed — high swept, closed back inside. Target: CRT Low.")
+alertcondition(sigTargetHit, "CRT Target Hit", "CRT distribution candle reached the opposite CRT level.")
+
+// ------------------------------------------------------------ Status table ---
+var table t = na
+if showTable and barstate.islast
+    pos = tablePos == "Top Left" ? position.top_left : tablePos == "Top Right" ? position.top_right : tablePos == "Bottom Left" ? position.bottom_left : position.bottom_right
+    if na(t)
+        t := table.new(pos, 2, 4, bgcolor=color.new(chart.bg_color, 20), border_width=1, border_color=color.new(rangeColor, 70))
+    modeTxt = timed ? "Timed — range " + str.tostring(rangeHour) + ":00 " + (is1h ? (newsDay ? "(news day)" : "(no news)") : "") : "Rolling (every candle)"
+    phaseTxt = not timed ? "watching every candle" : phase == 0 ? "waiting for range candle" : phase == 1 ? "sweep candle live" : (dir == 1 ? "distribution → CRT H" : "distribution → CRT L")
+    phaseCol = phase == 2 ? (dir == 1 ? bullColor : bearColor) : chart.fg_color
+    table.cell(t, 0, 0, "CRT", text_color=chart.fg_color, text_size=size.small)
+    table.cell(t, 1, 0, modeTxt, text_color=chart.fg_color, text_size=size.small)
+    table.cell(t, 0, 1, "Phase", text_color=chart.fg_color, text_size=size.small)
+    table.cell(t, 1, 1, phaseTxt, text_color=phaseCol, text_size=size.small)
+    table.cell(t, 0, 2, "CRT H", text_color=chart.fg_color, text_size=size.small)
+    table.cell(t, 1, 2, timed and phase > 0 ? str.tostring(crtH) : "—", text_color=chart.fg_color, text_size=size.small)
+    table.cell(t, 0, 3, "CRT L", text_color=chart.fg_color, text_size=size.small)
+    table.cell(t, 1, 3, timed and phase > 0 ? str.tostring(crtL) : "—", text_color=chart.fg_color, text_size=size.small)
