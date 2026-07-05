@@ -1,0 +1,353 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © jfreezy24-del
+
+// 1H-1D MODEL — replication of the TTrades-style HTF candle projection chart.
+// Elements reproduced from the reference screenshot:
+//   • Higher-timeframe candles (default 1D) projected to the right of price,
+//     last N candles including the live forming one
+//   • Solid HTF open line extended from the current HTF open into the projection
+//   • Dotted equilibrium (50%) line of the previous HTF candle
+//   • Dotted liquidity lines at prior HTF highs/lows, cut off when purged
+//   • Vertical separators at every new HTF period
+//   • Blue CISD lines drawn after a liquidity sweep once price closes back
+//     through the opening price of the leg that made the sweep
+//   • Soft red circle marking the sweep wick, "C2" label when the current HTF
+//     candle sweeps the previous HTF candle's high/low
+//   • Bottom-right info table: symbol (TF), model name, countdown to HTF close,
+//     and bias (auto or manual)
+// The green shaded zones in the reference screenshot appear to be manual chart
+// annotations and are intentionally not reproduced.
+
+//@version=6
+indicator("1H-1D MODEL", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ─────────────────────────────── Inputs ───────────────────────────────
+G1 = "HTF Projection"
+htf        = input.timeframe("D", "Higher Timeframe", group=G1)
+projCount  = input.int(4, "Candles Shown (incl. forming)", minval=2, maxval=8, group=G1)
+projOffset = input.int(8, "Offset From Price (bars)", minval=2, maxval=50, group=G1)
+candW      = input.int(6, "Candle Width (bars)", minval=2, maxval=20, group=G1)
+candGap    = input.int(4, "Gap Between Candles (bars)", minval=1, maxval=20, group=G1)
+bullBody   = input.color(#7fae8e, "Body ↑/↓", inline="pb", group=G1)
+bearBody   = input.color(#101314, "", inline="pb", group=G1)
+bodyBorder = input.color(#101314, "Border/Wick", inline="pw", group=G1)
+wickColor  = input.color(color.new(#101314, 15), "", inline="pw", group=G1)
+
+G2 = "Levels & Liquidity"
+showOpenLine  = input.bool(true, "HTF Open Line", inline="op", group=G2, tooltip="Solid line at the current HTF candle open, extended through the projection")
+openLineColor = input.color(#3c3f43, "", inline="op", group=G2)
+showPrevEQ    = input.bool(true, "Previous HTF EQ", inline="eq", group=G2, tooltip="Dotted 50% line of the previous HTF candle, drawn across the projection")
+eqColor       = input.color(#3c3f43, "", inline="eq", group=G2)
+showLiq       = input.bool(true, "Liquidity Lines", inline="lq", group=G2, tooltip="Dotted lines at prior HTF highs/lows from where the extreme formed, ended once price trades through them")
+liqColor      = input.color(color.new(#131722, 15), "", inline="lq", group=G2)
+
+G3 = "CISD & Sweeps"
+showCISD      = input.bool(true, "CISD Lines", inline="cs", group=G3, tooltip="After a liquidity sweep, marks the opening price of the leg that made the sweep. The line is drawn once price closes back through it (change in state of delivery).")
+cisdColor     = input.color(#2962ff, "", inline="cs", group=G3)
+cisdWidth     = input.int(2, "Width", minval=1, maxval=5, inline="cs", group=G3)
+cisdExt       = input.int(3, "CISD Extension (bars)", minval=0, maxval=50, group=G3)
+cisdExpiry    = input.int(24, "Sweep Expiry (bars)", minval=3, maxval=200, group=G3, tooltip="A sweep is abandoned if no CISD confirms within this many bars")
+pivLen        = input.int(3, "Swing Pivot Length", minval=1, maxval=15, group=G3, tooltip="Pivot length used to define the intraday swing highs/lows that count as liquidity")
+showSweepMark = input.bool(true, "Sweep Marker", inline="sm", group=G3)
+sweepMarkCol  = input.color(color.new(color.red, 65), "", inline="sm", group=G3)
+showC2        = input.bool(true, "C2 Labels", inline="c2", group=G3, tooltip="Labels the bar where the current HTF candle sweeps the previous HTF candle's high or low")
+c2Color       = input.color(color.gray, "", inline="c2", group=G3)
+
+G4 = "Separators"
+showSep  = input.bool(true, "HTF Separators", inline="sp", group=G4)
+sepColor = input.color(color.new(color.gray, 55), "", inline="sp", group=G4)
+maxSeps  = input.int(12, "Max Separators", minval=1, maxval=50, group=G4)
+
+G5 = "Info Table"
+showInfo  = input.bool(true, "Show Info Table", group=G5)
+biasInput = input.string("Auto", "Bias", options=["Auto", "Neutral", "Bullish", "Bearish"], group=G5, tooltip="Auto: bullish when the previous HTF candle closed above the prior candle's high, bearish when it closed below the prior candle's low, otherwise neutral")
+
+// ─────────────────────────────── Helpers ───────────────────────────────
+f_pad(int v) =>
+    (v < 10 ? "0" : "") + str.tostring(v)
+
+f_tfName(string tf) =>
+    string out = tf
+    if tf == "D" or tf == "1D"
+        out := "1D"
+    else if str.contains(tf, "D") or str.contains(tf, "W") or str.contains(tf, "M") or str.contains(tf, "S")
+        out := tf
+    else
+        m = str.tonumber(tf)
+        if not na(m)
+            out := m % 60 == 0 ? str.tostring(math.floor(m / 60)) + "H" : str.tostring(math.floor(m)) + "m"
+    out
+
+// ─────────────────────── HTF series tracked from chart bars ───────────────────────
+newHTF = timeframe.change(htf)
+
+var float curO    = na
+var float curH    = na
+var float curL    = na
+var float curC    = na
+var int   curOBar = na
+var int   curHBar = na
+var int   curLBar = na
+
+var float prevHigh  = na
+var float prevLow   = na
+var float prev2High = na
+var float prev2Low  = na
+var float prevClose = na
+
+var bool sweptPrevLow  = false
+var bool sweptPrevHigh = false
+
+// completed HTF candles kept for the projection
+var hO = array.new<float>()
+var hH = array.new<float>()
+var hL = array.new<float>()
+var hC = array.new<float>()
+
+// liquidity lines still being tracked (parallel arrays)
+var liqLn  = array.new<line>()
+var liqLvl = array.new<float>()
+var liqHi  = array.new<bool>()
+
+// separators
+var seps = array.new<line>()
+
+f_addLiq(int xBar, float lvl, bool isHigh) =>
+    if showLiq and not na(xBar)
+        liqLn.push(line.new(xBar, lvl, bar_index, lvl, color=liqColor, style=line.style_dotted, width=1))
+        liqLvl.push(lvl)
+        liqHi.push(isHigh)
+        if liqLn.size() > 40
+            line.delete(liqLn.shift())
+            liqLvl.shift()
+            liqHi.shift()
+
+if newHTF or barstate.isfirst
+    if not na(curO)
+        // archive the completed candle
+        hO.push(curO)
+        hH.push(curH)
+        hL.push(curL)
+        hC.push(curC)
+        if hO.size() > projCount
+            hO.shift()
+            hH.shift()
+            hL.shift()
+            hC.shift()
+        // its extremes become resting liquidity
+        f_addLiq(curHBar, curH, true)
+        f_addLiq(curLBar, curL, false)
+        prev2High := prevHigh
+        prev2Low  := prevLow
+        prevHigh  := curH
+        prevLow   := curL
+        prevClose := curC
+    curO    := open
+    curH    := high
+    curL    := low
+    curC    := close
+    curOBar := bar_index
+    curHBar := bar_index
+    curLBar := bar_index
+    sweptPrevLow  := false
+    sweptPrevHigh := false
+    if showSep and not barstate.isfirst
+        seps.push(line.new(bar_index, low, bar_index, high, extend=extend.both, color=sepColor, width=1))
+        if seps.size() > maxSeps
+            line.delete(seps.shift())
+else
+    curC := close
+    if high > curH
+        curH    := high
+        curHBar := bar_index
+    if low < curL
+        curL    := low
+        curLBar := bar_index
+
+// end liquidity lines when purged
+if liqLn.size() > 0
+    for i = liqLn.size() - 1 to 0
+        lvl = liqLvl.get(i)
+        if liqHi.get(i) ? high > lvl : low < lvl
+            liqLn.get(i).set_x2(bar_index)
+            liqLn.remove(i)
+            liqLvl.remove(i)
+            liqHi.remove(i)
+        else
+            liqLn.get(i).set_x2(bar_index)
+
+// ─────────────────────── Sweeps, C2 and CISD ───────────────────────
+// opening price of the current consecutive up/down leg
+isUp = close >= open
+var float upLegOpen = na
+var int   upLegBar  = na
+var float dnLegOpen = na
+var int   dnLegBar  = na
+if isUp and (barstate.isfirst or not isUp[1])
+    upLegOpen := open
+    upLegBar  := bar_index
+if not isUp and (barstate.isfirst or isUp[1])
+    dnLegOpen := open
+    dnLegBar  := bar_index
+
+// intraday swing liquidity
+var swHi = array.new<float>()
+var swLo = array.new<float>()
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
+if not na(ph)
+    swHi.push(ph)
+    if swHi.size() > 12
+        swHi.shift()
+if not na(pl)
+    swLo.push(pl)
+    if swLo.size() > 12
+        swLo.shift()
+
+bool sweptLo = false
+bool sweptHi = false
+if swLo.size() > 0
+    for i = swLo.size() - 1 to 0
+        if low < swLo.get(i)
+            swLo.remove(i)
+            sweptLo := true
+if swHi.size() > 0
+    for i = swHi.size() - 1 to 0
+        if high > swHi.get(i)
+            swHi.remove(i)
+            sweptHi := true
+
+// first raid of the previous HTF candle's extreme → C2
+if not na(prevLow) and low < prevLow and not sweptPrevLow
+    sweptPrevLow := true
+    sweptLo      := true
+    if showC2
+        label.new(bar_index, na, "C2", yloc=yloc.belowbar, style=label.style_none, textcolor=c2Color, size=size.normal)
+if not na(prevHigh) and high > prevHigh and not sweptPrevHigh
+    sweptPrevHigh := true
+    sweptHi       := true
+    if showC2
+        label.new(bar_index, na, "C2", yloc=yloc.abovebar, style=label.style_none, textcolor=c2Color, size=size.normal)
+
+var cisdLines  = array.new<line>()
+var sweepMarks = array.new<label>()
+
+f_keepCisd(line ln) =>
+    cisdLines.push(ln)
+    if cisdLines.size() > 30
+        line.delete(cisdLines.shift())
+
+f_markSweep(int xBar, float px) =>
+    if showSweepMark
+        sweepMarks.push(label.new(xBar, px, "", style=label.style_circle, color=sweepMarkCol, size=size.small, yloc=yloc.price))
+        if sweepMarks.size() > 12
+            label.delete(sweepMarks.shift())
+
+// bullish side: low swept → close back above the down-leg open
+var bool  pendBull   = false
+var int   pendBullAt = na
+var int   sweepBarB  = na
+var float sweepPxB   = na
+if sweptLo
+    pendBull   := true
+    pendBullAt := bar_index
+    sweepBarB  := bar_index
+    sweepPxB   := low
+bool bullCISD = false
+if pendBull
+    if not na(dnLegOpen) and close > dnLegOpen
+        bullCISD := true
+        pendBull := false
+        if showCISD
+            f_keepCisd(line.new(dnLegBar, dnLegOpen, bar_index + cisdExt, dnLegOpen, color=cisdColor, width=cisdWidth))
+        f_markSweep(sweepBarB, sweepPxB)
+    else if bar_index - pendBullAt > cisdExpiry
+        pendBull := false
+
+// bearish side: high swept → close back below the up-leg open
+var bool  pendBear   = false
+var int   pendBearAt = na
+var int   sweepBarS  = na
+var float sweepPxS   = na
+if sweptHi
+    pendBear   := true
+    pendBearAt := bar_index
+    sweepBarS  := bar_index
+    sweepPxS   := high
+bool bearCISD = false
+if pendBear
+    if not na(upLegOpen) and close < upLegOpen
+        bearCISD := true
+        pendBear := false
+        if showCISD
+            f_keepCisd(line.new(upLegBar, upLegOpen, bar_index + cisdExt, upLegOpen, color=cisdColor, width=cisdWidth))
+        f_markSweep(sweepBarS, sweepPxS)
+    else if bar_index - pendBearAt > cisdExpiry
+        pendBear := false
+
+alertcondition(bullCISD, "+CISD Confirmed", "Bullish CISD confirmed: close back above the down-leg open after a liquidity sweep")
+alertcondition(bearCISD, "-CISD Confirmed", "Bearish CISD confirmed: close back below the up-leg open after a liquidity sweep")
+
+// ─────────────────────── HTF candle projection ───────────────────────
+var projBx = array.new<box>()
+var projLn = array.new<line>()
+
+if barstate.islast
+    while projBx.size() > 0
+        box.delete(projBx.pop())
+    while projLn.size() > 0
+        line.delete(projLn.pop())
+
+    n    = math.min(projCount - 1, hO.size())      // completed candles drawn
+    idx0 = hO.size() - n
+    x0   = bar_index + projOffset
+    projEnd = x0 + (n + 1) * (candW + candGap)
+
+    for k = 0 to n
+        bool isCur = k == n
+        float o = isCur ? curO : hO.get(idx0 + k)
+        float h = isCur ? curH : hH.get(idx0 + k)
+        float l = isCur ? curL : hL.get(idx0 + k)
+        float c = isCur ? curC : hC.get(idx0 + k)
+        if not na(o)
+            left  = x0 + k * (candW + candGap)
+            right = left + candW
+            mid   = left + math.floor(candW / 2)
+            bodyTop = math.max(o, c)
+            bodyBot = math.min(o, c)
+            projBx.push(box.new(left, bodyTop, right, bodyBot, border_color=bodyBorder, border_width=1, bgcolor=c >= o ? bullBody : bearBody))
+            if h > bodyTop
+                projLn.push(line.new(mid, bodyTop, mid, h, color=wickColor, width=1))
+            if l < bodyBot
+                projLn.push(line.new(mid, l, mid, bodyBot, color=wickColor, width=1))
+            // dotted EQ across the previous completed HTF candle
+            if showPrevEQ and not isCur and k == n - 1
+                projLn.push(line.new(left - candGap, (h + l) / 2, projEnd, (h + l) / 2, color=eqColor, style=line.style_dotted, width=1))
+
+    if showOpenLine and not na(curOBar)
+        projLn.push(line.new(curOBar, curO, projEnd, curO, color=openLineColor, width=1))
+
+    // unswept liquidity extends into the projection
+    if liqLn.size() > 0
+        for i = 0 to liqLn.size() - 1
+            liqLn.get(i).set_x2(projEnd)
+
+// ─────────────────────── Info table ───────────────────────
+autoBias = na(prev2High) or na(prevClose) ? "Neutral" : prevClose > prev2High ? "Bullish" : prevClose < prev2Low ? "Bearish" : "Neutral"
+biasTxt  = biasInput == "Auto" ? autoBias : biasInput
+
+var table info = table.new(position.bottom_right, 1, 4)
+if showInfo and barstate.islast
+    tc     = time_close(htf)
+    msLeft = na(tc) ? 0 : math.max(0, tc - timenow)
+    secs   = math.floor(msLeft / 1000)
+    hh     = math.floor(secs / 3600)
+    mm     = math.floor((secs % 3600) / 60)
+    ss     = secs % 60
+    countdown = f_pad(hh) + ":" + f_pad(mm) + ":" + f_pad(ss)
+    modelTxt  = f_tfName(timeframe.period) + "-" + f_tfName(htf) + " Model"
+    txtCol    = chart.fg_color
+    table.cell(info, 0, 0, syminfo.ticker + " (" + f_tfName(timeframe.period) + ")", text_color=txtCol, text_halign=text.align_right, text_size=size.small)
+    table.cell(info, 0, 1, modelTxt, text_color=txtCol, text_halign=text.align_right, text_size=size.small)
+    table.cell(info, 0, 2, countdown, text_color=txtCol, text_halign=text.align_right, text_size=size.small)
+    table.cell(info, 0, 3, "Bias: " + biasTxt, text_color=txtCol, text_halign=text.align_right, text_size=size.small)
