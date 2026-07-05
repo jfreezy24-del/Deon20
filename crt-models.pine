@@ -1,0 +1,193 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © staticdotsol
+
+//@version=6
+indicator("CRT — Candle Range Theory", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// Candle Range Theory (CRT) — detects the 4 CRT models:
+//
+//   2 Candle model   — candle 1 sets the range (CRT high / CRT low); candle 2 sweeps one
+//                      side of the range and closes back inside it.
+//   3 Candle model   — after the sweep, the very NEXT candle distributes through the
+//                      opposite side of the range (marked with a "✓ 3C" completion label).
+//   Multiple candle  — the sweep arrives after one or more candles that held inside the
+//                      range, and/or the distribution takes several candles ("✓ MC").
+//   Inside bar model — every candle between the range candle and the sweep candle is a
+//                      strict inside bar.
+//
+// A range stays active until a candle CLOSES outside it. With an active sweep, that
+// close is either the distribution (through the opposite side → completion) or the
+// invalidation (back through the swept side). Any close outside the range starts a new
+// range candle. Runs on the chart timeframe, or on a higher CRT timeframe (H1/H4/Daily
+// style) while you watch a lower-timeframe chart.
+
+// ── Inputs ─────────────────────────────────────────────────────────────────────
+crtTFInput = input.timeframe("", "CRT Timeframe", group="CRT Settings", tooltip="Timeframe the CRT candles are built on. 'Chart' uses the chart timeframe. Classic CRT reads H1/H4/Daily ranges from a lower-timeframe chart.")
+
+sig2C = input.bool(true, "2 Candle", group="Models", inline="m1")
+sigIB = input.bool(true, "Inside Bar", group="Models", inline="m1", tooltip="Sweep that arrives after a chain of strict inside bars.")
+sigMC = input.bool(true, "Multiple Candle", group="Models", inline="m2", tooltip="Sweep that arrives after candles that held inside the range but were not strict inside bars.")
+showComplete = input.bool(true, "Distribution markers (✓ 3C / ✓ MC)", group="Models", tooltip="Marks the candle that closes through the opposite side of the range after a sweep. ✓ 3C when it is the very next candle after the sweep (the 3 candle model), ✓ MC when distribution took longer.")
+showInvalid = input.bool(false, "Invalidation markers (✗)", group="Models", tooltip="Marks a close back through the swept side after a signal fired.")
+showForming = input.bool(true, "Live 'forming' marker", group="Models", tooltip="On the open (unconfirmed) CRT candle, marks a sweep that is currently holding back inside the range. Realtime only — it can still un-form before the close.")
+
+bullColor = input.color(color.teal, "Bullish", group="Style", inline="c")
+bearColor = input.color(color.red, "Bearish", group="Style", inline="c")
+showBox  = input.bool(true, "Range box", group="Style", inline="b")
+boxColor = input.color(color.new(color.gray, 92), "", group="Style", inline="b")
+showLines = input.bool(true, "CRT high/low lines", group="Style", inline="l")
+lineColor = input.color(color.gray, "", group="Style", inline="l")
+showEQ  = input.bool(true, "EQ (50%) line", group="Style", inline="e", tooltip="Midpoint of the CRT range — first draw on the sweep, then the opposite side.")
+eqColor = input.color(color.new(color.gray, 40), "", group="Style", inline="e")
+lblSizeStr = input.string("Small", "Label size", options=["Tiny", "Small", "Normal"], group="Style")
+
+alertSweep    = input.bool(true, "Alert on sweep signals", group="Alerts", tooltip="Create ONE alert on this indicator with condition 'Any alert() function call' to receive these.")
+alertComplete = input.bool(true, "Alert on distribution (completion)", group="Alerts")
+alertForming  = input.bool(false, "Alert on live forming sweep", group="Alerts")
+
+lblSize = lblSizeStr == "Tiny" ? size.tiny : lblSizeStr == "Small" ? size.small : size.normal
+
+// ── CRT candles ────────────────────────────────────────────────────────────────
+if crtTFInput != "" and timeframe.in_seconds(crtTFInput) < timeframe.in_seconds(timeframe.period)
+    runtime.error("CRT Timeframe must be greater than or equal to the chart timeframe.")
+
+useHTF  = crtTFInput != "" and timeframe.in_seconds(crtTFInput) > timeframe.in_seconds(timeframe.period)
+crtTF   = useHTF ? crtTFInput : timeframe.period
+tfLabel = crtTF
+
+// Last COMPLETED CRT candle ([1] + lookahead_on = the standard non-repainting
+// pattern), processed on the first chart bar of the next CRT candle.
+[sH, sL, sC, sT] = request.security(syminfo.tickerid, crtTF, [high[1], low[1], close[1], time[1]], lookahead=barmerge.lookahead_on)
+// Live (still-forming) CRT candle, for the optional forming marker.
+[lvH, lvL, lvC] = request.security(syminfo.tickerid, crtTF, [high, low, close])
+
+cH = useHTF ? sH : high
+cL = useHTF ? sL : low
+cC = useHTF ? sC : close
+cT = useHTF ? sT : time
+newCandle = useHTF ? timeframe.change(crtTF) : barstate.isconfirmed
+
+// ── State ──────────────────────────────────────────────────────────────────────
+var float crtHigh = na
+var float crtLow  = na
+var int   candlesInRange = 0     // completed candles since the range candle
+var bool  insideOnly = true      // every candle since the range candle was a strict inside bar
+var float prevH = na             // previous candle, for the inside-bar chain
+var float prevL = na
+var bool  bullFired = false      // one signal per side per range
+var bool  bearFired = false
+var int   sweepDir = 0           // 1 = bullish sweep active, -1 = bearish, 0 = none
+var int   candlesSinceSweep = 0
+
+var box  rngBox = na
+var line hiLine = na
+var line loLine = na
+var line eqLine = na
+
+bool   bullSig     = false
+bool   bearSig     = false
+bool   completeSig = false
+bool   doReset     = false
+string sigModel    = na
+
+if newCandle
+    if na(crtHigh)
+        doReset := true
+    else
+        eqv = (crtHigh + crtLow) / 2
+        closedAbove = cC > crtHigh
+        closedBelow = cC < crtLow
+        if sweepDir != 0
+            candlesSinceSweep += 1
+        if closedAbove or closedBelow
+            // Close outside the range: distribution, invalidation, or plain expansion.
+            bullComplete = sweepDir == 1 and closedAbove
+            bearComplete = sweepDir == -1 and closedBelow
+            if bullComplete or bearComplete
+                completeSig := true
+                is3C = candlesSinceSweep == 1
+                if showComplete
+                    label.new(cT, bullComplete ? cH : cL, "✓ " + (is3C ? "3C" : "MC"), xloc=xloc.bar_time, style=bullComplete ? label.style_label_down : label.style_label_up, color=color.new(bullComplete ? bullColor : bearColor, 35), textcolor=color.white, size=lblSize, tooltip=(bullComplete ? "Bullish" : "Bearish") + " CRT distribution: closed through the opposite side of the range (" + (is3C ? "3 candle" : "multiple candle") + " model)")
+                if alertComplete
+                    alert("CRT " + (bullComplete ? "bullish" : "bearish") + " distribution complete (" + (is3C ? "3 candle" : "multiple candle") + " model) — " + syminfo.ticker + " " + tfLabel)
+            else if sweepDir != 0 and showInvalid
+                label.new(cT, sweepDir == 1 ? cL : cH, "✗", xloc=xloc.bar_time, style=sweepDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.gray, 40), textcolor=color.white, size=lblSize, tooltip="CRT sweep invalidated: closed back through the swept side")
+            doReset := true
+        else
+            candlesInRange += 1
+            sweptLow  = cL < crtLow and cC >= crtLow
+            sweptHigh = cH > crtHigh and cC <= crtHigh
+            int dir = 0
+            if sweptLow and sweptHigh
+                dir := cC >= eqv ? 1 : -1
+            else if sweptLow
+                dir := 1
+            else if sweptHigh
+                dir := -1
+            if dir != 0
+                model   = candlesInRange == 1 ? "2 Candle" : insideOnly ? "Inside Bar" : "Multiple Candle"
+                mShort  = candlesInRange == 1 ? "2C" : insideOnly ? "IB" : "MC"
+                enabled = model == "2 Candle" ? sig2C : model == "Inside Bar" ? sigIB : sigMC
+                already = dir == 1 ? bullFired : bearFired
+                if enabled and not already
+                    sigModel := model
+                    sweepDir := dir
+                    candlesSinceSweep := 0
+                    if dir == 1
+                        bullSig := true
+                        bullFired := true
+                        label.new(cT, cL, "CRT ▲ " + mShort, xloc=xloc.bar_time, style=label.style_label_up, color=color.new(bullColor, 20), textcolor=color.white, size=lblSize, tooltip="Bullish CRT (" + model + " model): swept the CRT low and closed back inside the range. Targets: EQ, then CRT high.")
+                    else
+                        bearSig := true
+                        bearFired := true
+                        label.new(cT, cH, "CRT ▼ " + mShort, xloc=xloc.bar_time, style=label.style_label_down, color=color.new(bearColor, 20), textcolor=color.white, size=lblSize, tooltip="Bearish CRT (" + model + " model): swept the CRT high and closed back inside the range. Targets: EQ, then CRT low.")
+            // Update the inside-bar chain AFTER model classification, so the chain
+            // only describes the candles BETWEEN the range candle and the sweep.
+            insideOnly := insideOnly and cH <= prevH and cL >= prevL
+            prevH := cH
+            prevL := cL
+    if doReset
+        crtHigh := cH
+        crtLow  := cL
+        candlesInRange := 0
+        insideOnly := true
+        prevH := cH
+        prevL := cL
+        bullFired := false
+        bearFired := false
+        sweepDir := 0
+        candlesSinceSweep := 0
+        rngBox := showBox ? box.new(cT, cH, time, cL, xloc=xloc.bar_time, bgcolor=boxColor, border_color=color.new(color.gray, 70)) : na
+        hiLine := showLines ? line.new(cT, cH, time, cH, xloc=xloc.bar_time, color=lineColor, width=1) : na
+        loLine := showLines ? line.new(cT, cL, time, cL, xloc=xloc.bar_time, color=lineColor, width=1) : na
+        eqLine := showEQ ? line.new(cT, (cH + cL) / 2, time, (cH + cL) / 2, xloc=xloc.bar_time, color=eqColor, style=line.style_dotted, width=1) : na
+
+// Extend the active range's drawings to the current bar.
+if not na(rngBox)
+    box.set_right(rngBox, time)
+if not na(hiLine)
+    line.set_x2(hiLine, time)
+if not na(loLine)
+    line.set_x2(loLine, time)
+if not na(eqLine)
+    line.set_x2(eqLine, time)
+
+// ── Live forming marker (realtime only — can un-form before the candle closes) ──
+var label formingLbl = na
+label.delete(formingLbl)
+if showForming and barstate.isrealtime and not na(crtHigh) and sweepDir == 0
+    formingBull = lvL < crtLow and lvC >= crtLow and lvC <= crtHigh and not bullFired
+    formingBear = lvH > crtHigh and lvC <= crtHigh and lvC >= crtLow and not bearFired
+    if formingBull or formingBear
+        formingLbl := label.new(time, formingBull ? lvL : lvH, "CRT " + (formingBull ? "▲" : "▼") + " forming…", xloc=xloc.bar_time, style=formingBull ? label.style_label_up : label.style_label_down, color=color.new(formingBull ? bullColor : bearColor, 70), textcolor=color.white, size=lblSize, tooltip="Sweep is holding back inside the range on the open CRT candle — it can still un-form before the close.")
+        if alertForming
+            alert("CRT " + (formingBull ? "bullish" : "bearish") + " sweep forming — " + syminfo.ticker + " " + tfLabel, alert.freq_once_per_bar)
+
+// ── Alerts ─────────────────────────────────────────────────────────────────────
+if alertSweep and (bullSig or bearSig)
+    alert("CRT " + (bullSig ? "bullish sweep (swept CRT low, closed back inside)" : "bearish sweep (swept CRT high, closed back inside)") + " — " + sigModel + " model — " + syminfo.ticker + " " + tfLabel)
+
+alertcondition(bullSig, "CRT Bullish Sweep", "CRT bullish sweep: swept the CRT low and closed back inside the range")
+alertcondition(bearSig, "CRT Bearish Sweep", "CRT bearish sweep: swept the CRT high and closed back inside the range")
+alertcondition(bullSig or bearSig, "CRT Any Sweep", "CRT sweep signal")
+alertcondition(completeSig, "CRT Distribution Complete", "CRT distribution: closed through the opposite side of the range")
