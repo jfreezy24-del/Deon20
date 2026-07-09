@@ -13,19 +13,20 @@
 //
 // DATA SOURCE:
 //   The statistical sample is NOT built from the chart's own bars anymore.
-//   It is requested directly at the projection timeframe from a historical
-//   data feed (default BITSTAMP:BTCUSD — BTC data back to 2011, the longest
-//   spot history on TradingView). This means:
+//   It is requested at the projection timeframe via request.security, which
+//   carries the symbol's FULL higher-timeframe history. By default it uses
+//   YOUR CHART SYMBOL — so it works identically on OKX, Kraken, MEXC,
+//   Coinbase, Bitstamp or any other exchange/asset with zero setup:
 //     * You get the full higher-timeframe history your TV plan allows
 //       (thousands of daily bars) even while viewing a 1m/5m/15m chart.
 //     * Stats are identical on every chart timeframe — no more thin samples.
-//   You can optionally POOL additional feeds (Coinbase, Kraken, ...) to grow
-//   the sample further. Other long feeds worth knowing:
+//   OPTIONAL: if your exchange listed the asset recently, you can override
+//   the source with a longer-history feed, and/or POOL up to two extra feeds
+//   into the sample. Long BTC feeds for reference:
 //     BITSTAMP:BTCUSD (2011+) · KRAKEN:BTCUSD (2013+) · COINBASE:BTCUSD (2015+)
 //     CRYPTO:BTCUSD (TradingView aggregate index)
-//   If you run this on a non-BTC chart, point the feeds at the same asset
-//   (e.g. BITSTAMP:ETHUSD) — ratios are percentages of the open, so they are
-//   applied to YOUR chart symbol's open regardless of which feed supplied them.
+//   Ratios are percentages of the open, so whichever feed supplies them, they
+//   are always applied to YOUR chart symbol's open.
 //
 // NOTE: View this on a chart timeframe EQUAL TO OR FINER THAN the projection TF
 //       (e.g. view 5m/15m/1H while projecting 1D or 1W; view 1D/1W for 1M;
@@ -41,9 +42,9 @@ periodsShow = input.int(2,    "Historical Periods to Show", minval=1, maxval=20)
 sampleLen   = input.int(2000, "Sample Size (completed periods for stats)", minval=20, maxval=5000, tooltip="Upper cap per feed. With a historical feed the sample is pulled from the feed's full higher-timeframe history, so leave this high to use the most data possible.")
 
 grpS   = "Historical Data Source"
-useChartSym = input.bool(false, "Use chart symbol instead of a feed", group=grpS, tooltip="ON = build stats from the chart symbol's own higher-timeframe history. OFF = use the primary feed below. Either way the sample comes from the projection timeframe's full history, not from chart bars.")
-sym1   = input.symbol("BITSTAMP:BTCUSD", "Primary history feed", group=grpS, tooltip="Feed the sample is built from. BITSTAMP:BTCUSD has BTC data back to 2011 (longest). Alternatives: KRAKEN:BTCUSD (2013+), COINBASE:BTCUSD (2015+), CRYPTO:BTCUSD (aggregate index). For other assets pick the same asset on the exchange with the longest history.")
-use2   = input.bool(false, "Pool extra feed #2", group=grpS, tooltip="Adds this feed's completed periods to the sample. Periods overlap in time with the primary feed, so pooling smooths exchange-specific wicks rather than extending history.")
+useCustomFeed = input.bool(false, "Override with a custom history feed", group=grpS, tooltip="OFF (default) = stats are built from YOUR chart symbol's own higher-timeframe history — works the same on OKX, Kraken, MEXC, Coinbase, Bitstamp or any other exchange/asset, no setup needed. ON = borrow history from the feed below instead (useful when your exchange listed the asset recently and another exchange has a longer record).")
+sym1   = input.symbol("BITSTAMP:BTCUSD", "Custom history feed", group=grpS, tooltip="Only used when the override above is ON. Pick the same asset on the exchange with the longest history, e.g. BITSTAMP:BTCUSD (2011+), KRAKEN:BTCUSD (2013+), COINBASE:BTCUSD (2015+), CRYPTO:BTCUSD (aggregate index).")
+use2   = input.bool(false, "Pool extra feed #2", group=grpS, tooltip="Adds this feed's completed periods to the sample. Point it at the SAME asset on another exchange. Periods overlap in time, so pooling smooths exchange-specific wicks rather than extending history.")
 sym2   = input.symbol("COINBASE:BTCUSD", "Extra feed #2", group=grpS)
 use3   = input.bool(false, "Pool extra feed #3", group=grpS)
 sym3   = input.symbol("KRAKEN:BTCUSD", "Extra feed #3", group=grpS)
@@ -157,7 +158,7 @@ f_stats(int maxN) =>
             array.shift(dA)
     [mA, dA, mMeanTag, mMeanHold, mMedTag, mMedHold, dMeanTag, dMeanHold, dMedTag, dMedHold]
 
-statSym1 = useChartSym ? syminfo.tickerid : sym1
+statSym1 = useCustomFeed ? sym1 : syminfo.tickerid
 
 [mA1, dA1, mMtT1, mMtH1, mMdT1, mMdH1, dMtT1, dMtH1, dMdT1, dMdH1] = request.security(statSym1, tf, f_stats(sampleLen))
 [mA2, dA2, mMtT2, mMtH2, mMdT2, mMdH2, dMtT2, dMtH2, dMdT2, dMdH2] = request.security(sym2,     tf, f_stats(sampleLen))
@@ -354,7 +355,7 @@ if barstate.islast and showTbl
     nFeeds = 1 + (use2 ? 1 : 0) + (use3 ? 1 : 0)
     srcTip = statSym1 + (use2 ? "\n" + sym2 : "") + (use3 ? "\n" + sym3 : "")
     table.cell(t, 0, 5, "Source", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 1, 5, useChartSym ? "Chart" : statSym1, bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
+    table.cell(t, 1, 5, useCustomFeed ? statSym1 : "Chart", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
     table.cell(t, 2, 5, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
     table.cell(t, 3, 5, "", bgcolor=bg)
     table.cell(t, 4, 5, "", bgcolor=bg)
