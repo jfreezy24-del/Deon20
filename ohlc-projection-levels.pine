@@ -1,0 +1,360 @@
+//@version=6
+// =============================================================================
+// OHLC Projection Levels (Mean / Median) — Historical-Feed Edition
+// -----------------------------------------------------------------------------
+// Concept (rebuilt from a public description, not copied source):
+//   At the start of each period (4H/1D/1W/1M/1Y) it anchors to the OPEN and
+//   projects symmetric levels around it:
+//     * Manipulation (M)  = typical COUNTER-trend wick   -> liquidity / stop-hunt
+//     * Distribution (D)  = typical IN-trend expansion    -> profit targets
+//   Ratios are derived from a historical sample (mean AND median), so the
+//   band between mean & median is a zone rather than a single line.
+//   Hold-rate = how often a zone was reached and then reversed price back through.
+//
+// DATA SOURCE:
+//   The statistical sample is NOT built from the chart's own bars anymore.
+//   It is requested directly at the projection timeframe from a historical
+//   data feed (default BITSTAMP:BTCUSD — BTC data back to 2011, the longest
+//   spot history on TradingView). This means:
+//     * You get the full higher-timeframe history your TV plan allows
+//       (thousands of daily bars) even while viewing a 1m/5m/15m chart.
+//     * Stats are identical on every chart timeframe — no more thin samples.
+//   You can optionally POOL additional feeds (Coinbase, Kraken, ...) to grow
+//   the sample further. Other long feeds worth knowing:
+//     BITSTAMP:BTCUSD (2011+) · KRAKEN:BTCUSD (2013+) · COINBASE:BTCUSD (2015+)
+//     CRYPTO:BTCUSD (TradingView aggregate index)
+//   If you run this on a non-BTC chart, point the feeds at the same asset
+//   (e.g. BITSTAMP:ETHUSD) — ratios are percentages of the open, so they are
+//   applied to YOUR chart symbol's open regardless of which feed supplied them.
+//
+// NOTE: View this on a chart timeframe EQUAL TO OR FINER THAN the projection TF
+//       (e.g. view 5m/15m/1H while projecting 1D or 1W; view 1D/1W for 1M;
+//       view 1W/1M for 1Y). The 4H option uses exchange-time alignment.
+// =============================================================================
+
+indicator("OHLC Projection Levels (Mean/Median)", shorttitle="OHLC Proj",
+     overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------- Inputs -----------------------------------
+tfSel       = input.string("1D", "Projection Timeframe", options=["4H","1D","1W","1M","1Y"])
+periodsShow = input.int(2,    "Historical Periods to Show", minval=1, maxval=20)
+sampleLen   = input.int(2000, "Sample Size (completed periods for stats)", minval=20, maxval=5000, tooltip="Upper cap per feed. With a historical feed the sample is pulled from the feed's full higher-timeframe history, so leave this high to use the most data possible.")
+
+grpS   = "Historical Data Source"
+useChartSym = input.bool(false, "Use chart symbol instead of a feed", group=grpS, tooltip="ON = build stats from the chart symbol's own higher-timeframe history. OFF = use the primary feed below. Either way the sample comes from the projection timeframe's full history, not from chart bars.")
+sym1   = input.symbol("BITSTAMP:BTCUSD", "Primary history feed", group=grpS, tooltip="Feed the sample is built from. BITSTAMP:BTCUSD has BTC data back to 2011 (longest). Alternatives: KRAKEN:BTCUSD (2013+), COINBASE:BTCUSD (2015+), CRYPTO:BTCUSD (aggregate index). For other assets pick the same asset on the exchange with the longest history.")
+use2   = input.bool(false, "Pool extra feed #2", group=grpS, tooltip="Adds this feed's completed periods to the sample. Periods overlap in time with the primary feed, so pooling smooths exchange-specific wicks rather than extending history.")
+sym2   = input.symbol("COINBASE:BTCUSD", "Extra feed #2", group=grpS)
+use3   = input.bool(false, "Pool extra feed #3", group=grpS)
+sym3   = input.symbol("KRAKEN:BTCUSD", "Extra feed #3", group=grpS)
+
+grpM   = "Manipulation (wick / liquidity)"
+showM  = input.bool(true,  "Show Manipulation levels", group=grpM)
+colM   = input.color(color.orange, "Color", group=grpM)
+
+grpD   = "Distribution (targets)"
+showD  = input.bool(true,  "Show Distribution levels", group=grpD)
+colD   = input.color(color.teal, "Color", group=grpD)
+
+grpO   = "Open & Display"
+showO  = input.bool(true,  "Show Open line", group=grpO)
+colO   = input.color(color.gray, "Open color", group=grpO)
+showFill   = input.bool(true,  "Shade mean–median zones", group=grpO)
+showLabels = input.bool(true,  "Show labels", group=grpO)
+
+grpW     = "Projection Width"
+projBars = input.int(60, "Zone width (bars to the right)", minval=5, maxval=500, group=grpW, tooltip="How far the zones stretch right of the open. Larger = less squished at the start of a new period.")
+extendCur = input.bool(true, "Always reach current bar if past width", group=grpW, tooltip="If the period runs longer than the set width, keep stretching to the current bar.")
+
+grpT     = "Stats Table"
+showTbl  = input.bool(true, "Show stats table", group=grpT)
+tblPos   = input.string("top_right", "Position", options=["top_right","top_left","bottom_right","bottom_left","middle_right"], group=grpT)
+tblSize  = input.string("normal", "Text size", options=["tiny","small","normal","large"], group=grpT)
+
+// map selection to a timeframe string  (Year = "12M" in TradingView)
+tf = tfSel == "4H" ? "240" : tfSel == "1W" ? "1W" : tfSel == "1M" ? "1M" : tfSel == "1Y" ? "12M" : "1D"
+
+// ----------------------- Historical sample (feed context) ---------------------
+// Runs INSIDE request.security at the projection timeframe, iterating the
+// feed's entire higher-timeframe history. Each completed HTF bar is one
+// sample period. Only bar[1] (confirmed) data is used, so nothing repaints.
+f_stats(int maxN) =>
+    var array<float> mA = array.new<float>()
+    var array<float> dA = array.new<float>()
+    // hit-rate counters: tagged = price reached the zone; hold = it then reversed back through
+    var int mMeanTag  = 0
+    var int mMeanHold = 0
+    var int mMedTag   = 0
+    var int mMedHold  = 0
+    var int dMeanTag  = 0
+    var int dMeanHold = 0
+    var int dMedTag   = 0
+    var int dMedHold  = 0
+    if bar_index > 0
+        float o = open[1]
+        float h = high[1]
+        float l = low[1]
+        float c = close[1]
+        // --- hit-rate: judge the completed period against the ratios that were live for it ---
+        if array.size(mA) >= 5
+            emMean = array.avg(mA)
+            emMed  = array.median(mA)
+            edMean = array.avg(dA)
+            edMed  = array.median(dA)
+            // M mean (check both sides; tag = reached, hold = closed back through)
+            float up = o * (1 + emMean)
+            float dn = o * (1 - emMean)
+            if h >= up
+                mMeanTag += 1
+                if c < up
+                    mMeanHold += 1
+            if l <= dn
+                mMeanTag += 1
+                if c > dn
+                    mMeanHold += 1
+            // M median
+            up := o * (1 + emMed)
+            dn := o * (1 - emMed)
+            if h >= up
+                mMedTag += 1
+                if c < up
+                    mMedHold += 1
+            if l <= dn
+                mMedTag += 1
+                if c > dn
+                    mMedHold += 1
+            // D mean
+            up := o * (1 + edMean)
+            dn := o * (1 - edMean)
+            if h >= up
+                dMeanTag += 1
+                if c < up
+                    dMeanHold += 1
+            if l <= dn
+                dMeanTag += 1
+                if c > dn
+                    dMeanHold += 1
+            // D median
+            up := o * (1 + edMed)
+            dn := o * (1 - edMed)
+            if h >= up
+                dMedTag += 1
+                if c < up
+                    dMedHold += 1
+            if l <= dn
+                dMedTag += 1
+                if c > dn
+                    dMedHold += 1
+        // record the completed period into the sample
+        isBull = c >= o
+        // manipulation = counter-trend wick ; distribution = in-trend expansion
+        manip = isBull ? (o - l) / o : (h - o) / o
+        dist  = isBull ? (h - o) / o : (o - l) / o
+        array.push(mA, manip)
+        array.push(dA, dist)
+        if array.size(mA) > maxN
+            array.shift(mA)
+            array.shift(dA)
+    [mA, dA, mMeanTag, mMeanHold, mMedTag, mMedHold, dMeanTag, dMeanHold, dMedTag, dMedHold]
+
+statSym1 = useChartSym ? syminfo.tickerid : sym1
+
+[mA1, dA1, mMtT1, mMtH1, mMdT1, mMdH1, dMtT1, dMtH1, dMdT1, dMdH1] = request.security(statSym1, tf, f_stats(sampleLen))
+[mA2, dA2, mMtT2, mMtH2, mMdT2, mMdH2, dMtT2, dMtH2, dMdT2, dMdH2] = request.security(sym2,     tf, f_stats(sampleLen))
+[mA3, dA3, mMtT3, mMtH3, mMdT3, mMdH3, dMtT3, dMtH3, dMdT3, dMdH3] = request.security(sym3,     tf, f_stats(sampleLen))
+
+// pool enabled feeds into one sample
+poolArr(array<float> a, array<float> b, array<float> c) =>
+    array<float> out = na(a) ? array.new<float>() : array.copy(a)
+    if use2 and not na(b)
+        array.concat(out, b)
+    if use3 and not na(c)
+        array.concat(out, c)
+    out
+
+sum3(int a, int b, int c) =>
+    nz(a) + (use2 ? nz(b) : 0) + (use3 ? nz(c) : 0)
+
+manipArr = poolArr(mA1, mA2, mA3)
+distArr  = poolArr(dA1, dA2, dA3)
+
+mMeanTag  = sum3(mMtT1, mMtT2, mMtT3)
+mMeanHold = sum3(mMtH1, mMtH2, mMtH3)
+mMedTag   = sum3(mMdT1, mMdT2, mMdT3)
+mMedHold  = sum3(mMdH1, mMdH2, mMdH3)
+dMeanTag  = sum3(dMtT1, dMtT2, dMtT3)
+dMeanHold = sum3(dMtH1, dMtH2, dMtH3)
+dMedTag   = sum3(dMdT1, dMdT2, dMdT3)
+dMedHold  = sum3(dMdH1, dMdH2, dMdH3)
+
+// --------------------------------- Stats --------------------------------------
+sampleN  = array.size(manipArr)
+hasStats = sampleN >= 5
+mMean = hasStats ? array.avg(manipArr)    : na
+mMed  = hasStats ? array.median(manipArr) : na
+dMean = hasStats ? array.avg(distArr)     : na
+dMed  = hasStats ? array.median(distArr)  : na
+
+// ----------------------------- Group container --------------------------------
+type LevelGroup
+    array<line>     lines
+    array<linefill> fills
+    array<label>    labels
+
+var array<LevelGroup> groups = array.new<LevelGroup>()
+
+// -------------------- Current-period anchor (chart symbol) --------------------
+// Levels are projected from YOUR chart symbol's period open; only the ratios
+// come from the historical feed(s).
+var float curO = na
+var int   startBar = na
+
+newP = ta.change(time(tf)) != 0
+
+if newP
+    curO := open
+    startBar := bar_index
+
+// ------------------------------- Helpers --------------------------------------
+mkLine(int x, float y, color c, string st, int w) =>
+    line.new(x, y, x + projBars, y, xloc=xloc.bar_index, color=c, style=st, width=w)
+
+mkLabel(int x, float y, string txt, color c) =>
+    label.new(x, y, txt, xloc=xloc.bar_index, style=label.style_label_left,
+         color=color.new(c, 90), textcolor=c, size=size.small)
+
+// keep a handle to the active group so we can extend it each bar
+var LevelGroup active = na
+
+// -------------------- Build a fresh group at each new period ------------------
+if newP and hasStats
+    g = LevelGroup.new(array.new<line>(), array.new<linefill>(), array.new<label>())
+
+    // Open
+    if showO
+        ol = mkLine(startBar, curO, colO, line.style_dotted, 1)
+        array.push(g.lines, ol)
+        if showLabels
+            array.push(g.labels, mkLabel(startBar, curO, "Open  " + str.tostring(curO, format.mintick), colO))
+
+    // Manipulation +/- (mean & median)
+    if showM
+        pMmean = curO * (1 + mMean), pMmed = curO * (1 + mMed)
+        nMmean = curO * (1 - mMean), nMmed = curO * (1 - mMed)
+        l1 = mkLine(startBar, pMmean, colM, line.style_solid,  1)
+        l2 = mkLine(startBar, pMmed,  colM, line.style_dashed, 1)
+        l3 = mkLine(startBar, nMmean, colM, line.style_solid,  1)
+        l4 = mkLine(startBar, nMmed,  colM, line.style_dashed, 1)
+        array.push(g.lines, l1), array.push(g.lines, l2)
+        array.push(g.lines, l3), array.push(g.lines, l4)
+        if showFill
+            array.push(g.fills, linefill.new(l1, l2, color.new(colM, 85)))
+            array.push(g.fills, linefill.new(l3, l4, color.new(colM, 85)))
+        if showLabels
+            array.push(g.labels, mkLabel(startBar, pMmean, "+M μ  " + str.tostring(pMmean, format.mintick), colM))
+            array.push(g.labels, mkLabel(startBar, pMmed,  "+M ~  " + str.tostring(pMmed,  format.mintick), colM))
+            array.push(g.labels, mkLabel(startBar, nMmean, "-M μ  " + str.tostring(nMmean, format.mintick), colM))
+            array.push(g.labels, mkLabel(startBar, nMmed,  "-M ~  " + str.tostring(nMmed,  format.mintick), colM))
+
+    // Distribution +/- (mean & median)
+    if showD
+        pDmean = curO * (1 + dMean), pDmed = curO * (1 + dMed)
+        nDmean = curO * (1 - dMean), nDmed = curO * (1 - dMed)
+        d1 = mkLine(startBar, pDmean, colD, line.style_solid,  1)
+        d2 = mkLine(startBar, pDmed,  colD, line.style_dashed, 1)
+        d3 = mkLine(startBar, nDmean, colD, line.style_solid,  1)
+        d4 = mkLine(startBar, nDmed,  colD, line.style_dashed, 1)
+        array.push(g.lines, d1), array.push(g.lines, d2)
+        array.push(g.lines, d3), array.push(g.lines, d4)
+        if showFill
+            array.push(g.fills, linefill.new(d1, d2, color.new(colD, 88)))
+            array.push(g.fills, linefill.new(d3, d4, color.new(colD, 88)))
+        if showLabels
+            array.push(g.labels, mkLabel(startBar, pDmean, "+D μ  " + str.tostring(pDmean, format.mintick), colD))
+            array.push(g.labels, mkLabel(startBar, pDmed,  "+D ~  " + str.tostring(pDmed,  format.mintick), colD))
+            array.push(g.labels, mkLabel(startBar, nDmean, "-D μ  " + str.tostring(nDmean, format.mintick), colD))
+            array.push(g.labels, mkLabel(startBar, nDmed,  "-D ~  " + str.tostring(nDmed,  format.mintick), colD))
+
+    array.push(groups, g)
+    active := g
+
+    // trim old periods
+    if array.size(groups) > periodsShow
+        old = array.shift(groups)
+        for fl in old.fills
+            linefill.delete(fl)
+        for ln in old.lines
+            line.delete(ln)
+        for lb in old.labels
+            label.delete(lb)
+
+// ---------------- Extend active period's lines to the right -------------------
+if not na(active)
+    rightX = extendCur ? math.max(startBar + projBars, bar_index) : startBar + projBars
+    for ln in active.lines
+        line.set_x2(ln, rightX)
+    for lb in active.labels
+        label.set_x(lb, rightX)
+
+// --------------------------------- Stats table --------------------------------
+posSel  = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : tblPos == "middle_right" ? position.middle_right : position.top_right
+sizeSel = tblSize == "tiny" ? size.tiny : tblSize == "small" ? size.small : tblSize == "large" ? size.large : size.normal
+
+f_hold(int hold, int tag) =>
+    tag > 0 ? str.tostring(math.round(hold / tag * 100)) + "%" : "—"
+
+var table t = table.new(posSel, 5, 6, border_width=1, frame_color=color.new(color.gray, 50), frame_width=1)
+
+if barstate.islast and showTbl
+    bg  = color.new(color.black, 20)
+    hbg = color.new(color.gray, 40)
+    txt = color.white
+
+    mMeanS = hasStats ? str.tostring(mMean * 100, "#.##") + "%" : "—"
+    mMedS  = hasStats ? str.tostring(mMed  * 100, "#.##") + "%" : "—"
+    dMeanS = hasStats ? str.tostring(dMean * 100, "#.##") + "%" : "—"
+    dMedS  = hasStats ? str.tostring(dMed  * 100, "#.##") + "%" : "—"
+
+    // header row
+    table.cell(t, 0, 0, tfSel, bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 1, 0, "Mean",  bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 0, "Hold",  bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 3, 0, "Med",   bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 0, "Hold",  bgcolor=hbg, text_color=txt, text_size=sizeSel)
+
+    // Manipulation row (ratio + hold-rate); tooltip shows sample size n
+    table.cell(t, 0, 1, "Manip (M)", bgcolor=bg, text_color=colM, text_size=sizeSel)
+    table.cell(t, 1, 1, mMeanS, bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 1, f_hold(mMeanHold, mMeanTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(mMeanTag))
+    table.cell(t, 3, 1, mMedS, bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 1, f_hold(mMedHold, mMedTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(mMedTag))
+
+    // Distribution row
+    table.cell(t, 0, 2, "Distr (D)", bgcolor=bg, text_color=colD, text_size=sizeSel)
+    table.cell(t, 1, 2, dMeanS, bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 2, f_hold(dMeanHold, dMeanTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(dMeanTag))
+    table.cell(t, 3, 2, dMedS, bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 2, f_hold(dMedHold, dMedTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(dMedTag))
+
+    // current open
+    table.cell(t, 0, 3, "Open", bgcolor=bg, text_color=colO, text_size=sizeSel)
+    table.cell(t, 1, 3, na(curO) ? "—" : str.tostring(curO, format.mintick), bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 3, "", bgcolor=bg)
+    table.cell(t, 3, 3, "", bgcolor=bg)
+    table.cell(t, 4, 3, "", bgcolor=bg)
+
+    // sample count
+    table.cell(t, 0, 4, "Sample", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+    table.cell(t, 1, 4, str.tostring(sampleN), bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+    table.cell(t, 2, 4, "periods", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+    table.cell(t, 3, 4, "", bgcolor=bg)
+    table.cell(t, 4, 4, "", bgcolor=bg)
+
+    // data source
+    nFeeds = 1 + (use2 ? 1 : 0) + (use3 ? 1 : 0)
+    srcTip = statSym1 + (use2 ? "\n" + sym2 : "") + (use3 ? "\n" + sym3 : "")
+    table.cell(t, 0, 5, "Source", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+    table.cell(t, 1, 5, useChartSym ? "Chart" : statSym1, bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
+    table.cell(t, 2, 5, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
+    table.cell(t, 3, 5, "", bgcolor=bg)
+    table.cell(t, 4, 5, "", bgcolor=bg)
