@@ -156,28 +156,32 @@ f_stats(int maxN) =>
         if array.size(mA) > maxN
             array.shift(mA)
             array.shift(dA)
-    [mA, dA, mMeanTag, mMeanHold, mMedTag, mMedHold, dMeanTag, dMeanHold, dMedTag, dMedHold]
+    // return scalars only — returning the arrays themselves would copy them
+    // across the security boundary on every chart bar and exhaust memory
+    int  n  = array.size(mA)
+    bool ok = n >= 5
+    [ok ? array.avg(mA) : na, ok ? array.median(mA) : na, ok ? array.avg(dA) : na, ok ? array.median(dA) : na, n, mMeanTag, mMeanHold, mMedTag, mMedHold, dMeanTag, dMeanHold, dMedTag, dMedHold]
 
 statSym1 = useCustomFeed ? sym1 : syminfo.tickerid
 
-[mA1, dA1, mMtT1, mMtH1, mMdT1, mMdH1, dMtT1, dMtH1, dMdT1, dMdH1] = request.security(statSym1, tf, f_stats(sampleLen))
-[mA2, dA2, mMtT2, mMtH2, mMdT2, mMdH2, dMtT2, dMtH2, dMdT2, dMdH2] = request.security(sym2,     tf, f_stats(sampleLen))
-[mA3, dA3, mMtT3, mMtH3, mMdT3, mMdH3, dMtT3, dMtH3, dMdT3, dMdH3] = request.security(sym3,     tf, f_stats(sampleLen))
+[mMean1, mMed1, dMean1, dMed1, n1, mMtT1, mMtH1, mMdT1, mMdH1, dMtT1, dMtH1, dMdT1, dMdH1] = request.security(statSym1, tf, f_stats(sampleLen))
+[mMean2, mMed2, dMean2, dMed2, n2, mMtT2, mMtH2, mMdT2, mMdH2, dMtT2, dMtH2, dMdT2, dMdH2] = request.security(sym2,     tf, f_stats(sampleLen))
+[mMean3, mMed3, dMean3, dMed3, n3, mMtT3, mMtH3, mMdT3, mMdH3, dMtT3, dMtH3, dMdT3, dMdH3] = request.security(sym3,     tf, f_stats(sampleLen))
 
-// pool enabled feeds into one sample
-poolArr(array<float> a, array<float> b, array<float> c) =>
-    array<float> out = na(a) ? array.new<float>() : array.copy(a)
-    if use2 and not na(b)
-        array.concat(out, b)
-    if use3 and not na(c)
-        array.concat(out, c)
-    out
+// ------------------------- Pool enabled feeds ----------------------------------
+// weight per feed = its sample size (0 if disabled or not enough data yet)
+w1 = na(mMean1) ? 0 : nz(n1)
+w2 = use2 and not na(mMean2) ? nz(n2) : 0
+w3 = use3 and not na(mMean3) ? nz(n3) : 0
+sampleN = w1 + w2 + w3
+
+// sample-size-weighted combination; for the median this is an approximation
+// (feeds track the same asset, so their medians sit close together)
+poolStat(float a, float b, float c) =>
+    sampleN > 0 ? (nz(a) * w1 + nz(b) * w2 + nz(c) * w3) / sampleN : na
 
 sum3(int a, int b, int c) =>
     nz(a) + (use2 ? nz(b) : 0) + (use3 ? nz(c) : 0)
-
-manipArr = poolArr(mA1, mA2, mA3)
-distArr  = poolArr(dA1, dA2, dA3)
 
 mMeanTag  = sum3(mMtT1, mMtT2, mMtT3)
 mMeanHold = sum3(mMtH1, mMtH2, mMtH3)
@@ -189,12 +193,11 @@ dMedTag   = sum3(dMdT1, dMdT2, dMdT3)
 dMedHold  = sum3(dMdH1, dMdH2, dMdH3)
 
 // --------------------------------- Stats --------------------------------------
-sampleN  = array.size(manipArr)
 hasStats = sampleN >= 5
-mMean = hasStats ? array.avg(manipArr)    : na
-mMed  = hasStats ? array.median(manipArr) : na
-dMean = hasStats ? array.avg(distArr)     : na
-dMed  = hasStats ? array.median(distArr)  : na
+mMean = hasStats ? poolStat(mMean1, mMean2, mMean3) : na
+mMed  = hasStats ? poolStat(mMed1,  mMed2,  mMed3)  : na
+dMean = hasStats ? poolStat(dMean1, dMean2, dMean3) : na
+dMed  = hasStats ? poolStat(dMed1,  dMed2,  dMed3)  : na
 
 // ----------------------------- Group container --------------------------------
 type LevelGroup
