@@ -12,6 +12,7 @@
  *                         without it the run is a dry run that only logs)
  *   ALERT_EMAIL           inbox for email copies via ntfy e-mail forwarding
  *   NTFY_SERVER           ntfy server base URL         (default https://ntfy.sh)
+ *   DISCORD_WEBHOOK_URL   Discord webhook to also post alerts to (optional)
  *   ALGO_MIN_CONFIDENCE   confidence bar for alerts               (default 60)
  *   ALGO_TIMEFRAMES       comma list of eligible timeframes    (default D,W,M)
  *
@@ -70,31 +71,49 @@ async function publish(server: string, payload: object): Promise<void> {
   if (!res.ok) throw new Error(`ntfy responded ${res.status}: ${await res.text()}`);
 }
 
+async function publishDiscord(webhookUrl: string, content: string): Promise<void> {
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: content.slice(0, 2000) }),
+  });
+  if (!res.ok) throw new Error(`Discord responded ${res.status}: ${await res.text()}`);
+}
+
 async function main() {
   const topic = process.env.NTFY_TOPIC?.trim();
   const email = process.env.ALERT_EMAIL?.trim() || undefined;
   const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
+  const discordWebhook = process.env.DISCORD_WEBHOOK_URL?.trim() || undefined;
 
   // Deterministic delivery test: TEST_PING sends one notification (and an
   // email copy when ALERT_EMAIL is set) independent of the scan, then exits.
   const testPing = (process.env.TEST_PING ?? '').trim().toLowerCase();
   if (testPing === '1' || testPing === 'true' || testPing === 'yes') {
-    if (!topic) {
-      throw new Error('TEST_PING set but NTFY_TOPIC is empty — set the NTFY_TOPIC secret first.');
+    if (!topic && !discordWebhook) {
+      throw new Error('TEST_PING set but neither NTFY_TOPIC nor DISCORD_WEBHOOK_URL is set.');
     }
-    await publish(server, {
-      topic,
-      title: 'Strat Algo Alerts test ✅',
-      message:
-        'If this reached you, delivery is working.' +
-        (email
-          ? ` An email copy went to ${email} — check the inbox (and spam) to confirm that channel too.`
-          : ' Set the ALERT_EMAIL secret to also get inbox copies.'),
-      priority: 4,
-      tags: ['white_check_mark'],
-      ...(email ? { email } : {}),
-    });
-    console.log('Test ping sent successfully (ntfy accepted it).');
+    const testMessage =
+      'If this reached you, delivery is working.' +
+      (email
+        ? ` An email copy went to ${email} — check the inbox (and spam) to confirm that channel too.`
+        : ' Set the ALERT_EMAIL secret to also get inbox copies.');
+
+    if (topic) {
+      await publish(server, {
+        topic,
+        title: 'Strat Algo Alerts test ✅',
+        message: testMessage,
+        priority: 4,
+        tags: ['white_check_mark'],
+        ...(email ? { email } : {}),
+      });
+      console.log('Test ping sent successfully (ntfy accepted it).');
+    }
+    if (discordWebhook) {
+      await publishDiscord(discordWebhook, `**Strat Algo Alerts test ✅**\n${testMessage}`);
+      console.log('Test ping sent successfully (Discord accepted it).');
+    }
     return;
   }
 
@@ -124,18 +143,34 @@ async function main() {
   const firstRun = prevKeys === null;
   const fresh = firstRun ? [] : alerts.filter((a) => !prevKeys.has(algoAlertKey(a.signal)));
 
-  if (!topic) console.log('NTFY_TOPIC not set — dry run, nothing will be sent.');
+  if (!topic) console.log('NTFY_TOPIC not set — ntfy send skipped.');
+  if (!discordWebhook) console.log('DISCORD_WEBHOOK_URL not set — Discord send skipped.');
 
   // Sends must not prevent the state save: an unsaved baseline would re-fire
   // everything on the next run.
   const sendErrors: string[] = [];
-  const trySend = async (payload: object, label: string) => {
+  const trySend = async (
+    payload: { title?: string; message?: string; [key: string]: unknown },
+    label: string,
+  ) => {
     console.log(`  -> ${label}`);
-    if (!topic) return;
-    try {
-      await publish(server, payload);
-    } catch (e) {
-      sendErrors.push(e instanceof Error ? e.message : String(e));
+    if (topic) {
+      try {
+        await publish(server, payload);
+      } catch (e) {
+        sendErrors.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+    if (discordWebhook) {
+      try {
+        const content =
+          payload.title && payload.message
+            ? `**${payload.title}**\n${payload.message}`
+            : String(payload.message ?? payload.title ?? label);
+        await publishDiscord(discordWebhook, content);
+      } catch (e) {
+        sendErrors.push(e instanceof Error ? e.message : String(e));
+      }
     }
   };
 
