@@ -61,6 +61,13 @@ jobs:
           SETUP_MIN_CONFIDENCE: ${{ vars.SETUP_MIN_CONFIDENCE || '65' }}
         run: npm run alert
 
+      - name: Send Discord alert
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d '{"content": "Your alert message"}' \
+            "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+
       - name: Save alert state
         if: always()
         uses: actions/cache/save@v4
