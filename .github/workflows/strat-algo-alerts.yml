@@ -57,6 +57,13 @@ jobs:
           ALGO_TIMEFRAMES: ${{ vars.ALGO_TIMEFRAMES || 'D,W,M' }}
         run: npm run algo-alert
 
+      - name: Send Discord alert
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d '{"content": "Your alert message"}' \
+            "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+
       - name: Save alert state
         if: always()
         uses: actions/cache/save@v4
