@@ -25,18 +25,13 @@ import { ALGO_UNIVERSE } from '../src/strat/universe';
 import { buildAlgoAlerts, DEFAULT_ALGO_OPTIONS } from '../src/strat/algoAlerts';
 import { Timeframe, TIMEFRAMES } from '../src/strat/types';
 import { algoAlertKey, buildAlgoNtfyPayload, formatAlgoPush } from './algo-lib';
+import { loadSymbolList } from './watchlist-file';
 
 const SERVER_DIR = __dirname;
 const STATE_FILE = path.join(SERVER_DIR, '.state', 'algo-prev-keys.json');
 const WATCHLIST_FILE = path.join(SERVER_DIR, 'algo-watchlist.json');
 
-function loadUniverse(): string[] {
-  if (existsSync(WATCHLIST_FILE)) {
-    const list = JSON.parse(readFileSync(WATCHLIST_FILE, 'utf8'));
-    if (Array.isArray(list) && list.length > 0) return list.map((s) => String(s).toUpperCase());
-  }
-  return ALGO_UNIVERSE;
-}
+const loadUniverse = (): string[] => loadSymbolList(WATCHLIST_FILE, ALGO_UNIVERSE);
 
 function loadPrevKeys(): Set<string> | null {
   try {
