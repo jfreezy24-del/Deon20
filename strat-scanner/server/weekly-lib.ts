@@ -65,10 +65,17 @@ const SHORT_SOURCE: Record<string, string> = {
   'Measured move': 'measured',
 };
 
+export interface DiscordField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
 export interface DiscordEmbed {
   title: string;
-  description: string;
   color: number;
+  description?: string;
+  fields?: DiscordField[];
   footer?: { text: string };
 }
 
@@ -77,14 +84,26 @@ export interface DiscordMessage {
   embeds: DiscordEmbed[];
 }
 
+/** Groups are read best-first: where to add, then wait, then defend. */
+const STANCE_ORDER: DcaPlan['stance'][] = ['accumulate', 'neutral', 'defensive'];
+
+const STANCE_TITLE: Record<DcaPlan['stance'], string> = {
+  accumulate: 'Accumulate',
+  neutral: 'Neutral',
+  defensive: 'Defensive',
+};
+
 /**
  * The ladder as fixed-width columns. Discord renders proportional text, so
  * numbers only line up inside a code block — and a ladder is a table of
  * numbers, which is unreadable ragged.
+ *
+ * The average fill is a row in the same table rather than a line below it, so
+ * it lands under the prices it averages.
  */
 export function ladderTable(dca: DcaPlan): string {
   if (dca.rungs.length === 0) {
-    return 'no structure below price to bid\nwait for a new higher-timeframe pivot low';
+    return 'no structure below price to bid';
   }
   const rows = dca.rungs.map((r) => ({
     alloc: `${r.allocationPct}%`,
@@ -92,6 +111,9 @@ export function ladderTable(dca: DcaPlan): string {
     discount: `−${r.discountPct.toFixed(1)}%`,
     source: SHORT_SOURCE[r.source] ?? r.source,
   }));
+  if (dca.averageFill !== null) {
+    rows.push({ alloc: 'avg', price: fmtPrice(dca.averageFill), discount: '', source: '' });
+  }
   const width = (key: 'alloc' | 'price' | 'discount') =>
     Math.max(...rows.map((r) => r[key].length));
 
@@ -102,30 +124,56 @@ export function ladderTable(dca: DcaPlan): string {
         r.price.padStart(width('price')),
         r.discount.padStart(width('discount')),
         r.source,
-      ].join('  '),
+      ]
+        .join('  ')
+        .trimEnd(),
     )
     .join('\n');
 }
 
-/** One asset, one card: stance colour down the edge, ladder in monospace. */
-export function assetEmbed(a: WeeklyAsset): DiscordEmbed {
+/** One asset inside its stance group: heading line plus the ladder table. */
+export function assetField(a: WeeklyAsset): DiscordField {
   const move =
     a.weekChangePct === null
       ? ''
-      : `  ${a.weekChangePct >= 0 ? '▲' : '▼'} ${Math.abs(a.weekChangePct).toFixed(1)}% this week`;
+      : ` · ${a.weekChangePct >= 0 ? '▲' : '▼'} ${Math.abs(a.weekChangePct).toFixed(1)}%`;
 
   return {
-    title: `${STANCE_DOT[a.dca.stance]} ${a.symbol}${a.name ? ` · ${a.name}` : ''}`,
-    description: `**$${fmtPrice(a.lastPrice)}**${move}\n\`\`\`\n${ladderTable(a.dca)}\n\`\`\``,
-    color: STANCE_COLOR[a.dca.stance],
-    ...(a.dca.averageFill !== null
-      ? { footer: { text: `avg fill ${fmtPrice(a.dca.averageFill)}` } }
-      : {}),
+    name: `${a.symbol}${a.name ? ` · ${a.name}` : ''} · $${fmtPrice(a.lastPrice)}${move}`,
+    value: `\`\`\`\n${ladderTable(a.dca)}\n\`\`\``,
   };
 }
 
+/** Discord caps fields at 25 per embed. */
+const MAX_FIELDS_PER_EMBED = 25;
+
+/** One card per stance, coloured to match, holding every asset in that group. */
+export function stanceEmbeds(assets: WeeklyAsset[]): DiscordEmbed[] {
+  const embeds: DiscordEmbed[] = [];
+
+  for (const stance of STANCE_ORDER) {
+    const group = assets.filter((a) => a.dca.stance === stance);
+    if (group.length === 0) continue;
+
+    // A group larger than the field cap continues into another card of the
+    // same colour rather than losing assets off the end.
+    for (let i = 0; i < group.length; i += MAX_FIELDS_PER_EMBED) {
+      const slice = group.slice(i, i + MAX_FIELDS_PER_EMBED);
+      embeds.push({
+        title: `${STANCE_DOT[stance]} ${STANCE_TITLE[stance]}`,
+        color: STANCE_COLOR[stance],
+        fields: slice.map(assetField),
+      });
+    }
+  }
+  return embeds;
+}
+
 const embedSize = (e: DiscordEmbed): number =>
-  e.title.length + e.description.length + (e.footer?.text.length ?? 0);
+  e.title.length +
+  (e.description?.length ?? 0) +
+  (e.footer?.text.length ?? 0) +
+  (e.fields ?? []).reduce((n, f) => n + f.name.length + f.value.length, 0);
 
 /** Split embeds across messages, respecting both Discord caps. */
 export function chunkEmbeds(embeds: DiscordEmbed[]): DiscordEmbed[][] {
@@ -149,13 +197,14 @@ export function chunkEmbeds(embeds: DiscordEmbed[]): DiscordEmbed[][] {
 
 /** The whole report as Discord-ready messages, in order. */
 export function formatWeeklyDiscord(report: WeeklyReport): DiscordMessage[] {
-  const groups = chunkEmbeds(report.assets.map(assetEmbed));
+  const groups = chunkEmbeds(stanceEmbeds(report.assets));
+  const header = `## 🪙 Crypto Weekly — week of ${report.weekOf}`;
   const messages: DiscordMessage[] = groups.map((embeds, i) => ({
-    ...(i === 0 ? { content: `## 🪙 Crypto Weekly — week of ${report.weekOf}` } : {}),
+    ...(i === 0 ? { content: header } : {}),
     embeds,
   }));
 
-  if (messages.length === 0) messages.push({ content: `## 🪙 Crypto Weekly — week of ${report.weekOf}`, embeds: [] });
+  if (messages.length === 0) messages.push({ content: header, embeds: [] });
 
   if (report.errors.length > 0) {
     const last = messages[messages.length - 1];
