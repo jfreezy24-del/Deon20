@@ -65,19 +65,25 @@ describe('assetBlock', () => {
   it('reports the ladder and nothing else', () => {
     const text = assetBlock(asset());
     expect(text).toContain('BTC-USD');
-    expect(text).toContain('FTFC 4H▲ D▲ W▲ M▲');
     expect(text).toContain('DCA ladder — ACCUMULATE');
     expect(text).toContain('28% @ 112,400 (−5.1%) · Prior week low [W]');
     expect(text).toContain('Avg fill 107,000');
   });
 
-  it('carries no entry, invalidation or magnitude lines', () => {
+  it('carries no entry, invalidation, magnitude or continuity lines', () => {
     const text = assetBlock(asset());
     expect(text).not.toMatch(/entry/i);
     expect(text).not.toMatch(/stop/i);
     expect(text).not.toMatch(/invalidation/i);
     expect(text).not.toMatch(/magnitude/i);
     expect(text).not.toMatch(/\bT1\b|\bT2\b/);
+    expect(text).not.toMatch(/FTFC|Last closed/);
+  });
+
+  it('stays compact enough to fit many assets in one message', () => {
+    // 4 rungs + header + avg fill; the whole universe has to fit in a
+    // handful of Discord messages.
+    expect(assetBlock(asset()).split('\n')).toHaveLength(5);
   });
 
   it('says so when there is no structure left below price', () => {

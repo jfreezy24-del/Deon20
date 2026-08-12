@@ -39,17 +39,16 @@ export function dcaLines(dca: DcaPlan): string[] {
   return lines;
 }
 
-/** Full per-asset block: price, continuity, ladder. */
+/**
+ * Per-asset block: price, then the ladder. No FTFC or last-closed line — the
+ * report is dense by design, and the header carries the continuity breadth.
+ */
 export function assetBlock(a: WeeklyAsset): string {
   const head =
     `**${a.symbol}**${a.name ? ` — ${a.name}` : ''} · $${fmtPrice(a.lastPrice)}` +
     (a.weekChangePct !== null ? ` (week ${fmtPct(a.weekChangePct)})` : '');
-  const structure = [
-    `FTFC ${continuityStrip(a.continuity)}`,
-    `Last closed: M ${a.dca.monthlyType ?? '—'} · W ${a.dca.weeklyType ?? '—'}`,
-  ].join(' · ');
 
-  return [head, structure, ...dcaLines(a.dca)].join('\n');
+  return [head, ...dcaLines(a.dca)].join('\n');
 }
 
 function headerBlock(r: WeeklyReport): string {
