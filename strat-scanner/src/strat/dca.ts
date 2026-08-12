@@ -19,8 +19,6 @@ import { candleTrend } from './continuity';
  *
  * The ladder is therefore just those levels below price, deepest rung last,
  * with size skewed by how far the asset habitually travels (see LadderProfile).
- * Below the last structural pivot the higher-timeframe sequence is broken, so
- * that level is reported as the ladder's invalidation rather than as a rung.
  */
 
 /** How wide the ladder spreads and how size is skewed across the rungs. */
@@ -55,10 +53,6 @@ export interface DcaPlan {
   monthlyTrend: TFTrend | null;
   /** Ladder rungs, closest to price first */
   rungs: DcaRung[];
-  /** Below this the higher-timeframe sequence is broken — stop laddering */
-  invalidation: number;
-  /** Nearest higher-timeframe pivot above price (where magnitude measures to) */
-  magnitude: number | null;
   /** Weighted average cost if every rung fills */
   averageFill: number | null;
 }
@@ -88,9 +82,8 @@ const MIN_GAP_PCT: Record<LadderProfile, number> = { tight: 2, balanced: 3, wide
 
 /**
  * How far below price a rung may sit. Old pivots stay on the chart forever, and
- * a bid 80% below spot is not a plan — it is a wish. Anything deeper than this
- * is reported through the invalidation level instead, which is what that
- * structure actually tells you: below there, the thesis is gone.
+ * a bid 80% below spot is not a plan — it is a wish. Structure deeper than this
+ * is dropped rather than laddered into.
  */
 const MAX_DEPTH_PCT: Record<LadderProfile, number> = { tight: 35, balanced: 50, wide: 65 };
 
@@ -109,19 +102,6 @@ export function findPivotLows(candles: Candle[], width = 2): Candle[] {
     let isPivot = true;
     for (let j = i - width; j <= i + width && isPivot; j++) {
       if (j !== i && candles[j].low < candles[i].low) isPivot = false;
-    }
-    if (isPivot) out.push(candles[i]);
-  }
-  return out;
-}
-
-/** Swing highs — the mirror of findPivotLows. */
-export function findPivotHighs(candles: Candle[], width = 2): Candle[] {
-  const out: Candle[] = [];
-  for (let i = width; i < candles.length - width; i++) {
-    let isPivot = true;
-    for (let j = i - width; j <= i + width && isPivot; j++) {
-      if (j !== i && candles[j].high > candles[i].high) isPivot = false;
     }
     if (isPivot) out.push(candles[i]);
   }
@@ -324,19 +304,6 @@ export function buildDcaPlan(input: DcaInput): DcaPlan {
     rationale: c.rationale,
   }));
 
-  const deepest = rungs.length > 0 ? rungs[rungs.length - 1].price : lastPrice;
-  const below = monthlyPivotLows.filter((p) => p < deepest * 0.999).sort((a, b) => b - a);
-  const invalidation = round(
-    below.length > 0 ? below[0] : deepest * (1 - Math.max(averageRangePct(monthlyCompleted), 0.05)),
-  );
-
-  const pivotHighsAbove = [
-    ...findPivotHighs(monthlyCompleted).map((c) => c.high),
-    ...findPivotHighs(weeklyCompleted).map((c) => c.high),
-  ]
-    .filter((p) => p > lastPrice)
-    .sort((a, b) => a - b);
-
   const averageFill =
     rungs.length > 0
       ? round(rungs.reduce((sum, r) => sum + r.price * r.allocationPct, 0) / 100)
@@ -354,8 +321,6 @@ export function buildDcaPlan(input: DcaInput): DcaPlan {
     weeklyTrend,
     monthlyTrend,
     rungs,
-    invalidation,
-    magnitude: pivotHighsAbove.length > 0 ? round(pivotHighsAbove[0]) : null,
     averageFill,
   };
 }
