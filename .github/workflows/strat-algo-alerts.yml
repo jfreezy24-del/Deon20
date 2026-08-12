@@ -55,7 +55,6 @@ jobs:
           TEST_PING: ${{ inputs.test_ping }}
           ALGO_MIN_CONFIDENCE: ${{ vars.ALGO_MIN_CONFIDENCE || '60' }}
           ALGO_TIMEFRAMES: ${{ vars.ALGO_TIMEFRAMES || 'D,W,M' }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
         run: npm run algo-alert
 
