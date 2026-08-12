@@ -51,14 +51,12 @@ export function assetBlock(a: WeeklyAsset): string {
   return [head, ...dcaLines(a.dca)].join('\n');
 }
 
+/**
+ * Title only. The breadth counts and the standing explainer are carried by the
+ * ntfy digest instead — in Discord the ladders speak for themselves.
+ */
 function headerBlock(r: WeeklyReport): string {
-  const b = r.breadth;
-  return [
-    `**🪙 Crypto Weekly — week of ${r.weekOf}**`,
-    `${b.scanned} ladders · ${b.nearFill} with a rung within 5% of spot · FTFC up ${b.fullContinuityUp} / down ${b.fullContinuityDown}`,
-    `Stance: accumulate ${b.accumulate} · defensive ${b.defensive}`,
-    'Rungs are resting bids into weekly and monthly Strat structure, ordered closest-to-filling first. Not financial advice.',
-  ].join('\n');
+  return `**🪙 Crypto Weekly — week of ${r.weekOf}**`;
 }
 
 /**
