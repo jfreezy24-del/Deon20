@@ -3,13 +3,15 @@
  * machine with Node 18+). Reuses the exact engine the mobile app uses, diffs
  * the sweep against the previous run, and pushes alerts via ntfy.sh.
  *
+ * ntfy only: Discord carries the weekly crypto report and nothing else, so
+ * these per-signal alerts stay off that channel.
+ *
  * Usage:  npx tsx server/scan-and-notify.ts
  *
  * Environment:
  *   NTFY_TOPIC           ntfy topic to publish to (required to actually send;
  *                        without it the run is a dry run that only logs)
  *   NTFY_SERVER          ntfy server base URL          (default https://ntfy.sh)
- *   DISCORD_WEBHOOK_URL  Discord webhook to also post alerts to (optional)
  *   MIN_CONFIDENCE       min confidence for TRIGGERED alerts        (default 50)
  *   NOTIFY_SETUPS        'true'/'false' — alert on new pending setups (default true)
  *   SETUP_MIN_CONFIDENCE min confidence for pending-setup alerts    (default 65)
@@ -60,29 +62,16 @@ async function sendNtfy(server: string, topic: string, msg: PushMessage): Promis
   if (!res.ok) throw new Error(`ntfy responded ${res.status}: ${await res.text()}`);
 }
 
-async function sendDiscord(webhookUrl: string, msg: PushMessage): Promise<void> {
-  const content = `**${msg.title}**\n${msg.body}`.slice(0, 2000);
-  const res = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) throw new Error(`Discord responded ${res.status}: ${await res.text()}`);
-}
-
 async function main() {
   const topic = process.env.NTFY_TOPIC?.trim();
   const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
-  const discordWebhook = process.env.DISCORD_WEBHOOK_URL?.trim() || undefined;
 
   // Deterministic delivery test: when TEST_PING is set we send a single
   // notification (independent of the scan/dedupe logic) and exit. This is the
   // reliable way to confirm the secret -> ntfy.sh -> app -> phone chain works.
   const testPing = (process.env.TEST_PING ?? '').trim().toLowerCase();
   if (testPing === '1' || testPing === 'true' || testPing === 'yes') {
-    if (!topic && !discordWebhook) {
-      throw new Error('TEST_PING set but neither NTFY_TOPIC nor DISCORD_WEBHOOK_URL is set.');
-    }
+    if (!topic) throw new Error('TEST_PING set but NTFY_TOPIC is not set.');
     const testMsg: PushMessage = {
       title: 'Strat alerts test ✅',
       body: 'If this reached your phone, ntfy delivery is working — your topic, app and permissions are all correct.',
@@ -97,10 +86,6 @@ async function main() {
       );
       await sendNtfy(server, topic, testMsg);
       console.log('Test ping sent successfully (ntfy accepted it).');
-    }
-    if (discordWebhook) {
-      await sendDiscord(discordWebhook, testMsg);
-      console.log('Test ping sent successfully (Discord accepted it).');
     }
     return;
   }
@@ -132,7 +117,6 @@ async function main() {
   const toNotify = selectNotifications(result.signals, prevKeys, opts);
 
   if (!topic) console.log('NTFY_TOPIC not set — ntfy send skipped.');
-  if (!discordWebhook) console.log('DISCORD_WEBHOOK_URL not set — Discord send skipped.');
 
   // Sends must not prevent the state save: an unsaved baseline would re-fire
   // (or re-suppress) everything on the next run.
@@ -142,13 +126,6 @@ async function main() {
     if (topic) {
       try {
         await sendNtfy(server, topic, msg);
-      } catch (e) {
-        sendErrors.push(e instanceof Error ? e.message : String(e));
-      }
-    }
-    if (discordWebhook) {
-      try {
-        await sendDiscord(discordWebhook, msg);
       } catch (e) {
         sendErrors.push(e instanceof Error ? e.message : String(e));
       }

@@ -118,7 +118,8 @@ src/__tests__/              — engine unit tests (npm test)
 
 The same engine runs headless on a schedule via GitHub Actions
 (`.github/workflows/market-scan-alerts.yml`) and pushes notifications to your phone
-through [ntfy.sh](https://ntfy.sh) — free, no account needed. You get pinged
+through [ntfy.sh](https://ntfy.sh) — free, no account needed. **ntfy only**:
+Discord carries the weekly crypto report and nothing else. You get pinged
 when a signal **fires** (trigger breaks) or a new high-confidence setup
 appears, even with the app closed.
 
@@ -216,8 +217,11 @@ whether the last monthly pivot low is intact: `ACCUMULATE` (higher-timeframe
 continuity up), `NEUTRAL` (timeframes disagree), or `DEFENSIVE` (monthly
 sequence broken — deep rungs only).
 
-Setup: it reuses the same `NTFY_TOPIC` / `DISCORD_WEBHOOK_URL` / `ALERT_EMAIL`
-secrets as the alerters above — nothing new to configure. Verify delivery with
+This is the **only** thing that posts to Discord — the two intraday alerters
+are ntfy-only, so the channel carries one message set a week instead of a
+per-signal stream. Both channels share the same secrets as the alerters above
+(`NTFY_TOPIC`, `ALERT_EMAIL`) plus `DISCORD_WEBHOOK_URL`, so there is nothing
+new to configure and no second webhook needed. Verify delivery with
 repo → Actions → *Crypto Weekly Report* → Run workflow → *test_ping*, or
 preview the whole report in the run log with *dry_run* (sends nothing).
 

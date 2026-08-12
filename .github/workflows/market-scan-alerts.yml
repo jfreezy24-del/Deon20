@@ -59,7 +59,6 @@ jobs:
           MIN_CONFIDENCE: ${{ vars.MIN_CONFIDENCE || '50' }}
           NOTIFY_SETUPS: ${{ vars.NOTIFY_SETUPS || 'true' }}
           SETUP_MIN_CONFIDENCE: ${{ vars.SETUP_MIN_CONFIDENCE || '65' }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           # Crypto symbols in the watchlist are served by Alpaca; these are
           # optional, and anything Alpaca lacks falls back to Yahoo.
           APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
