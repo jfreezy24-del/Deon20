@@ -28,18 +28,13 @@ import {
   selectNotifications,
   signalKey,
 } from './lib';
+import { loadSymbolList } from './watchlist-file';
 
 const SERVER_DIR = __dirname;
 const STATE_FILE = path.join(SERVER_DIR, '.state', 'prev-keys.json');
 const WATCHLIST_FILE = path.join(SERVER_DIR, 'watchlist.json');
 
-function loadWatchlist(): string[] {
-  if (existsSync(WATCHLIST_FILE)) {
-    const list = JSON.parse(readFileSync(WATCHLIST_FILE, 'utf8'));
-    if (Array.isArray(list) && list.length > 0) return list.map((s) => String(s).toUpperCase());
-  }
-  return DEFAULT_WATCHLIST;
-}
+const loadWatchlist = (): string[] => loadSymbolList(WATCHLIST_FILE, DEFAULT_WATCHLIST);
 
 function loadPrevKeys(): Set<string> | null {
   try {

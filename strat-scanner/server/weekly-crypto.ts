@@ -21,22 +21,16 @@
  *   DRY_RUN               'true' to print the report and send nothing
  *   TEST_PING             'true' to send one delivery test and exit
  */
-import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CRYPTO_UNIVERSE } from '../src/crypto/universe';
 import { DEFAULT_WEEKLY_OPTIONS, scanCryptoWeekly } from '../src/crypto/weeklyReport';
 import { buildNtfyPayload, PushMessage } from './lib';
 import { formatWeeklyDiscord, formatWeeklyNtfy } from './weekly-lib';
+import { loadSymbolList } from './watchlist-file';
 
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
 
-function loadUniverse(): string[] {
-  if (existsSync(WATCHLIST_FILE)) {
-    const list = JSON.parse(readFileSync(WATCHLIST_FILE, 'utf8'));
-    if (Array.isArray(list) && list.length > 0) return list.map((s) => String(s).toUpperCase());
-  }
-  return CRYPTO_UNIVERSE;
-}
+const loadUniverse = (): string[] => loadSymbolList(WATCHLIST_FILE, CRYPTO_UNIVERSE);
 
 const num = (raw: string | undefined, fallback: number): number => {
   const n = Number(raw);
