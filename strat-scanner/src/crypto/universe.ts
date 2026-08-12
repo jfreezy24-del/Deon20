@@ -29,7 +29,7 @@ export const CRYPTO_LARGE_CAPS = [
 ];
 
 /** High beta: faster, thinner, deeper drawdowns — laddered differently. */
-export const CRYPTO_HIGH_BETA = ['HYPE-USD', 'SUI-USD', 'TAO-USD', 'JUP-USD'];
+export const CRYPTO_HIGH_BETA = ['HYPE-USD', 'TAO-USD', 'JUP-USD'];
 
 export const CRYPTO_UNIVERSE = [...CRYPTO_MAJORS, ...CRYPTO_LARGE_CAPS, ...CRYPTO_HIGH_BETA];
 
@@ -46,7 +46,6 @@ const NAMES: Record<string, string> = {
   'LTC-USD': 'Litecoin',
   'DOGE-USD': 'Dogecoin',
   'HYPE-USD': 'Hyperliquid',
-  'SUI-USD': 'Sui',
   'TAO-USD': 'Bittensor',
   'JUP-USD': 'Jupiter',
 };
