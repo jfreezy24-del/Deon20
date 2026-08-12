@@ -1,7 +1,8 @@
 import { buildContinuity } from '../strat/continuity';
 import { buildDcaPlan, DcaPlan } from '../strat/dca';
 import { Candle, ContinuityMap, Timeframe, TIMEFRAMES } from '../strat/types';
-import { fetchTimeframe, TimeframeSeries } from '../data/yahoo';
+import { fetchTimeframeWithProvider, ProviderName } from '../data/market';
+import { TimeframeSeries } from '../data/series';
 import { cryptoName, ladderProfileFor } from './universe';
 
 /**
@@ -26,6 +27,8 @@ export const DEFAULT_WEEKLY_OPTIONS: WeeklyOptions = {
 export interface WeeklyAsset {
   symbol: string;
   name?: string;
+  /** Which data source served this asset ('mixed' when a timeframe fell back) */
+  provider?: ProviderName | 'mixed';
   lastPrice: number;
   /** Move of the current (or last completed) weekly candle, open to close */
   weekChangePct: number | null;
@@ -38,12 +41,20 @@ export interface WeeklyError {
   message: string;
 }
 
+/** A symbol Alpaca could not serve, and why it fell through to Yahoo. */
+export interface ProviderFallback {
+  symbol: string;
+  timeframe: Timeframe;
+  reason: string;
+}
+
 export interface WeeklyReport {
   generatedAt: number;
   /** ISO date (UTC) of the Monday that starts the week being planned */
   weekOf: string;
   assets: WeeklyAsset[];
   errors: WeeklyError[];
+  fallbacks: ProviderFallback[];
   breadth: {
     scanned: number;
     /** Assets whose 4H/D/W/M candles are all pointed up (or all down) */
@@ -76,7 +87,11 @@ export function weekOf(at: number): string {
   return monday.toISOString().slice(0, 10);
 }
 
-export function buildWeeklyAsset(symbol: string, series: TimeframeSeries[]): WeeklyAsset {
+export function buildWeeklyAsset(
+  symbol: string,
+  series: TimeframeSeries[],
+  provider?: ProviderName | 'mixed',
+): WeeklyAsset {
   const byTf = new Map(series.map((s) => [s.timeframe, s]));
   const weekly = byTf.get('W');
   const monthly = byTf.get('M');
@@ -100,6 +115,7 @@ export function buildWeeklyAsset(symbol: string, series: TimeframeSeries[]): Wee
 
   return {
     symbol,
+    provider,
     name: series.find((s) => s.name)?.name ?? cryptoName(symbol),
     lastPrice,
     weekChangePct: changePct(weekly?.forming ?? weekly?.completed[weekly.completed.length - 1]),
@@ -112,6 +128,7 @@ export function buildWeeklyReport(
   assets: WeeklyAsset[],
   errors: WeeklyError[],
   at: number = Date.now(),
+  fallbacks: ProviderFallback[] = [],
 ): WeeklyReport {
   const allUp = (a: WeeklyAsset) => TIMEFRAMES.every((tf) => a.continuity[tf] === 'up');
   const allDown = (a: WeeklyAsset) => TIMEFRAMES.every((tf) => a.continuity[tf] === 'down');
@@ -125,6 +142,7 @@ export function buildWeeklyReport(
     weekOf: weekOf(at),
     assets: ranked,
     errors,
+    fallbacks,
     breadth: {
       scanned: assets.length,
       fullContinuityUp: assets.filter(allUp).length,
@@ -143,6 +161,7 @@ export async function scanCryptoWeekly(
 ): Promise<WeeklyReport> {
   const assets: WeeklyAsset[] = [];
   const errors: WeeklyError[] = [];
+  const fallbacks: ProviderFallback[] = [];
   const queue = [...symbols];
   let done = 0;
 
@@ -152,8 +171,17 @@ export async function scanCryptoWeekly(
       const symbol = queue.shift();
       if (!symbol) return;
       try {
-        const series = await Promise.all(TIMEFRAMES.map((tf) => fetchTimeframe(symbol, tf)));
-        assets.push(buildWeeklyAsset(symbol, series));
+        const outcomes = await Promise.all(
+          TIMEFRAMES.map((tf) => fetchTimeframeWithProvider(symbol, tf)),
+        );
+        outcomes.forEach((o, i) => {
+          if (o.fallbackReason) {
+            fallbacks.push({ symbol, timeframe: TIMEFRAMES[i], reason: o.fallbackReason });
+          }
+        });
+        const used = new Set(outcomes.map((o) => o.provider));
+        const provider = used.size === 1 ? [...used][0] : 'mixed';
+        assets.push(buildWeeklyAsset(symbol, outcomes.map((o) => o.series), provider));
       } catch (e) {
         errors.push({ symbol, message: e instanceof Error ? e.message : String(e) });
       }
@@ -163,5 +191,5 @@ export async function scanCryptoWeekly(
   }
 
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, symbols.length) }, worker));
-  return buildWeeklyReport(assets, errors);
+  return buildWeeklyReport(assets, errors, Date.now(), fallbacks);
 }

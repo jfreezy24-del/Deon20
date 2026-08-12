@@ -4,7 +4,8 @@ import { computeLevels } from './strat/levels';
 import { scoreConfidence } from './strat/confidence';
 import { buildExplanation } from './strat/explain';
 import { Candle, Signal, Timeframe, TIMEFRAMES } from './strat/types';
-import { fetchTimeframe, TimeframeSeries } from './data/yahoo';
+import { fetchTimeframe } from './data/market';
+import { TimeframeSeries } from './data/series';
 
 export interface ScanError {
   symbol: string;
