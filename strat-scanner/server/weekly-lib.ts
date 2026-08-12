@@ -39,81 +39,130 @@ export function dcaLines(dca: DcaPlan): string[] {
   return lines;
 }
 
-/**
- * Per-asset block: price, then the ladder. No FTFC or last-closed line — the
- * report is dense by design, and the header carries the continuity breadth.
- */
-export function assetBlock(a: WeeklyAsset): string {
-  const head =
-    `**${a.symbol}**${a.name ? ` — ${a.name}` : ''} · $${fmtPrice(a.lastPrice)}` +
-    (a.weekChangePct !== null ? ` (week ${fmtPct(a.weekChangePct)})` : '');
+/** Discord embed limits: 10 embeds per message, 6000 characters across them. */
+export const MAX_EMBEDS_PER_MESSAGE = 10;
+const MAX_EMBED_CHARS = 5500;
 
-  return [head, ...dcaLines(a.dca)].join('\n');
+/** Stripe colours: green accumulate, amber neutral, red defensive. */
+const STANCE_COLOR: Record<DcaPlan['stance'], number> = {
+  accumulate: 0x57f287,
+  neutral: 0xfee75c,
+  defensive: 0xed4245,
+};
+
+const STANCE_DOT: Record<DcaPlan['stance'], string> = {
+  accumulate: '🟢',
+  neutral: '🟡',
+  defensive: '🔴',
+};
+
+/** Long rung labels wrap on a phone; the table has a column for the timeframe. */
+const SHORT_SOURCE: Record<string, string> = {
+  'Prior week low': 'W low',
+  'Weekly pivot low': 'W pivot',
+  'Prior month low': 'M low',
+  'Monthly pivot low': 'M pivot',
+  'Measured move': 'measured',
+};
+
+export interface DiscordEmbed {
+  title: string;
+  description: string;
+  color: number;
+  footer?: { text: string };
+}
+
+export interface DiscordMessage {
+  content?: string;
+  embeds: DiscordEmbed[];
 }
 
 /**
- * Title only. The breadth counts and the standing explainer are carried by the
- * ntfy digest instead — in Discord the ladders speak for themselves.
+ * The ladder as fixed-width columns. Discord renders proportional text, so
+ * numbers only line up inside a code block — and a ladder is a table of
+ * numbers, which is unreadable ragged.
  */
-function headerBlock(r: WeeklyReport): string {
-  return `**🪙 Crypto Weekly — week of ${r.weekOf}**`;
-}
-
-/**
- * Pack blocks into messages under `limit` characters. Blocks are kept whole
- * where possible; an oversized block is split on its own line boundaries so a
- * long asset section degrades gracefully instead of being truncated.
- */
-export function chunkBlocks(blocks: string[], limit = DISCORD_LIMIT): string[] {
-  const out: string[] = [];
-  let current = '';
-
-  const push = () => {
-    if (current.length > 0) out.push(current);
-    current = '';
-  };
-
-  for (const block of blocks) {
-    const parts = block.length <= limit ? [block] : splitLines(block, limit);
-    for (const part of parts) {
-      if (current.length === 0) current = part;
-      else if (current.length + 2 + part.length <= limit) current += `\n\n${part}`;
-      else {
-        push();
-        current = part;
-      }
-    }
+export function ladderTable(dca: DcaPlan): string {
+  if (dca.rungs.length === 0) {
+    return 'no structure below price to bid\nwait for a new higher-timeframe pivot low';
   }
-  push();
-  return out;
+  const rows = dca.rungs.map((r) => ({
+    alloc: `${r.allocationPct}%`,
+    price: fmtPrice(r.price),
+    discount: `−${r.discountPct.toFixed(1)}%`,
+    source: SHORT_SOURCE[r.source] ?? r.source,
+  }));
+  const width = (key: 'alloc' | 'price' | 'discount') =>
+    Math.max(...rows.map((r) => r[key].length));
+
+  return rows
+    .map((r) =>
+      [
+        r.alloc.padStart(width('alloc')),
+        r.price.padStart(width('price')),
+        r.discount.padStart(width('discount')),
+        r.source,
+      ].join('  '),
+    )
+    .join('\n');
 }
 
-function splitLines(block: string, limit: number): string[] {
-  const out: string[] = [];
-  let current = '';
-  for (const line of block.split('\n')) {
-    const piece = line.length <= limit ? line : line.slice(0, limit);
-    if (current.length === 0) current = piece;
-    else if (current.length + 1 + piece.length <= limit) current += `\n${piece}`;
-    else {
+/** One asset, one card: stance colour down the edge, ladder in monospace. */
+export function assetEmbed(a: WeeklyAsset): DiscordEmbed {
+  const move =
+    a.weekChangePct === null
+      ? ''
+      : `  ${a.weekChangePct >= 0 ? '▲' : '▼'} ${Math.abs(a.weekChangePct).toFixed(1)}% this week`;
+
+  return {
+    title: `${STANCE_DOT[a.dca.stance]} ${a.symbol}${a.name ? ` · ${a.name}` : ''}`,
+    description: `**$${fmtPrice(a.lastPrice)}**${move}\n\`\`\`\n${ladderTable(a.dca)}\n\`\`\``,
+    color: STANCE_COLOR[a.dca.stance],
+    ...(a.dca.averageFill !== null
+      ? { footer: { text: `avg fill ${fmtPrice(a.dca.averageFill)}` } }
+      : {}),
+  };
+}
+
+const embedSize = (e: DiscordEmbed): number =>
+  e.title.length + e.description.length + (e.footer?.text.length ?? 0);
+
+/** Split embeds across messages, respecting both Discord caps. */
+export function chunkEmbeds(embeds: DiscordEmbed[]): DiscordEmbed[][] {
+  const out: DiscordEmbed[][] = [];
+  let current: DiscordEmbed[] = [];
+  let chars = 0;
+
+  for (const embed of embeds) {
+    const size = embedSize(embed);
+    if (current.length > 0 && (current.length >= MAX_EMBEDS_PER_MESSAGE || chars + size > MAX_EMBED_CHARS)) {
       out.push(current);
-      current = piece;
+      current = [];
+      chars = 0;
     }
+    current.push(embed);
+    chars += size;
   }
   if (current.length > 0) out.push(current);
   return out;
 }
 
 /** The whole report as Discord-ready messages, in order. */
-export function formatWeeklyDiscord(report: WeeklyReport, limit = DISCORD_LIMIT): string[] {
-  const blocks: string[] = [headerBlock(report)];
-  for (const a of report.assets) blocks.push(assetBlock(a));
+export function formatWeeklyDiscord(report: WeeklyReport): DiscordMessage[] {
+  const groups = chunkEmbeds(report.assets.map(assetEmbed));
+  const messages: DiscordMessage[] = groups.map((embeds, i) => ({
+    ...(i === 0 ? { content: `## 🪙 Crypto Weekly — week of ${report.weekOf}` } : {}),
+    embeds,
+  }));
+
+  if (messages.length === 0) messages.push({ content: `## 🪙 Crypto Weekly — week of ${report.weekOf}`, embeds: [] });
+
   if (report.errors.length > 0) {
-    blocks.push(
-      `_${report.errors.length} symbol(s) failed to scan: ${report.errors.map((e) => e.symbol).join(', ')}_`,
-    );
+    const last = messages[messages.length - 1];
+    const note = `-# ${report.errors.length} symbol(s) failed to scan: ${report.errors.map((e) => e.symbol).join(', ')}`;
+    last.content = last.content ? `${last.content}\n${note}` : note;
   }
-  return chunkBlocks(blocks, limit);
+  return messages;
 }
 
 /**
