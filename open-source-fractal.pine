@@ -92,6 +92,7 @@ dashBgColor   = input.color(color.new(#ffffff, 0), 'Background', group = grpDash
 
 candleSpacing = 3
 noColor       = color.new(#000000, 100)
+earlyCisdCap  = 50
 
 type HtfCandle
     float o
@@ -145,6 +146,8 @@ type C2Setup
     float c4Top     = na
     float c4Bottom  = na
     bool  c4Invalid = false
+    int   c4StartBar = na
+    bool  retired    = false
 
 type SetupRecord
     C2Setup setup
@@ -154,6 +157,8 @@ type EarlyCisdRecord
     line  ln
     label lbl
     int   barIndex
+    float level    = na
+    int   levelBar = na
 
 var array<HtfCandle>        htfCandles           = array.new<HtfCandle>()
 var array<line>             vLines               = array.new<line>()
@@ -337,7 +342,12 @@ drawEarlyCisd(bool isBull, float level, int idx, int confirmBar) =>
         label lbl = na
         if showLabels
             lbl := label.new(confirmBar + 3, level, isBull ? '+CISD' : '-CISD', xloc = xloc.bar_index, style = label.style_label_left, color = na, textcolor = earlyCisdColor, size = textSize(labelSize), text_font_family = font.family_monospace)
-        target.push(EarlyCisdRecord.new(ln, lbl, confirmBar))
+        target.push(EarlyCisdRecord.new(ln, lbl, confirmBar, level, idx))
+        while target.size() > earlyCisdCap
+            dropped = target.shift()
+            line.delete(dropped.ln)
+            if not na(dropped.lbl)
+                label.delete(dropped.lbl)
     if showAlerts and showEarlyCisdAlerts
         alert((isBull ? 'Bullish' : 'Bearish') + ' Early CISD confirmed on ' + syminfo.ticker, alert.freq_once_per_bar)
 
@@ -349,12 +359,14 @@ pruneEarlyCisd(array<EarlyCisdRecord> recs, int thresholdBar) =>
             if not na(evicted.lbl)
                 label.delete(evicted.lbl)
 
-consumeLastEarlyCisd(array<EarlyCisdRecord> recs) =>
-    if recs.size() > 0
-        evicted = recs.pop()
-        line.delete(evicted.ln)
-        if not na(evicted.lbl)
-            label.delete(evicted.lbl)
+consumeEarlyCisd(array<EarlyCisdRecord> recs, float level, int levelBar) =>
+    if recs.size() > 0 and not na(level) and not na(levelBar)
+        newest = recs.last()
+        if newest.level == level and newest.levelBar == levelBar
+            evicted = recs.pop()
+            line.delete(evicted.ln)
+            if not na(evicted.lbl)
+                label.delete(evicted.lbl)
 
 parseFloats(string src) =>
     var out = array.new<float>()
@@ -366,7 +378,7 @@ parseFloats(string src) =>
     out
 
 createStdDevProjections(C2Setup s, int confirmBar) =>
-    if showStdDev
+    if showStdDev and not s.retired
         devs = parseFloats(stdDevInput)
         if devs.size() > 0
             off     = bar_index - s.cisdIndex
@@ -407,30 +419,43 @@ confirmCisd(C2Setup s, int confirmBar) =>
     clr      = s.isBull ? cisdBullColor : cisdBearColor
     lnStyle  = s.isBull ? cisdBullStyle : cisdBearStyle
     lnWidth  = s.isBull ? cisdBullWidth : cisdBearWidth
-    if showLine
+    if showLine and not s.retired
         s.cisdLine := line.new(s.cisdIndex, s.cisdLevel, confirmBar + 3, s.cisdLevel, color = clr, style = lineStyleFromStr(lnStyle), width = lnWidth)
         if showLabels
             s.cisdLabel := label.new(confirmBar + 3, s.cisdLevel, s.isBull ? '+CISD' : '-CISD', xloc = xloc.bar_index, style = label.style_label_left, color = na, textcolor = clr, size = textSize(labelSize), text_font_family = font.family_monospace)
     createStdDevProjections(s, confirmBar)
 
-deleteSetupVisuals(C2Setup s) =>
+isLiveSetup(C2Setup s) => not na(s) and not s.dead and s.phase != 0
+
+// Deletes every drawing a setup owns and clears the handles, so later phase
+// transitions on the same object cannot resurrect visuals that nothing tracks.
+retireSetup(C2Setup s) =>
     if not na(s)
+        s.retired := true
         if not na(s.c2Lbl)
             label.delete(s.c2Lbl)
+            s.c2Lbl := na
         if not na(s.cisdLine)
             line.delete(s.cisdLine)
+            s.cisdLine := na
         if not na(s.cisdLabel)
             label.delete(s.cisdLabel)
+            s.cisdLabel := na
         if not na(s.c3Box)
             box.delete(s.c3Box)
+            s.c3Box := na
         if not na(s.c3Dash)
             line.delete(s.c3Dash)
+            s.c3Dash := na
         if not na(s.c4Box)
             box.delete(s.c4Box)
+            s.c4Box := na
         if not na(s.c4Dash)
             line.delete(s.c4Dash)
+            s.c4Dash := na
         if not na(s.c4Lbl)
             label.delete(s.c4Lbl)
+            s.c4Lbl := na
         if not na(s.stdDevData)
             if not na(s.stdDevData.lines)
                 for ln in s.stdDevData.lines
@@ -438,12 +463,24 @@ deleteSetupVisuals(C2Setup s) =>
             if not na(s.stdDevData.labels)
                 for lb in s.stdDevData.labels
                     label.delete(lb)
+            s.stdDevData := na
 
 registerRecord(C2Setup s) =>
     setupRecords.push(SetupRecord.new(s, bar_index))
-    while showHistory > 0 and setupRecords.size() > showHistory
-        evicted = setupRecords.shift()
-        deleteSetupVisuals(evicted.setup)
+    if showHistory > 0
+        while setupRecords.size() > showHistory
+            // Evict the oldest finished setup. A setup still running its C3/C4
+            // phases is skipped so it is not wiped mid-life; at most one buy and
+            // one sell setup can be live, so the overshoot is bounded by two.
+            int victim = -1
+            for i = 0 to setupRecords.size() - 1
+                if not isLiveSetup(setupRecords.get(i).setup)
+                    victim := i
+                    break
+            if victim < 0
+                break
+            evicted = setupRecords.remove(victim)
+            retireSetup(evicted.setup)
     earliestVisibleBar = setupRecords.size() > 0 ? setupRecords.first().creationBar : na
     pruneEarlyCisd(bullEarlyCisdRecords, earliestVisibleBar)
     pruneEarlyCisd(bearEarlyCisdRecords, earliestVisibleBar)
@@ -467,22 +504,22 @@ c2Buy         = currentL < prevL1 and currentC > prevL1
 c2Sell        = currentH > prevH1 and currentC < prevH1
 periodChanged = time(autoTf) != time(autoTf)[1]
 
-drawPhase(bool isBull, bool isC4) =>
+drawPhase(bool isBull, bool isC4, bool visible) =>
     mid   = (state.prevHigh + state.prevLow) / 2
     top   = math.max(open, mid)
     bot   = math.min(open, mid)
     yDash = isBull ? bot : top
     bxCol = isBull ? tSpotBullColor : tSpotBearColor
-    box   bx   = showTSpot ? box.new(bar_index, top, bar_index, bot, border_color = na, bgcolor = bxCol) : na
-    line  dash = showEQ ? line.new(bar_index, yDash, bar_index, yDash, color = eqColor, width = eqWidth, style = lineStyleFromStr(eqStyle)) : na
+    box   bx   = (visible and showTSpot) ? box.new(bar_index, top, bar_index, bot, border_color = na, bgcolor = bxCol) : na
+    line  dash = (visible and showEQ) ? line.new(bar_index, yDash, bar_index, yDash, color = eqColor, width = eqWidth, style = lineStyleFromStr(eqStyle)) : na
     label lbl  = na
-    if isC4 and showTSpot and showLabels and validTf
+    if visible and isC4 and showTSpot and showLabels and validTf
         lbl := directionalLabel(bar_index + 2, isBull ? bot : top, 'C4', isBull)
     [bx, dash, lbl, top, bot]
 
 newSetup(bool isBull, float extreme, label c2Lbl, float cisdLevel, int cisdIndex, bool cisdAlreadyConfirmed, int cisdConfirmBar) =>
     s = C2Setup.new(isBull, extreme, 1, false, c2Lbl)
-    [bx, dash, _, _, _] = drawPhase(isBull, false)
+    [bx, dash, _, _, _] = drawPhase(isBull, false, true)
     s.c3Box     := bx
     s.c3Dash    := dash
     s.cisdLevel := cisdLevel
@@ -495,22 +532,42 @@ newSetup(bool isBull, float extreme, label c2Lbl, float cisdLevel, int cisdIndex
 method advanceToC4(C2Setup s) =>
     if not na(s.c3Box)
         box.set_right(s.c3Box, bar_index)
+    if not na(s.c3Dash)
         line.set_x2(s.c3Dash, bar_index)
-    [bx, dash, lbl, top, bot] = drawPhase(s.isBull, true)
-    s.c4Box     := bx
-    s.c4Dash    := dash
-    s.c4Lbl     := lbl
-    s.c4Top     := top
-    s.c4Bottom  := bot
-    s.phase     := 2
-    s.c4Invalid := false
+    [bx, dash, lbl, top, bot] = drawPhase(s.isBull, true, not s.retired)
+    s.c4Box      := bx
+    s.c4Dash     := dash
+    s.c4Lbl      := lbl
+    s.c4Top      := top
+    s.c4Bottom   := bot
+    s.c4StartBar := bar_index
+    s.phase      := 2
+    s.c4Invalid  := false
     s
 
 method finish(C2Setup s) =>
     if not na(s.c4Box)
         box.set_right(s.c4Box, bar_index)
+    if not na(s.c4Dash)
         line.set_x2(s.c4Dash, bar_index)
     s.phase := 0
+    s
+
+// Closes out a setup that is being replaced by a fresh one on the same side, so
+// it stops tracking and becomes eligible for history eviction.
+method supersede(C2Setup s) =>
+    if isLiveSetup(s)
+        if s.phase == 1
+            if not na(s.c3Box)
+                box.set_right(s.c3Box, bar_index)
+            if not na(s.c3Dash)
+                line.set_x2(s.c3Dash, bar_index)
+        else
+            if not na(s.c4Box)
+                box.set_right(s.c4Box, bar_index)
+            if not na(s.c4Dash)
+                line.set_x2(s.c4Dash, bar_index)
+        s.phase := 0
     s
 
 method deleteStdDev(C2Setup s) =>
@@ -530,6 +587,7 @@ method extendAndCheck(C2Setup s) =>
         line extDash = s.phase == 1 ? s.c3Dash : s.c4Dash
         if not na(extBox)
             box.set_right(extBox, bar_index)
+        if not na(extDash)
             line.set_x2(extDash, bar_index)
 
         c2Breach = s.isBull ? low < s.extreme : high > s.extreme
@@ -558,7 +616,10 @@ method extendAndCheck(C2Setup s) =>
     s
 
 method checkC4Invalid(C2Setup s) =>
-    if not na(s) and not s.dead and s.phase == 2 and not s.c4Invalid
+    // Waits until the bar after C4 opens: on the creation bar itself close[1] is
+    // the last bar of the previous HTF period, which would read a gap through
+    // the zone as an immediate invalidation.
+    if not na(s) and not s.dead and s.phase == 2 and not s.c4Invalid and not na(s.c4StartBar) and bar_index > s.c4StartBar
         invalid = s.isBull ? close[1] < s.c4Bottom : close[1] > s.c4Top
         if invalid
             s.c4Invalid := true
@@ -582,6 +643,7 @@ method checkCisdConfirm(C2Setup s) =>
 processC2(bool trigger, bool allow, bool isBull, float extremePrice, int extremeBar, float sweepFromPrice, int sweepFromBar, float cisdLevel, int cisdIndex, bool cisdAlreadyConfirmed, int cisdConfirmBar, C2Setup existing) =>
     C2Setup result = existing
     if trigger and allow
+        existing.supersede()
         label lbl = (validTf and showLabels) ? directionalLabel(extremeBar, extremePrice, 'C2', isBull) : na
         drawSweepLine(sweepFromBar, sweepFromPrice, bar_index)
         result := newSetup(isBull, extremePrice, lbl, cisdLevel, cisdIndex, cisdAlreadyConfirmed, cisdConfirmBar)
@@ -687,7 +749,7 @@ if newBullLevel
 if not na(bullLevelFixed) and not bullReclaimed and close > bullLevelFixed
     bullReclaimed  := true
     bullReclaimBar := bar_index
-    if bullPeriodSweep
+    if bullPeriodSweep and validTf
         drawEarlyCisd(true, bullLevelFixed, bullIndexFixed, bar_index)
 
 newBearLevel = not na(bearIndexFixed) and (na(bearIndexFixed[1]) or bearIndexFixed != bearIndexFixed[1])
@@ -697,7 +759,7 @@ if newBearLevel
 if not na(bearLevelFixed) and not bearReclaimed and close < bearLevelFixed
     bearReclaimed  := true
     bearReclaimBar := bar_index
-    if bearPeriodSweep
+    if bearPeriodSweep and validTf
         drawEarlyCisd(false, bearLevelFixed, bearIndexFixed, bar_index)
 
 candleOffset = candleOffsetIn + 10
@@ -741,14 +803,16 @@ if periodChanged
     state.prevC2Buy  := c2Buy[1]
     state.prevC2Sell := c2Sell[1]
 
-c2BuyTrigger  = periodChanged and state.prevC2Buy
-c2SellTrigger = periodChanged and state.prevC2Sell
+// validTf gates the triggers so an unsupported chart timeframe produces no
+// setups and no alerts, matching the warning shown on the dashboard.
+c2BuyTrigger  = validTf and periodChanged and state.prevC2Buy
+c2SellTrigger = validTf and periodChanged and state.prevC2Sell
 
 if c2BuyTrigger and allowBuy and bullReclaimed[1]
-    consumeLastEarlyCisd(bullEarlyCisdRecords)
+    consumeEarlyCisd(bullEarlyCisdRecords, bullLevelFixed[1], bullIndexFixed[1])
 
 if c2SellTrigger and allowSell and bearReclaimed[1]
-    consumeLastEarlyCisd(bearEarlyCisdRecords)
+    consumeEarlyCisd(bearEarlyCisdRecords, bearLevelFixed[1], bearIndexFixed[1])
 
 buySetup  := processC2(c2BuyTrigger, allowBuy, true, state.prevLow, state.prevLowBar, state.prevPrevLow, state.prevPrevLowBar, bullLevelFixed[1], bullIndexFixed[1], bullReclaimed[1], bullReclaimBar[1], buySetup)
 sellSetup := processC2(c2SellTrigger, allowSell, false, state.prevHigh, state.prevHighBar, state.prevPrevHigh, state.prevPrevHighBar, bearLevelFixed[1], bearIndexFixed[1], bearReclaimed[1], bearReclaimBar[1], sellSetup)
