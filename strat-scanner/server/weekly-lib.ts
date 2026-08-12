@@ -228,7 +228,7 @@ export function formatWriteupDiscord(w: Writeup, dca: DcaPlan): DiscordMessage {
       : ` · ${w.weekChangePct >= 0 ? '▲' : '▼'} ${Math.abs(w.weekChangePct).toFixed(1)}% this week`;
 
   return {
-    content: `## 📝 ${w.name ?? w.symbol} — the week ahead`,
+    content: `## 📝 ${w.name ?? w.symbol}, the week ahead`,
     embeds: [
       {
         title: `${STANCE_DOT[dca.stance]} ${w.name ?? w.symbol} · ${money(w.lastPrice)}${move}`,

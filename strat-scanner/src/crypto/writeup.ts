@@ -43,19 +43,19 @@ function describeBar(s: TimeframeStructure, unit: 'week' | 'month'): string {
   switch (s.type) {
     case '1':
       return (
-        `Last ${p.one} traded entirely inside the ${p.one} before it — a full ${p.one} without ` +
+        `Last ${p.one} traded entirely inside the ${p.one} before it, a full ${p.one} without ` +
         `breaking above or below. That is a market waiting rather than a market weakening: the ` +
         `tighter the range gets, the more forceful the move when it finally resolves, and the ` +
         `sooner you know if you are wrong.`
       );
     case '2u':
       return s.run >= 2
-        ? `That is ${s.run} ${p.many} in a row of higher highs — a sustained move, not a one-off push.`
+        ? `That is ${s.run} ${p.many} in a row of higher highs, a sustained move rather than a one-off push.`
         : `Last ${p.one} pushed above ${p.prior} high, putting buyers in control of the recent range.`;
     case '2d':
       return s.run >= 2
         ? `That is ${s.run} ${p.many} in a row of lower lows, with no pause and no attempt to bounce. ` +
-            `That is the weakest thing a chart can do — there is nothing to buy here yet, only prices worth watching.`
+            `That is the weakest thing a chart can do, and there is nothing to buy here yet, only prices worth watching.`
         : `Last ${p.one} broke below ${p.prior} low, handing control to sellers.`;
     case '3':
       return (
@@ -76,20 +76,20 @@ function describeDisagreement(structure: AssetStructure, weekChangePct: number |
   if (weekly.type === '2d' && (weekChangePct ?? 0) > 0) {
     return (
       `The drop did not hold: price is back up this week. Everyone who sold into that dip is now offside, ` +
-      `and they buy back if it keeps rising — which is often what turns a failed drop into a rally.`
+      `and they buy back if it keeps rising, which is often what turns a failed drop into a rally.`
     );
   }
   if (weekly.type === '2u' && (weekChangePct ?? 0) < 0) {
     return (
       `The push higher did not hold: price has slipped back this week. Everyone who bought that breakout is ` +
-      `now underwater, and they sell to get out — which is what caps the next attempt.`
+      `now underwater, and they sell to get out, which is what caps the next attempt.`
     );
   }
   if (monthly.type === '1' && weekly.type === '2u') {
     return `The week moved; the month has not. That is the first crack in a stalemate rather than a confirmed direction.`;
   }
   if (monthly.type === '1' && weekly.type === '2d') {
-    return `The week broke lower while the month is still undecided — a warning, not yet a verdict.`;
+    return `The week broke lower while the month is still undecided, a warning rather than a verdict.`;
   }
   return '';
 }
@@ -111,7 +111,7 @@ const travelSentence = (targets: number[], direction: 'up' | 'down'): string => 
   const [first, second] = targets;
   if (direction === 'up') {
     if (targets.length === 0) {
-      return `There is no prior high left above — it would be trading where it has never traded before, so there is no level to aim at.`;
+      return `There is no prior high left above, which means it would be trading where it has never traded before, with no level to aim at.`;
     }
     return second === undefined
       ? `The last place it ran out of buyers was ${money(first)}.`
@@ -146,13 +146,13 @@ function describeContinuity(map: ContinuityMap): string {
   if (up.length === TIMEFRAMES.length) {
     return (
       `The 4-hour, daily, weekly and monthly charts are all trading above where they opened. When every ` +
-      `timeframe points the same way, moves in that direction meet the least resistance — it is the closest ` +
+      `timeframe points the same way, moves in that direction meet the least resistance, the closest ` +
       `thing to a tailwind you get.`
     );
   }
   if (down.length === TIMEFRAMES.length) {
     return (
-      `All four timeframes — 4-hour, daily, weekly and monthly — are trading below where they opened. ` +
+      `The 4-hour, daily, weekly and monthly charts are all trading below where they opened. ` +
       `Buying into that means fighting every clock at once.`
     );
   }
@@ -179,7 +179,7 @@ function describeApproach(dca: DcaPlan, symbol: string): string {
     dca.stance === 'accumulate'
       ? `The bigger picture supports buying dips here, so the whole ladder is live.`
       : dca.stance === 'defensive'
-        ? `The bigger picture is broken, so only the first order is worth having on — being early into a fall this clean is expensive.`
+        ? `The bigger picture is broken, so only the first order is worth having on, because being early into a fall this clean is expensive.`
         : `The bigger picture has not committed, so take the shallow orders slowly and keep the deeper ones funded.`;
 
   return `${stance} ${shape} The tradeoff is that you buy less at good prices and more at great ones, at the cost of never fully filling if it simply goes straight up.`;
@@ -211,10 +211,10 @@ export function buildWriteup(input: WriteupInput): Writeup {
   const down = structure.monthly.triggerDown;
 
   const higher = [
-    up === null ? `No clear level above yet.` : `Trading above ${money(up)} — the top of last month's range.`,
+    up === null ? `No clear level above yet.` : `Trading above ${money(up)}, the top of last month's range.`,
     up === null
       ? ''
-      : `Clearing it puts anyone who sold below that price underwater, and they buy back to get out — which is often what turns a break into a run.`,
+      : `Clearing it puts anyone who sold below that price underwater, and they buy back to get out, which is often what turns a break into a run.`,
     travelSentence(structure.targetsUp, 'up'),
   ]
     .filter(Boolean)
@@ -224,7 +224,7 @@ export function buildWriteup(input: WriteupInput): Writeup {
     down === null ? `No clear level below yet.` : `Losing ${money(down)}, the floor of the same range.`,
     down === null
       ? ''
-      : `That would make the recent strength a false start — and false starts cut deep, because everyone who bought it is trapped.`,
+      : `That would make the recent strength a false start, and false starts cut deep, because everyone who bought it is trapped.`,
     travelSentence(structure.targetsDown, 'down'),
   ]
     .filter(Boolean)
@@ -233,7 +233,7 @@ export function buildWriteup(input: WriteupInput): Writeup {
   const watch =
     up !== null && down !== null
       ? `${money(up)}. Everything else is noise until that breaks or the ${money(down)} floor gives way. A month-long stalemate resolving is worth more than any single week's move.`
-      : `There is no decisive level yet — wait for a full week to close and set one.`;
+      : `There is no decisive level yet, so wait for a full week to close and set one.`;
 
   return {
     symbol,
