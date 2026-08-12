@@ -1,0 +1,60 @@
+name: Crypto Weekly Report
+
+on:
+  schedule:
+    # Mondays 01:00 UTC — an hour after the weekly crypto candle closes, so the
+    # week that just ended is a completed bar and its high/low are the levels
+    # the report plans around. (Sunday 9pm ET / 8pm CT.)
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the report to the run log instead of sending it'
+        type: boolean
+        default: false
+      test_ping:
+        description: 'Send one test notification to verify delivery (skips the scan)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crypto-weekly
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The weekly report is stateless: it always publishes the current picture,
+      # so there is no dedupe cache to restore or save.
+      - name: Build and send the weekly crypto report
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          WEEKLY_MIN_CONFIDENCE: ${{ vars.WEEKLY_MIN_CONFIDENCE || '50' }}
+          WEEKLY_TIMEFRAMES: ${{ vars.WEEKLY_TIMEFRAMES || 'D,W,M' }}
+          WEEKLY_MAX_ENTRIES: ${{ vars.WEEKLY_MAX_ENTRIES || '2' }}
+          WEEKLY_NTFY_ASSETS: ${{ vars.WEEKLY_NTFY_ASSETS || '4' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          TEST_PING: ${{ inputs.test_ping }}
+        run: npm run weekly-crypto

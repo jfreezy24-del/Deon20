@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "alert": "tsx server/scan-and-notify.ts",
-    "algo-alert": "tsx server/algo-alerts.ts"
+    "algo-alert": "tsx server/algo-alerts.ts",
+    "weekly-crypto": "tsx server/weekly-crypto.ts"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.1.2",

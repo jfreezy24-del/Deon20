@@ -1,4 +1,5 @@
-import { Signal, TIMEFRAMES } from '../src/strat/types';
+import { Signal } from '../src/strat/types';
+import { continuityStrip } from '../src/strat/continuity';
 
 /** Identity of a signal including its state, so SETUP -> TRIGGERED counts as new. */
 export const signalKey = (s: Signal) =>
@@ -52,10 +53,7 @@ export function selectNotifications(
 const fmt = (v: number) => (v >= 1 ? v.toFixed(2) : v.toFixed(5));
 
 export function ftfcLine(s: Signal): string {
-  return TIMEFRAMES.map((tf) => {
-    const t = s.continuity[tf];
-    return `${tf}${t === 'up' ? '▲' : t === 'down' ? '▼' : '–'}`;
-  }).join(' ');
+  return continuityStrip(s.continuity);
 }
 
 export interface PushMessage {

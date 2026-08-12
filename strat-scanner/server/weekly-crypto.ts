@@ -1,0 +1,191 @@
+/**
+ * Crypto Weekly — a once-a-week market report for the crypto universe,
+ * delivered to ntfy (phone push) and Discord.
+ *
+ * Unlike the intraday alerters in this folder, this run is stateless and
+ * unconditional: it always publishes. Each asset gets the Strat setups worth
+ * an entry in the week ahead (trigger, invalidation, magnitude) plus the
+ * standing DCA ladder underneath price, built from weekly and monthly
+ * structure.
+ *
+ * Usage:  npx tsx server/weekly-crypto.ts
+ *
+ * Environment:
+ *   NTFY_TOPIC            ntfy topic to publish to (without it, ntfy is skipped)
+ *   NTFY_SERVER           ntfy server base URL          (default https://ntfy.sh)
+ *   DISCORD_WEBHOOK_URL   Discord webhook for the full report (optional)
+ *   ALERT_EMAIL           inbox copy of the digest via ntfy e-mail forwarding
+ *   WEEKLY_MIN_CONFIDENCE min confidence for an entry idea         (default 50)
+ *   WEEKLY_TIMEFRAMES     comma list of entry timeframes        (default D,W,M)
+ *   WEEKLY_MAX_ENTRIES    entry ideas listed per asset               (default 2)
+ *   WEEKLY_NTFY_ASSETS    per-asset pushes after the digest           (default 4)
+ *   DRY_RUN               'true' to print the report and send nothing
+ *   TEST_PING             'true' to send one delivery test and exit
+ */
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { CRYPTO_UNIVERSE } from '../src/crypto/universe';
+import {
+  DEFAULT_WEEKLY_OPTIONS,
+  scanCryptoWeekly,
+  WeeklyOptions,
+} from '../src/crypto/weeklyReport';
+import { Timeframe, TIMEFRAMES } from '../src/strat/types';
+import { buildNtfyPayload, PushMessage } from './lib';
+import { formatWeeklyDiscord, formatWeeklyNtfy } from './weekly-lib';
+
+const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
+
+function loadUniverse(): string[] {
+  if (existsSync(WATCHLIST_FILE)) {
+    const list = JSON.parse(readFileSync(WATCHLIST_FILE, 'utf8'));
+    if (Array.isArray(list) && list.length > 0) return list.map((s) => String(s).toUpperCase());
+  }
+  return CRYPTO_UNIVERSE;
+}
+
+function parseTimeframes(raw: string | undefined): Timeframe[] {
+  if (!raw?.trim()) return DEFAULT_WEEKLY_OPTIONS.entryTimeframes;
+  const tfs = raw
+    .split(',')
+    .map((t) => t.trim().toUpperCase())
+    .filter((t): t is Timeframe => (TIMEFRAMES as string[]).includes(t));
+  return tfs.length > 0 ? tfs : DEFAULT_WEEKLY_OPTIONS.entryTimeframes;
+}
+
+const num = (raw: string | undefined, fallback: number): number => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+const isTrue = (raw: string | undefined): boolean =>
+  ['1', 'true', 'yes'].includes((raw ?? '').trim().toLowerCase());
+
+async function sendNtfy(server: string, topic: string, msg: PushMessage, email?: string) {
+  const res = await fetch(server.replace(/\/$/, ''), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...buildNtfyPayload(topic, msg), ...(email ? { email } : {}) }),
+  });
+  if (!res.ok) throw new Error(`ntfy responded ${res.status}: ${await res.text()}`);
+}
+
+async function sendDiscord(webhookUrl: string, content: string) {
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: content.slice(0, 2000) }),
+  });
+  if (!res.ok) throw new Error(`Discord responded ${res.status}: ${await res.text()}`);
+}
+
+/** Discord rate-limits bursts; a short gap keeps a long report in order. */
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function main() {
+  const topic = process.env.NTFY_TOPIC?.trim();
+  const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
+  const discordWebhook = process.env.DISCORD_WEBHOOK_URL?.trim() || undefined;
+  const email = process.env.ALERT_EMAIL?.trim() || undefined;
+  const dryRun = isTrue(process.env.DRY_RUN);
+
+  if (isTrue(process.env.TEST_PING)) {
+    if (!topic && !discordWebhook) {
+      throw new Error('TEST_PING set but neither NTFY_TOPIC nor DISCORD_WEBHOOK_URL is set.');
+    }
+    const msg: PushMessage = {
+      title: 'Crypto Weekly test ✅',
+      body: 'Delivery is working — the weekly crypto report will arrive on this channel.',
+      priority: 'default',
+      tags: 'white_check_mark',
+    };
+    if (topic) {
+      await sendNtfy(server, topic, msg, email);
+      console.log('Test ping sent (ntfy accepted it).');
+    }
+    if (discordWebhook) {
+      await sendDiscord(discordWebhook, `**${msg.title}**\n${msg.body}`);
+      console.log('Test ping sent (Discord accepted it).');
+    }
+    return;
+  }
+
+  const opts: WeeklyOptions = {
+    entryTimeframes: parseTimeframes(process.env.WEEKLY_TIMEFRAMES),
+    minEntryConfidence: num(
+      process.env.WEEKLY_MIN_CONFIDENCE,
+      DEFAULT_WEEKLY_OPTIONS.minEntryConfidence,
+    ),
+    maxEntriesPerAsset: num(
+      process.env.WEEKLY_MAX_ENTRIES,
+      DEFAULT_WEEKLY_OPTIONS.maxEntriesPerAsset,
+    ),
+    maxHighlights: DEFAULT_WEEKLY_OPTIONS.maxHighlights,
+  };
+
+  const universe = loadUniverse();
+  console.log(`Scanning ${universe.length} crypto symbols: ${universe.join(', ')}`);
+
+  const report = await scanCryptoWeekly(universe, opts, (done, total) =>
+    console.log(`  progress ${done}/${total}`),
+  );
+
+  for (const err of report.errors) console.warn(`  WARN ${err.symbol}: ${err.message}`);
+  if (report.assets.length === 0) {
+    throw new Error('Every symbol failed to scan — data provider unreachable?');
+  }
+  console.log(
+    `Report ready: ${report.assets.length} assets, ${report.breadth.entries} entry setups, ` +
+      `${report.errors.length} errors.`,
+  );
+
+  const discordMessages = formatWeeklyDiscord(report);
+  const ntfyMessages = formatWeeklyNtfy(report, num(process.env.WEEKLY_NTFY_ASSETS, 4));
+
+  if (dryRun) {
+    console.log('\n--- DRY RUN: Discord report ---\n');
+    discordMessages.forEach((m, i) => console.log(`[message ${i + 1}]\n${m}\n`));
+    console.log('--- DRY RUN: ntfy pushes ---\n');
+    ntfyMessages.forEach((m) => console.log(`[${m.title}]\n${m.body}\n`));
+    return;
+  }
+
+  if (!topic) console.log('NTFY_TOPIC not set — ntfy send skipped.');
+  if (!discordWebhook) console.log('DISCORD_WEBHOOK_URL not set — Discord send skipped.');
+
+  const sendErrors: string[] = [];
+
+  if (topic) {
+    for (const [i, msg] of ntfyMessages.entries()) {
+      try {
+        // Only the digest gets the email copy; per-asset pushes would spam the inbox.
+        await sendNtfy(server, topic, msg, i === 0 ? email : undefined);
+        console.log(`  ntfy -> ${msg.title}`);
+      } catch (e) {
+        sendErrors.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }
+
+  if (discordWebhook) {
+    for (const [i, content] of discordMessages.entries()) {
+      try {
+        await sendDiscord(discordWebhook, content);
+        console.log(`  discord -> message ${i + 1}/${discordMessages.length}`);
+      } catch (e) {
+        sendErrors.push(e instanceof Error ? e.message : String(e));
+      }
+      await pause(600);
+    }
+  }
+
+  if (sendErrors.length > 0) {
+    throw new Error(`${sendErrors.length} message(s) failed to send: ${sendErrors[0]}`);
+  }
+  console.log('Weekly report delivered.');
+}
+
+main().catch((e) => {
+  console.error(e instanceof Error ? e.message : e);
+  process.exitCode = 1;
+});

@@ -23,6 +23,14 @@ export function buildContinuity(current: Partial<Record<Timeframe, Candle>>): Co
   return map;
 }
 
+/** Compact FTFC readout for messages, e.g. "4H▲ D▲ W– M▼". */
+export function continuityStrip(map: ContinuityMap): string {
+  return TIMEFRAMES.map((tf) => {
+    const t = map[tf];
+    return `${tf}${t === 'up' ? '▲' : t === 'down' ? '▼' : '–'}`;
+  }).join(' ');
+}
+
 export interface ContinuityScore {
   aligned: Timeframe[];
   opposed: Timeframe[];
