@@ -12,6 +12,7 @@ import {
 } from './weekly-lib';
 import { buildWeeklyReport, WeeklyAsset, weekOf } from '../src/crypto/weeklyReport';
 import { DcaPlan, DcaRung } from '../src/strat/dca';
+import { AssetStructure } from '../src/crypto/structure';
 
 const rung = (over: Partial<DcaRung> = {}): DcaRung => ({
   price: 112_400,
@@ -46,6 +47,14 @@ const plan = (over: Partial<DcaPlan> = {}): DcaPlan => ({
   ...over,
 });
 
+const structure = (over: Partial<AssetStructure> = {}): AssetStructure => ({
+  weekly: { type: '2u', triggerUp: 121_400, triggerDown: 112_400, run: 1 },
+  monthly: { type: '1', triggerUp: 121_400, triggerDown: 112_400, run: 1 },
+  targetsUp: [128_500, 141_000],
+  targetsDown: [104_900, 92_300],
+  ...over,
+});
+
 const asset = (over: Partial<WeeklyAsset> = {}): WeeklyAsset => ({
   symbol: 'BTC-USD',
   name: 'Bitcoin',
@@ -53,6 +62,7 @@ const asset = (over: Partial<WeeklyAsset> = {}): WeeklyAsset => ({
   weekChangePct: 3.2,
   continuity: { '4H': 'up', D: 'up', W: 'up', M: 'up' },
   dca: plan(),
+  structure: structure(),
   ...over,
 });
 

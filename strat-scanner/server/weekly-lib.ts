@@ -1,6 +1,7 @@
 import { continuityStrip } from '../src/strat/continuity';
 import { DcaPlan } from '../src/strat/dca';
 import { firstRungDistance, WeeklyAsset, WeeklyReport } from '../src/crypto/weeklyReport';
+import { money, Writeup } from '../src/crypto/writeup';
 import { PushMessage } from './lib';
 
 /** Discord rejects messages over 2000 characters; leave room for the fences. */
@@ -212,6 +213,40 @@ export function formatWeeklyDiscord(report: WeeklyReport): DiscordMessage[] {
     last.content = last.content ? `${last.content}\n${note}` : note;
   }
   return messages;
+}
+
+/**
+ * The written analysis as its own message: one embed, coloured by stance,
+ * each section a field. It rides alongside the ladder report rather than
+ * replacing it — the ladder is the plan for ten coins, this is the reasoning
+ * for one.
+ */
+export function formatWriteupDiscord(w: Writeup, dca: DcaPlan): DiscordMessage {
+  const move =
+    w.weekChangePct === null
+      ? ''
+      : ` · ${w.weekChangePct >= 0 ? '▲' : '▼'} ${Math.abs(w.weekChangePct).toFixed(1)}% this week`;
+
+  return {
+    content: `## 📝 ${w.name ?? w.symbol} — the week ahead`,
+    embeds: [
+      {
+        title: `${STANCE_DOT[dca.stance]} ${w.name ?? w.symbol} · ${money(w.lastPrice)}${move}`,
+        color: STANCE_COLOR[dca.stance],
+        fields: [
+          { name: 'Where it stands', value: w.standing },
+          { name: 'What sends it higher', value: w.higher },
+          { name: 'What sends it lower', value: w.lower },
+          { name: 'What the broader picture says', value: w.picture },
+          {
+            name: 'What we are doing about it',
+            value: `\`\`\`\n${ladderTable(dca)}\n\`\`\`\n${w.approach}`,
+          },
+          { name: 'The one thing to watch', value: w.watch },
+        ].map((f) => ({ ...f, value: f.value.slice(0, 1024) })),
+      },
+    ],
+  };
 }
 
 /**
