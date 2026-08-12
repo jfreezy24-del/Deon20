@@ -215,6 +215,30 @@ export function formatWeeklyDiscord(report: WeeklyReport): DiscordMessage[] {
 }
 
 /**
+ * Plain-text rendering of an embed message, for the dry-run log. Embeds are
+ * a JSON structure, so without this the log shows nothing useful — and a
+ * dry run exists precisely to be read before a real send.
+ */
+export function describeDiscord(message: DiscordMessage): string {
+  const lines: string[] = [];
+  if (message.content) lines.push(message.content);
+
+  for (const embed of message.embeds) {
+    lines.push('', `┌ ${embed.title}`);
+    if (embed.description) {
+      lines.push(...embed.description.split('\n').map((l) => `│ ${l}`));
+    }
+    for (const field of embed.fields ?? []) {
+      lines.push(`│ ${field.name}`);
+      lines.push(...field.value.split('\n').map((l) => `│   ${l}`));
+    }
+    if (embed.footer) lines.push(`└ ${embed.footer.text}`);
+    else lines.push('└');
+  }
+  return lines.join('\n');
+}
+
+/**
  * ntfy messages: one digest, then one push per asset whose ladder is closest
  * to filling, so the bids that could actually get hit this week are readable
  * on a lock screen without opening anything.
