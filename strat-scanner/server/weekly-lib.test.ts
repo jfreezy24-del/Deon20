@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  assetBlock,
-  chunkBlocks,
+  assetEmbed,
+  chunkEmbeds,
   fmtPrice,
   formatWeeklyDiscord,
   formatWeeklyNtfy,
+  ladderTable,
+  MAX_EMBEDS_PER_MESSAGE,
 } from './weekly-lib';
 import { buildWeeklyReport, WeeklyAsset, weekOf } from '../src/crypto/weeklyReport';
 import { DcaPlan, DcaRung } from '../src/strat/dca';
@@ -61,51 +63,73 @@ describe('fmtPrice', () => {
   });
 });
 
-describe('assetBlock', () => {
-  it('reports the ladder and nothing else', () => {
-    const text = assetBlock(asset());
-    expect(text).toContain('BTC-USD');
-    expect(text).toContain('DCA ladder — ACCUMULATE');
-    expect(text).toContain('28% @ 112,400 (−5.1%) · Prior week low [W]');
-    expect(text).toContain('Avg fill 107,000');
+describe('ladderTable', () => {
+  it('aligns the columns so the numbers read as a table', () => {
+    const lines = ladderTable(
+      plan({
+        rungs: [
+          rung({ allocationPct: 8, price: 1200, discountPct: 5.1 }),
+          rung({ allocationPct: 92, price: 950.5, discountPct: 11.42, source: 'Monthly pivot low' }),
+        ],
+      }),
+    ).split('\n');
+
+    // Numbers are right-aligned, so every row hands off to the source column
+    // at the same offset regardless of how wide its figures are.
+    expect(lines[0].indexOf('W low')).toBe(lines[1].indexOf('M pivot'));
+    expect(lines[0]).toMatch(/^\s+8%\s+1,200\s+−5\.1%\s+W low$/);
   });
 
-  it('carries no entry, invalidation, magnitude or continuity lines', () => {
-    const text = assetBlock(asset());
-    expect(text).not.toMatch(/entry/i);
-    expect(text).not.toMatch(/stop/i);
-    expect(text).not.toMatch(/invalidation/i);
-    expect(text).not.toMatch(/magnitude/i);
-    expect(text).not.toMatch(/\bT1\b|\bT2\b/);
-    expect(text).not.toMatch(/FTFC|Last closed/);
-  });
-
-  it('stays compact enough to fit many assets in one message', () => {
-    // 4 rungs + header + avg fill; the whole universe has to fit in a
-    // handful of Discord messages.
-    expect(assetBlock(asset()).split('\n')).toHaveLength(5);
-  });
-
-  it('says so when there is no structure left below price', () => {
-    const text = assetBlock(asset({ dca: plan({ rungs: [], averageFill: null }) }));
-    expect(text).toContain('No structure below price');
+  it('says so when there is no structure below price', () => {
+    expect(ladderTable(plan({ rungs: [] }))).toMatch(/no structure below price/i);
   });
 });
 
-describe('chunkBlocks', () => {
-  it('never exceeds the limit and keeps every block', () => {
-    const blocks = Array.from({ length: 20 }, (_, i) => `block ${i}\n${'x'.repeat(300)}`);
-    const chunks = chunkBlocks(blocks, 1000);
-    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(1000);
-    for (let i = 0; i < blocks.length; i++) expect(chunks.join('\n')).toContain(`block ${i}`);
+describe('assetEmbed', () => {
+  it('colours the stripe by stance and marks it with a dot', () => {
+    expect(assetEmbed(asset()).color).toBe(0x57f287);
+    expect(assetEmbed(asset()).title).toContain('🟢');
+
+    const defensive = assetEmbed(asset({ dca: plan({ stance: 'defensive' }) }));
+    expect(defensive.color).toBe(0xed4245);
+    expect(defensive.title).toContain('🔴');
+
+    const neutral = assetEmbed(asset({ dca: plan({ stance: 'neutral' }) }));
+    expect(neutral.color).toBe(0xfee75c);
+    expect(neutral.title).toContain('🟡');
   });
 
-  it('splits a single oversized block on line boundaries', () => {
-    const big = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
-    const chunks = chunkBlocks([big], 100);
-    expect(chunks.length).toBeGreaterThan(1);
-    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(100);
-    expect(chunks.join('\n')).toContain('line 49');
+  it('carries price, weekly move and the ladder in a code block', () => {
+    const embed = assetEmbed(asset());
+    expect(embed.title).toContain('BTC-USD · Bitcoin');
+    expect(embed.description).toContain('**$118,432**');
+    expect(embed.description).toContain('▲ 3.2% this week');
+    expect(embed.description).toMatch(/```[\s\S]*112,400[\s\S]*```/);
+    expect(embed.footer?.text).toBe('avg fill 107,000');
+  });
+
+  it('marks a weekly loss with a down arrow', () => {
+    expect(assetEmbed(asset({ weekChangePct: -6.9 })).description).toContain('▼ 6.9% this week');
+  });
+
+  it('omits the footer when there is no ladder to average', () => {
+    expect(assetEmbed(asset({ dca: plan({ rungs: [], averageFill: null }) })).footer).toBeUndefined();
+  });
+});
+
+describe('chunkEmbeds', () => {
+  it('never exceeds ten embeds per message', () => {
+    const groups = chunkEmbeds(Array.from({ length: 23 }, () => assetEmbed(asset())));
+    expect(groups).toHaveLength(3);
+    for (const g of groups) expect(g.length).toBeLessThanOrEqual(MAX_EMBEDS_PER_MESSAGE);
+    expect(groups.flat()).toHaveLength(23);
+  });
+
+  it('splits early when the embeds are character-heavy', () => {
+    const fat = assetEmbed(asset());
+    fat.description = 'x'.repeat(2000);
+    const groups = chunkEmbeds([fat, { ...fat }, { ...fat }, { ...fat }]);
+    expect(groups.length).toBeGreaterThan(1);
   });
 });
 
@@ -133,22 +157,36 @@ describe('formatWeeklyDiscord', () => {
     Date.UTC(2026, 7, 12),
   );
 
-  it('opens with the title and stays under the Discord limit', () => {
+  it('leads with a header and one embed per asset', () => {
     const messages = formatWeeklyDiscord(report);
-    expect(messages[0].split('\n')[0]).toBe('**🪙 Crypto Weekly — week of 2026-08-10**');
-    for (const m of messages) expect(m.length).toBeLessThanOrEqual(2000);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain('## 🪙 Crypto Weekly — week of 2026-08-10');
+    expect(messages[0].embeds.map((e) => e.title.replace(/^\S+ /, ''))).toEqual([
+      'BTC-USD · Bitcoin',
+      'SOL-USD · Solana',
+    ]);
+  });
+
+  it('reports failed symbols as subtext on the last message', () => {
+    const messages = formatWeeklyDiscord(report);
+    expect(messages[messages.length - 1].content).toContain('-# 1 symbol(s) failed to scan: FAKE-USD');
   });
 
   it('carries no breadth counts or standing explainer', () => {
-    const all = formatWeeklyDiscord(report).join('\n');
+    const all = JSON.stringify(formatWeeklyDiscord(report));
     expect(all).not.toMatch(/ladders ·|within 5% of spot|Stance:|Not financial advice/);
   });
 
-  it('includes every asset and reports failed symbols', () => {
-    const all = formatWeeklyDiscord(report).join('\n');
-    expect(all).toContain('BTC-USD');
-    expect(all).toContain('SOL-USD');
-    expect(all).toContain('FAKE-USD');
+  it('puts the header only on the first message when the report spans several', () => {
+    const many = buildWeeklyReport(
+      Array.from({ length: 14 }, (_, i) => asset({ symbol: `SYM${i}-USD` })),
+      [],
+      Date.UTC(2026, 7, 12),
+    );
+    const messages = formatWeeklyDiscord(many);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content).toContain('Crypto Weekly');
+    expect(messages[1].content).toBeUndefined();
   });
 });
 

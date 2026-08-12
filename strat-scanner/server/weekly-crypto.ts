@@ -25,7 +25,7 @@ import path from 'node:path';
 import { CRYPTO_UNIVERSE } from '../src/crypto/universe';
 import { DEFAULT_WEEKLY_OPTIONS, scanCryptoWeekly } from '../src/crypto/weeklyReport';
 import { buildNtfyPayload, PushMessage } from './lib';
-import { formatWeeklyDiscord, formatWeeklyNtfy } from './weekly-lib';
+import { DiscordMessage, formatWeeklyDiscord, formatWeeklyNtfy } from './weekly-lib';
 import { loadSymbolList } from './watchlist-file';
 
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
@@ -49,13 +49,26 @@ async function sendNtfy(server: string, topic: string, msg: PushMessage, email?:
   if (!res.ok) throw new Error(`ntfy responded ${res.status}: ${await res.text()}`);
 }
 
-async function sendDiscord(webhookUrl: string, content: string) {
+async function sendDiscord(webhookUrl: string, message: DiscordMessage) {
   const res = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: content.slice(0, 2000) }),
+    body: JSON.stringify({
+      ...(message.content ? { content: message.content.slice(0, 2000) } : {}),
+      embeds: message.embeds,
+    }),
   });
   if (!res.ok) throw new Error(`Discord responded ${res.status}: ${await res.text()}`);
+}
+
+/** Readable rendering of an embed message for the dry-run log. */
+function describeDiscord(message: DiscordMessage): string {
+  return [
+    message.content ?? '',
+    ...message.embeds.map(
+      (e) => `┌ ${e.title}\n${e.description}\n└ ${e.footer?.text ?? ''}`,
+    ),
+  ].join('\n');
 }
 
 /** Discord rate-limits bursts; a short gap keeps a long report in order. */
@@ -83,7 +96,10 @@ async function main() {
       console.log('Test ping sent (ntfy accepted it).');
     }
     if (discordWebhook) {
-      await sendDiscord(discordWebhook, `**${msg.title}**\n${msg.body}`);
+      await sendDiscord(discordWebhook, {
+        content: `**${msg.title}**\n${msg.body}`,
+        embeds: [],
+      });
       console.log('Test ping sent (Discord accepted it).');
     }
     return;
@@ -123,7 +139,9 @@ async function main() {
 
   if (dryRun) {
     console.log('\n--- DRY RUN: Discord report ---\n');
-    discordMessages.forEach((m, i) => console.log(`[message ${i + 1}]\n${m}\n`));
+    discordMessages.forEach((m, i) =>
+      console.log(`[message ${i + 1}: ${m.embeds.length} embed(s)]\n${describeDiscord(m)}\n`),
+    );
     console.log('--- DRY RUN: ntfy pushes ---\n');
     ntfyMessages.forEach((m) => console.log(`[${m.title}]\n${m.body}\n`));
     return;
