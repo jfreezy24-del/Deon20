@@ -40,6 +40,33 @@ export function dcaLines(dca: DcaPlan): string[] {
   return lines;
 }
 
+/**
+ * Webhook URLs from a single environment variable. Several channels means
+ * several webhooks, so the value is read as a list separated by commas,
+ * newlines or spaces. Kept in one secret rather than DISCORD_WEBHOOK_URL_2,
+ * _3, _4 so adding a channel never needs a code change.
+ *
+ * Anything that is not a Discord webhook is dropped with a warning instead of
+ * failing the run: one bad paste should not cost the whole report.
+ */
+export function parseWebhooks(raw: string | undefined): string[] {
+  const candidates = (raw ?? '')
+    .split(/[\s,]+/)
+    .map((u) => u.trim())
+    .filter(Boolean);
+
+  const valid: string[] = [];
+  for (const url of candidates) {
+    if (/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(url)) {
+      if (!valid.includes(url)) valid.push(url);
+    } else {
+      // Never log the value itself: a mistyped webhook is still a credential.
+      console.warn('Ignoring an entry in DISCORD_WEBHOOK_URL that is not a Discord webhook URL.');
+    }
+  }
+  return valid;
+}
+
 /** Discord embed limits: 10 embeds per message, 6000 characters across them. */
 export const MAX_EMBEDS_PER_MESSAGE = 10;
 const MAX_EMBED_CHARS = 5500;

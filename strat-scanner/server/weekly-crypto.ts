@@ -12,7 +12,8 @@
  * Environment:
  *   NTFY_TOPIC            ntfy topic to publish to (without it, ntfy is skipped)
  *   NTFY_SERVER           ntfy server base URL          (default https://ntfy.sh)
- *   DISCORD_WEBHOOK_URL   Discord webhook for the full report (optional)
+ *   DISCORD_WEBHOOK_URL   Discord webhook(s) for the report. Several channels:
+ *                         separate the URLs with commas, spaces or newlines.
  *   ALERT_EMAIL           inbox copy of the digest via ntfy e-mail forwarding
  *   APCA_API_KEY_ID       Alpaca key id     (optional; crypto bars are free)
  *   APCA_API_SECRET_KEY   Alpaca secret     (optional, paired with the above)
@@ -32,6 +33,7 @@ import {
   formatWeeklyDiscord,
   formatWeeklyNtfy,
   formatWriteupDiscord,
+  parseWebhooks,
 } from './weekly-lib';
 import { buildWriteup } from '../src/crypto/writeup';
 import { loadSymbolList } from './watchlist-file';
@@ -75,12 +77,12 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function main() {
   const topic = process.env.NTFY_TOPIC?.trim();
   const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
-  const discordWebhook = process.env.DISCORD_WEBHOOK_URL?.trim() || undefined;
+  const discordWebhooks = parseWebhooks(process.env.DISCORD_WEBHOOK_URL);
   const email = process.env.ALERT_EMAIL?.trim() || undefined;
   const dryRun = isTrue(process.env.DRY_RUN);
 
   if (isTrue(process.env.TEST_PING)) {
-    if (!topic && !discordWebhook) {
+    if (!topic && discordWebhooks.length === 0) {
       throw new Error('TEST_PING set but neither NTFY_TOPIC nor DISCORD_WEBHOOK_URL is set.');
     }
     const msg: PushMessage = {
@@ -93,12 +95,9 @@ async function main() {
       await sendNtfy(server, topic, msg, email);
       console.log('Test ping sent (ntfy accepted it).');
     }
-    if (discordWebhook) {
-      await sendDiscord(discordWebhook, {
-        content: `**${msg.title}**\n${msg.body}`,
-        embeds: [],
-      });
-      console.log('Test ping sent (Discord accepted it).');
+    for (const [i, hook] of discordWebhooks.entries()) {
+      await sendDiscord(hook, { content: `**${msg.title}**\n${msg.body}`, embeds: [] });
+      console.log(`Test ping sent (Discord webhook ${i + 1} accepted it).`);
     }
     return;
   }
@@ -172,7 +171,11 @@ async function main() {
   }
 
   if (!topic) console.log('NTFY_TOPIC not set — ntfy send skipped.');
-  if (!discordWebhook) console.log('DISCORD_WEBHOOK_URL not set — Discord send skipped.');
+  if (discordWebhooks.length === 0) {
+    console.log('DISCORD_WEBHOOK_URL not set — Discord send skipped.');
+  } else {
+    console.log(`Posting to ${discordWebhooks.length} Discord webhook(s).`);
+  }
 
   const sendErrors: string[] = [];
 
@@ -188,16 +191,22 @@ async function main() {
     }
   }
 
-  if (discordWebhook) {
-    for (const [i, content] of discordMessages.entries()) {
+  // Messages go out in order per channel, and one dead webhook never stops
+  // the others: a deleted channel should not silence every other channel.
+  for (const [i, content] of discordMessages.entries()) {
+    for (const [w, hook] of discordWebhooks.entries()) {
       try {
-        await sendDiscord(discordWebhook, content);
-        console.log(`  discord -> message ${i + 1}/${discordMessages.length}`);
+        await sendDiscord(hook, content);
+        console.log(
+          `  discord -> message ${i + 1}/${discordMessages.length} to webhook ${w + 1}/${discordWebhooks.length}`,
+        );
       } catch (e) {
-        sendErrors.push(e instanceof Error ? e.message : String(e));
+        // Identify the webhook by position; the URL itself is a credential.
+        const reason = e instanceof Error ? e.message : String(e);
+        sendErrors.push(`webhook ${w + 1}: ${reason}`);
       }
-      await pause(600);
     }
+    if (discordWebhooks.length > 0) await pause(600);
   }
 
   if (sendErrors.length > 0) {

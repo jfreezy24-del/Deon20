@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   assetField,
+  parseWebhooks,
   chunkEmbeds,
   describeDiscord,
   fmtPrice,
@@ -64,6 +65,50 @@ const asset = (over: Partial<WeeklyAsset> = {}): WeeklyAsset => ({
   dca: plan(),
   structure: structure(),
   ...over,
+});
+
+describe('parseWebhooks', () => {
+  const A = 'https://discord.com/api/webhooks/111/aaa';
+  const B = 'https://discord.com/api/webhooks/222/bbb';
+
+  beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reads one webhook', () => {
+    expect(parseWebhooks(A)).toEqual([A]);
+  });
+
+  it('reads several however they are separated', () => {
+    expect(parseWebhooks(`${A},${B}`)).toEqual([A, B]);
+    expect(parseWebhooks(`${A}\n${B}`)).toEqual([A, B]);
+    expect(parseWebhooks(`  ${A} , ${B}  `)).toEqual([A, B]);
+  });
+
+  it('accepts the other Discord hostnames', () => {
+    const ptb = 'https://ptb.discord.com/api/webhooks/333/ccc';
+    const legacy = 'https://discordapp.com/api/webhooks/444/ddd';
+    expect(parseWebhooks(`${ptb},${legacy}`)).toEqual([ptb, legacy]);
+  });
+
+  it('drops duplicates so a channel is not posted to twice', () => {
+    expect(parseWebhooks(`${A},${A}`)).toEqual([A]);
+  });
+
+  it('ignores anything that is not a Discord webhook, keeping the rest', () => {
+    expect(parseWebhooks(`${A},https://example.com/hook,not-a-url`)).toEqual([A]);
+    expect(console.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('never logs the offending value, which is still a credential', () => {
+    parseWebhooks('https://evil.example.com/api/webhooks/999/secret-token');
+    const logged = vi.mocked(console.warn).mock.calls.flat().join(' ');
+    expect(logged).not.toContain('secret-token');
+  });
+
+  it('is empty when unset', () => {
+    expect(parseWebhooks(undefined)).toEqual([]);
+    expect(parseWebhooks('   ')).toEqual([]);
+  });
 });
 
 describe('fmtPrice', () => {
