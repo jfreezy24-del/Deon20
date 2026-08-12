@@ -7,27 +7,15 @@ import {
   formatWeeklyNtfy,
 } from './weekly-lib';
 import { buildWeeklyReport, WeeklyAsset, weekOf } from '../src/crypto/weeklyReport';
-import { DcaPlan } from '../src/strat/dca';
-import { Signal } from '../src/strat/types';
+import { DcaPlan, DcaRung } from '../src/strat/dca';
 
-const signal = (over: Partial<Signal> = {}): Signal => ({
-  symbol: 'BTC-USD',
-  lastPrice: 118_432,
+const rung = (over: Partial<DcaRung> = {}): DcaRung => ({
+  price: 112_400,
+  discountPct: 5.1,
+  allocationPct: 28,
+  source: 'Prior week low',
   timeframe: 'W',
-  direction: 'bullish',
-  pattern: '2-1-2 Continuation',
-  sequence: '2u-1-?',
-  status: 'POTENTIAL',
-  scenario: 'continuation',
-  compression: true,
-  isReversal: false,
-  confidence: 72,
-  confidenceLabel: 'High',
-  factors: [],
-  explanation: 'x',
-  levels: { entry: 119_100, stop: 112_400, target1: 128_500, target2: 141_000, rr1: 1.4, rr2: 3.3 },
-  continuity: { '4H': 'up', D: 'up', W: 'up', M: 'up' },
-  setupBarTime: 1_700_000_000,
+  rationale: 'weekly turns 2d here',
   ...over,
 });
 
@@ -41,25 +29,15 @@ const plan = (over: Partial<DcaPlan> = {}): DcaPlan => ({
   weeklyTrend: 'up',
   monthlyTrend: 'up',
   rungs: [
-    {
-      price: 112_400,
-      discountPct: 5.1,
-      allocationPct: 28,
-      source: 'Prior week low',
-      timeframe: 'W',
-      rationale: 'weekly turns 2d here',
-    },
-    {
+    rung(),
+    rung({
       price: 104_900,
       discountPct: 11.4,
       allocationPct: 72,
       source: 'Weekly pivot low',
-      timeframe: 'W',
       rationale: 'broadening formation point',
-    },
+    }),
   ],
-  invalidation: 92_300,
-  magnitude: 141_000,
   averageFill: 107_000,
   ...over,
 });
@@ -70,7 +48,6 @@ const asset = (over: Partial<WeeklyAsset> = {}): WeeklyAsset => ({
   lastPrice: 118_432,
   weekChangePct: 3.2,
   continuity: { '4H': 'up', D: 'up', W: 'up', M: 'up' },
-  entries: [signal()],
   dca: plan(),
   ...over,
 });
@@ -85,21 +62,28 @@ describe('fmtPrice', () => {
 });
 
 describe('assetBlock', () => {
-  it('carries the trade plan and the ladder', () => {
+  it('reports the ladder and nothing else', () => {
     const text = assetBlock(asset());
     expect(text).toContain('BTC-USD');
-    expect(text).toContain('Entry 119,100');
-    expect(text).toContain('Stop 112,400');
     expect(text).toContain('DCA ladder — ACCUMULATE');
-    expect(text).toContain('28% @ 112,400');
-    expect(text).toContain('Invalidation 92,300');
-    expect(text).toContain('FTFC 4H▲ D▲ W▲ M▲');
+    expect(text).toContain('28% @ 112,400 (−5.1%) · Prior week low [W]');
+    expect(text).toContain('Avg fill 107,000');
   });
 
-  it('still shows the ladder when nothing triggers an entry', () => {
-    const text = assetBlock(asset({ entries: [] }));
-    expect(text).toContain('the ladder is the plan');
-    expect(text).toContain('DCA ladder');
+  it('carries no entry, invalidation, magnitude or continuity lines', () => {
+    const text = assetBlock(asset());
+    expect(text).not.toMatch(/entry/i);
+    expect(text).not.toMatch(/stop/i);
+    expect(text).not.toMatch(/invalidation/i);
+    expect(text).not.toMatch(/magnitude/i);
+    expect(text).not.toMatch(/\bT1\b|\bT2\b/);
+    expect(text).not.toMatch(/FTFC|Last closed/);
+  });
+
+  it('stays compact enough to fit many assets in one message', () => {
+    // 4 rungs + header + avg fill; the whole universe has to fit in a
+    // handful of Discord messages.
+    expect(assetBlock(asset()).split('\n')).toHaveLength(5);
   });
 
   it('says so when there is no structure left below price', () => {
@@ -125,15 +109,33 @@ describe('chunkBlocks', () => {
   });
 });
 
+describe('buildWeeklyReport', () => {
+  const near = asset({ symbol: 'SOL-USD', dca: plan({ rungs: [rung({ discountPct: 1.8 })] }) });
+  const far = asset({ symbol: 'ADA-USD', dca: plan({ rungs: [rung({ discountPct: 22 })] }) });
+  const none = asset({ symbol: 'TAO-USD', dca: plan({ rungs: [] }) });
+
+  it('orders ladders closest-to-filling first, empty ones last', () => {
+    const report = buildWeeklyReport([far, none, near], []);
+    expect(report.assets.map((a) => a.symbol)).toEqual(['SOL-USD', 'ADA-USD', 'TAO-USD']);
+  });
+
+  it('counts ladders with a rung within 5% of spot', () => {
+    const report = buildWeeklyReport([near, far, none], []);
+    expect(report.breadth.nearFill).toBe(1);
+    expect(report.breadth.scanned).toBe(3);
+  });
+});
+
 describe('formatWeeklyDiscord', () => {
   const report = buildWeeklyReport(
-    [asset(), asset({ symbol: 'SOL-USD', name: 'Solana', entries: [] })],
+    [asset(), asset({ symbol: 'SOL-USD', name: 'Solana' })],
     [{ symbol: 'FAKE-USD', message: 'no data returned' }],
   );
 
   it('opens with the header and stays under the Discord limit', () => {
     const messages = formatWeeklyDiscord(report);
     expect(messages[0]).toContain('Crypto Weekly');
+    expect(messages[0]).toContain('2 ladders');
     for (const m of messages) expect(m.length).toBeLessThanOrEqual(2000);
   });
 
@@ -151,18 +153,21 @@ describe('formatWeeklyNtfy', () => {
     [],
   );
 
-  it('leads with a digest and then one push per featured asset', () => {
+  it('leads with a digest and then one ladder push per featured asset', () => {
     const messages = formatWeeklyNtfy(report, 2);
     expect(messages).toHaveLength(3);
     expect(messages[0].title).toContain('Crypto Weekly');
-    expect(messages[0].body).toContain('3 assets scanned');
+    expect(messages[0].body).toContain('3 ladders');
+    expect(messages[0].body).toContain('first rung 28% @ 112,400');
+    expect(messages[1].title).toContain('ladder — ACCUMULATE');
     expect(messages[1].body).toContain('DCA ladder');
   });
 
-  it('raises priority only for high-confidence setups', () => {
-    const low = buildWeeklyReport([asset({ entries: [signal({ confidence: 52 })] })], []);
-    expect(formatWeeklyNtfy(low)[1].priority).toBe('default');
-    expect(formatWeeklyNtfy(report)[1].priority).toBe('high');
+  it('raises priority only when a rung is within reach of spot', () => {
+    const far = buildWeeklyReport([asset({ dca: plan({ rungs: [rung({ discountPct: 18 })] }) })], []);
+    const near = buildWeeklyReport([asset({ dca: plan({ rungs: [rung({ discountPct: 2.4 })] }) })], []);
+    expect(formatWeeklyNtfy(far)[1].priority).toBe('default');
+    expect(formatWeeklyNtfy(near)[1].priority).toBe('high');
   });
 });
 

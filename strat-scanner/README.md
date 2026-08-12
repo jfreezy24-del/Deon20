@@ -103,7 +103,7 @@ src/strat/universe.ts       — Algo universe (Mag 7 + liquid ETFs) + sector map
 src/strat/algoAlerts.ts     — confirmed-trigger selection + related plays
 src/strat/dca.ts            — DCA ladders from weekly/monthly Strat structure
 src/crypto/universe.ts      — crypto universe + per-tier ladder profiles
-src/crypto/weeklyReport.ts  — weekly crypto report (entries + ladders)
+src/crypto/weeklyReport.ts  — weekly crypto report (DCA ladders)
 src/data/yahoo.ts           — Yahoo Finance chart API client
 src/data/aggregate.ts       — 1H → 4H aggregation
 src/scanner.ts              — orchestration across symbols & timeframes
@@ -178,21 +178,19 @@ Tuning (optional repo *variables*): `ALGO_MIN_CONFIDENCE` (default `60`) and
 `server/algo-watchlist.json` with a JSON array of symbols. Run it anywhere
 with Node 18+ via `npm run algo-alert`.
 
-## 🪙 Crypto Weekly (entries + DCA ladders)
+## 🪙 Crypto Weekly (DCA ladders)
 
 A third workflow (`.github/workflows/crypto-weekly.yml`) runs **once a week**,
 Mondays at 01:00 UTC — an hour after the weekly crypto candle closes, so the
 week that just ended is a completed bar. It scans the crypto universe and
 publishes one report to **ntfy** (push, phone-readable) and **Discord** (the
-full breakdown), covering two different things per asset:
+full breakdown).
 
-**Entry points** — Strat setups on Daily/Weekly/Monthly structure, each with
-the trigger to enter on, the invalidation, and both magnitude targets with
-R:R. These are stop-entries: nothing is in force until the "?" bar breaks the
-trigger.
-
-**DCA points** — a standing ladder of resting bids underneath price, built
-from higher-timeframe structure rather than round numbers:
+The report is **accumulation only** — no trade triggers. Entries already
+arrive in real time from the two alerters above; what a weekly cadence is good
+for is the slower question of where the resting bids go and how much size sits
+on each one. Each asset gets a standing ladder built from higher-timeframe
+structure rather than round numbers:
 
 | Rung source | Why it is a level |
 |---|---|
@@ -205,12 +203,13 @@ Each rung carries a share of the planned position, skewed by tier: majors
 (BTC/ETH) front-load the shallow rungs, high-beta names back-load the deep
 ones, since they routinely trade through the first pivot on the way to the
 next. Rungs are spaced apart, never more than 35–65% below price (deeper
-"structure" is a wish, not a bid), and the report states the **average fill**
-if the whole ladder fills plus the **invalidation** — the monthly pivot below
-the last rung, where the ladder is simply wrong and should stop.
+"structure" is a wish, not a bid), and each ladder states the **average fill**
+if the whole thing fills.
 
-Stance per asset comes from the weekly/monthly candle direction and whether
-the last monthly pivot low is intact: `ACCUMULATE` (higher-timeframe
+Assets are ordered **closest-to-filling first**, so the ladders that could
+actually take size this week lead the report and the ones needing a deep flush
+trail it. Stance per asset comes from the weekly/monthly candle direction and
+whether the last monthly pivot low is intact: `ACCUMULATE` (higher-timeframe
 continuity up), `NEUTRAL` (timeframes disagree), or `DEFENSIVE` (monthly
 sequence broken — deep rungs only).
 
@@ -223,10 +222,7 @@ Tuning (optional repo *variables*):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WEEKLY_MIN_CONFIDENCE` | `50` | Confidence bar for an entry idea |
-| `WEEKLY_TIMEFRAMES` | `D,W,M` | Timeframes eligible for entries |
-| `WEEKLY_MAX_ENTRIES` | `2` | Entry ideas listed per asset |
-| `WEEKLY_NTFY_ASSETS` | `4` | Per-asset pushes after the digest |
+| `WEEKLY_NTFY_ASSETS` | `4` | Per-asset ladder pushes after the digest |
 
 The universe lives in `server/crypto-watchlist.json` — edit that file to
 change which coins are covered. Run it anywhere with Node 18+:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDcaPlan, findPivotHighs, findPivotLows } from '../strat/dca';
+import { buildDcaPlan, findPivotLows } from '../strat/dca';
 import { Candle } from '../strat/types';
 
 const WEEK = 7 * 86400;
@@ -34,11 +34,6 @@ describe('pivot detection', () => {
     expect(lows).toContain(90);
     expect(lows).toContain(98);
     expect(lows).not.toContain(140); // last bars can never be confirmed pivots
-  });
-
-  it('finds swing highs as the mirror image', () => {
-    const highs = findPivotHighs(series([100, 110, 130, 108, 99, 104, 96])).map((c) => c.high);
-    expect(highs).toEqual([140]); // idx 2: low 130 + 10
   });
 
   it('returns nothing when there are not enough bars to confirm a pivot', () => {
@@ -92,17 +87,11 @@ describe('buildDcaPlan', () => {
     }
   });
 
-  it('sets invalidation below the deepest rung', () => {
-    const plan = buildDcaPlan(weeklyInput(150));
-    expect(plan.invalidation).toBeLessThan(plan.rungs[plan.rungs.length - 1].price);
-  });
-
-  it('reports the average fill and the nearest magnitude above price', () => {
+  it('reports the average fill between the shallowest and deepest rung', () => {
     const plan = buildDcaPlan(weeklyInput(150));
     const deepest = plan.rungs[plan.rungs.length - 1].price;
     expect(plan.averageFill).toBeGreaterThan(deepest);
-    expect(plan.averageFill).toBeLessThan(150);
-    expect(plan.magnitude === null || plan.magnitude > 150).toBe(true);
+    expect(plan.averageFill).toBeLessThan(plan.rungs[0].price);
   });
 
   it('turns defensive once price loses the last monthly pivot low', () => {
@@ -143,7 +132,6 @@ describe('buildDcaPlan', () => {
       weekly: { completed: [], forming: null },
       monthly: { completed: [], forming: null },
     });
-    expect(plan.invalidation).toBeLessThan(10);
     expect(plan.weeklyType).toBeNull();
     expect(plan.rungs.every((r) => r.price < 10)).toBe(true);
   });

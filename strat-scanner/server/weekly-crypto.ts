@@ -3,10 +3,9 @@
  * delivered to ntfy (phone push) and Discord.
  *
  * Unlike the intraday alerters in this folder, this run is stateless and
- * unconditional: it always publishes. Each asset gets the Strat setups worth
- * an entry in the week ahead (trigger, invalidation, magnitude) plus the
- * standing DCA ladder underneath price, built from weekly and monthly
- * structure.
+ * unconditional: it always publishes. Each asset gets the standing DCA ladder
+ * underneath price, built from weekly and monthly Strat structure. Trade
+ * triggers are the intraday alerters' job — this report is accumulation only.
  *
  * Usage:  npx tsx server/weekly-crypto.ts
  *
@@ -15,9 +14,6 @@
  *   NTFY_SERVER           ntfy server base URL          (default https://ntfy.sh)
  *   DISCORD_WEBHOOK_URL   Discord webhook for the full report (optional)
  *   ALERT_EMAIL           inbox copy of the digest via ntfy e-mail forwarding
- *   WEEKLY_MIN_CONFIDENCE min confidence for an entry idea         (default 50)
- *   WEEKLY_TIMEFRAMES     comma list of entry timeframes        (default D,W,M)
- *   WEEKLY_MAX_ENTRIES    entry ideas listed per asset               (default 2)
  *   WEEKLY_NTFY_ASSETS    per-asset pushes after the digest           (default 4)
  *   DRY_RUN               'true' to print the report and send nothing
  *   TEST_PING             'true' to send one delivery test and exit
@@ -25,12 +21,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CRYPTO_UNIVERSE } from '../src/crypto/universe';
-import {
-  DEFAULT_WEEKLY_OPTIONS,
-  scanCryptoWeekly,
-  WeeklyOptions,
-} from '../src/crypto/weeklyReport';
-import { Timeframe, TIMEFRAMES } from '../src/strat/types';
+import { DEFAULT_WEEKLY_OPTIONS, scanCryptoWeekly } from '../src/crypto/weeklyReport';
 import { buildNtfyPayload, PushMessage } from './lib';
 import { formatWeeklyDiscord, formatWeeklyNtfy } from './weekly-lib';
 
@@ -42,15 +33,6 @@ function loadUniverse(): string[] {
     if (Array.isArray(list) && list.length > 0) return list.map((s) => String(s).toUpperCase());
   }
   return CRYPTO_UNIVERSE;
-}
-
-function parseTimeframes(raw: string | undefined): Timeframe[] {
-  if (!raw?.trim()) return DEFAULT_WEEKLY_OPTIONS.entryTimeframes;
-  const tfs = raw
-    .split(',')
-    .map((t) => t.trim().toUpperCase())
-    .filter((t): t is Timeframe => (TIMEFRAMES as string[]).includes(t));
-  return tfs.length > 0 ? tfs : DEFAULT_WEEKLY_OPTIONS.entryTimeframes;
 }
 
 const num = (raw: string | undefined, fallback: number): number => {
@@ -110,23 +92,10 @@ async function main() {
     return;
   }
 
-  const opts: WeeklyOptions = {
-    entryTimeframes: parseTimeframes(process.env.WEEKLY_TIMEFRAMES),
-    minEntryConfidence: num(
-      process.env.WEEKLY_MIN_CONFIDENCE,
-      DEFAULT_WEEKLY_OPTIONS.minEntryConfidence,
-    ),
-    maxEntriesPerAsset: num(
-      process.env.WEEKLY_MAX_ENTRIES,
-      DEFAULT_WEEKLY_OPTIONS.maxEntriesPerAsset,
-    ),
-    maxHighlights: DEFAULT_WEEKLY_OPTIONS.maxHighlights,
-  };
-
   const universe = loadUniverse();
   console.log(`Scanning ${universe.length} crypto symbols: ${universe.join(', ')}`);
 
-  const report = await scanCryptoWeekly(universe, opts, (done, total) =>
+  const report = await scanCryptoWeekly(universe, (done, total) =>
     console.log(`  progress ${done}/${total}`),
   );
 
@@ -135,12 +104,15 @@ async function main() {
     throw new Error('Every symbol failed to scan — data provider unreachable?');
   }
   console.log(
-    `Report ready: ${report.assets.length} assets, ${report.breadth.entries} entry setups, ` +
+    `Report ready: ${report.assets.length} ladders, ${report.breadth.nearFill} within 5% of spot, ` +
       `${report.errors.length} errors.`,
   );
 
   const discordMessages = formatWeeklyDiscord(report);
-  const ntfyMessages = formatWeeklyNtfy(report, num(process.env.WEEKLY_NTFY_ASSETS, 4));
+  const ntfyMessages = formatWeeklyNtfy(
+    report,
+    num(process.env.WEEKLY_NTFY_ASSETS, DEFAULT_WEEKLY_OPTIONS.maxFeatured),
+  );
 
   if (dryRun) {
     console.log('\n--- DRY RUN: Discord report ---\n');

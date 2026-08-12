@@ -1,7 +1,6 @@
 import { continuityStrip } from '../src/strat/continuity';
 import { DcaPlan } from '../src/strat/dca';
-import { Signal } from '../src/strat/types';
-import { WeeklyAsset, WeeklyReport } from '../src/crypto/weeklyReport';
+import { firstRungDistance, WeeklyAsset, WeeklyReport } from '../src/crypto/weeklyReport';
 import { PushMessage } from './lib';
 
 /** Discord rejects messages over 2000 characters; leave room for the fences. */
@@ -19,22 +18,11 @@ export function fmtPrice(v: number): string {
 
 const fmtPct = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 
-const arrow = (s: Signal) => (s.direction === 'bullish' ? '▲' : '▼');
-
 const STANCE_LABEL: Record<DcaPlan['stance'], string> = {
   accumulate: 'ACCUMULATE',
   neutral: 'NEUTRAL',
   defensive: 'DEFENSIVE',
 };
-
-/** One-line trade plan for a setup: what triggers it, where it dies, where it goes. */
-export function entryLine(s: Signal): string {
-  return (
-    `${arrow(s)} ${s.timeframe} ${s.pattern} (${s.sequence}) · ${s.status} · ${s.confidence}% ${s.confidenceLabel}\n` +
-    `   Entry ${fmtPrice(s.levels.entry)} · Stop ${fmtPrice(s.levels.stop)} · ` +
-    `T1 ${fmtPrice(s.levels.target1)} (${s.levels.rr1}R) · T2 ${fmtPrice(s.levels.target2)} (${s.levels.rr2}R)`
-  );
-}
 
 export function dcaLines(dca: DcaPlan): string[] {
   const lines = [`DCA ladder — ${STANCE_LABEL[dca.stance]}`];
@@ -47,52 +35,30 @@ export function dcaLines(dca: DcaPlan): string[] {
       `   ${r.allocationPct}% @ ${fmtPrice(r.price)} (−${r.discountPct.toFixed(1)}%) · ${r.source} [${r.timeframe}]`,
     );
   }
-  const tail = [`Avg fill ${fmtPrice(dca.averageFill ?? 0)}`, `Invalidation ${fmtPrice(dca.invalidation)}`];
-  if (dca.magnitude !== null) tail.push(`Magnitude ${fmtPrice(dca.magnitude)}`);
-  lines.push(`   ${tail.join(' · ')}`);
+  lines.push(`   Avg fill ${fmtPrice(dca.averageFill ?? 0)}`);
   return lines;
 }
 
-/** Full per-asset block: price, continuity, entries, ladder. */
+/**
+ * Per-asset block: price, then the ladder. No FTFC or last-closed line — the
+ * report is dense by design, and the header carries the continuity breadth.
+ */
 export function assetBlock(a: WeeklyAsset): string {
-  const head = `**${a.symbol}**${a.name ? ` — ${a.name}` : ''} · $${fmtPrice(a.lastPrice)}` +
+  const head =
+    `**${a.symbol}**${a.name ? ` — ${a.name}` : ''} · $${fmtPrice(a.lastPrice)}` +
     (a.weekChangePct !== null ? ` (week ${fmtPct(a.weekChangePct)})` : '');
-  const structure = [
-    `FTFC ${continuityStrip(a.continuity)}`,
-    `Last closed: M ${a.dca.monthlyType ?? '—'} · W ${a.dca.weeklyType ?? '—'}`,
-  ].join(' · ');
 
-  const lines = [head, structure];
-  if (a.entries.length > 0) {
-    lines.push('Entries');
-    for (const s of a.entries) lines.push(entryLine(s));
-  } else {
-    lines.push('Entries: none above the confidence bar — the ladder is the plan this week.');
-  }
-  lines.push(...dcaLines(a.dca));
-  return lines.join('\n');
+  return [head, ...dcaLines(a.dca)].join('\n');
 }
 
 function headerBlock(r: WeeklyReport): string {
   const b = r.breadth;
   return [
     `**🪙 Crypto Weekly — week of ${r.weekOf}**`,
-    `${b.scanned} assets · ${b.entries} entry setups · FTFC up ${b.fullContinuityUp} / down ${b.fullContinuityDown}`,
-    `Ladders: accumulate ${b.accumulate} · defensive ${b.defensive}`,
-    'Entries are stop-entries on a break of the trigger; ladder rungs are resting bids into higher-timeframe structure. Not financial advice.',
+    `${b.scanned} ladders · ${b.nearFill} with a rung within 5% of spot · FTFC up ${b.fullContinuityUp} / down ${b.fullContinuityDown}`,
+    `Stance: accumulate ${b.accumulate} · defensive ${b.defensive}`,
+    'Rungs are resting bids into weekly and monthly Strat structure, ordered closest-to-filling first. Not financial advice.',
   ].join('\n');
-}
-
-function highlightsBlock(r: WeeklyReport): string | null {
-  if (r.highlights.length === 0) return null;
-  const lines = ['**Top setups**'];
-  r.highlights.forEach((s, i) => {
-    lines.push(
-      `${i + 1}. ${s.symbol} ${arrow(s)} ${s.pattern} (${s.timeframe}) ${s.confidence}% — ` +
-        `entry ${fmtPrice(s.levels.entry)}, stop ${fmtPrice(s.levels.stop)}, T1 ${fmtPrice(s.levels.target1)} (${s.levels.rr1}R)`,
-    );
-  });
-  return lines.join('\n');
 }
 
 /**
@@ -143,8 +109,6 @@ function splitLines(block: string, limit: number): string[] {
 /** The whole report as Discord-ready messages, in order. */
 export function formatWeeklyDiscord(report: WeeklyReport, limit = DISCORD_LIMIT): string[] {
   const blocks: string[] = [headerBlock(report)];
-  const highlights = highlightsBlock(report);
-  if (highlights) blocks.push(highlights);
   for (const a of report.assets) blocks.push(assetBlock(a));
   if (report.errors.length > 0) {
     blocks.push(
@@ -155,18 +119,23 @@ export function formatWeeklyDiscord(report: WeeklyReport, limit = DISCORD_LIMIT)
 }
 
 /**
- * ntfy messages: one digest, then one push per highlighted asset so the trade
- * plan is readable on a lock screen without opening anything.
+ * ntfy messages: one digest, then one push per asset whose ladder is closest
+ * to filling, so the bids that could actually get hit this week are readable
+ * on a lock screen without opening anything.
  */
 export function formatWeeklyNtfy(report: WeeklyReport, maxAssets = 4): PushMessage[] {
   const b = report.breadth;
+  const featured = report.assets.slice(0, maxAssets);
+
   const digestBody = [
-    `${b.scanned} assets scanned · ${b.entries} setups · FTFC up ${b.fullContinuityUp} / down ${b.fullContinuityDown}`,
-    `Ladders: accumulate ${b.accumulate} · defensive ${b.defensive}`,
-    ...report.highlights.map(
-      (s) =>
-        `${s.symbol} ${arrow(s)} ${s.pattern} (${s.timeframe}) ${s.confidence}% — entry ${fmtPrice(s.levels.entry)}, stop ${fmtPrice(s.levels.stop)}`,
-    ),
+    `${b.scanned} ladders · accumulate ${b.accumulate} · defensive ${b.defensive}`,
+    `FTFC up ${b.fullContinuityUp} / down ${b.fullContinuityDown}`,
+    ...featured.map((a) => {
+      const top = a.dca.rungs[0];
+      return top
+        ? `${a.symbol} — first rung ${top.allocationPct}% @ ${fmtPrice(top.price)} (−${top.discountPct.toFixed(1)}%)`
+        : `${a.symbol} — no structure below price`;
+    }),
   ].join('\n');
 
   const messages: PushMessage[] = [
@@ -178,18 +147,13 @@ export function formatWeeklyNtfy(report: WeeklyReport, maxAssets = 4): PushMessa
     },
   ];
 
-  const featured = report.assets.filter((a) => a.entries.length > 0).slice(0, maxAssets);
   for (const a of featured) {
-    const top = a.entries[0];
     messages.push({
-      title: `${a.symbol} ${arrow(top)} ${top.pattern} (${top.timeframe}) — ${top.confidence}%`,
-      body: [
-        `Entry ${fmtPrice(top.levels.entry)} · Stop ${fmtPrice(top.levels.stop)} · T1 ${fmtPrice(top.levels.target1)} (${top.levels.rr1}R) · T2 ${fmtPrice(top.levels.target2)} (${top.levels.rr2}R)`,
-        `FTFC ${continuityStrip(a.continuity)}`,
-        ...dcaLines(a.dca),
-      ].join('\n'),
-      priority: top.confidence >= 65 ? 'high' : 'default',
-      tags: top.direction === 'bullish' ? 'chart_with_upwards_trend' : 'chart_with_downwards_trend',
+      title: `${a.symbol} ladder — ${STANCE_LABEL[a.dca.stance]} · $${fmtPrice(a.lastPrice)}`,
+      body: [`FTFC ${continuityStrip(a.continuity)}`, ...dcaLines(a.dca)].join('\n'),
+      // A rung within touching distance is the one worth surfacing loudly.
+      priority: firstRungDistance(a) <= 5 ? 'high' : 'default',
+      tags: 'coin',
     });
   }
   return messages;

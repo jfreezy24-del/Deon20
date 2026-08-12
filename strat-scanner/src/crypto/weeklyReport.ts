@@ -1,36 +1,26 @@
 import { buildContinuity } from '../strat/continuity';
 import { buildDcaPlan, DcaPlan } from '../strat/dca';
-import { Candle, ContinuityMap, Signal, Timeframe, TIMEFRAMES } from '../strat/types';
+import { Candle, ContinuityMap, Timeframe, TIMEFRAMES } from '../strat/types';
 import { fetchTimeframe, TimeframeSeries } from '../data/yahoo';
-import { signalsForSymbol } from '../scanner';
 import { cryptoName, ladderProfileFor } from './universe';
 
 /**
- * The weekly crypto report: for every asset in the universe, the Strat setups
- * worth an entry this week plus the standing DCA ladder underneath price.
+ * The weekly crypto report: the standing DCA ladder underneath every asset in
+ * the universe, built from weekly and monthly Strat structure.
  *
- * Entries answer "where does a trade start and where is it wrong"; the ladder
- * answers "where do I add if it never triggers and just bleeds lower". The two
- * are deliberately separate — one is a stop-entry with an invalidation, the
- * other is planned accumulation into higher-timeframe structure.
+ * Deliberately accumulation only. Trade triggers already arrive in real time
+ * from the intraday alerters in this repo; repeating them once a week adds
+ * nothing. What a weekly cadence is actually good for is the slower question —
+ * where the resting bids go, and how much size sits on each one.
  */
 
 export interface WeeklyOptions {
-  /** Timeframes eligible to produce entry ideas (4H is noise on a weekly cadence) */
-  entryTimeframes: Timeframe[];
-  /** Minimum confidence for a setup to be listed as an entry */
-  minEntryConfidence: number;
-  /** Cap on entry ideas listed per asset */
-  maxEntriesPerAsset: number;
-  /** Cap on assets called out in the headline section */
-  maxHighlights: number;
+  /** Cap on assets given their own push after the digest */
+  maxFeatured: number;
 }
 
 export const DEFAULT_WEEKLY_OPTIONS: WeeklyOptions = {
-  entryTimeframes: ['D', 'W', 'M'],
-  minEntryConfidence: 50,
-  maxEntriesPerAsset: 2,
-  maxHighlights: 5,
+  maxFeatured: 4,
 };
 
 export interface WeeklyAsset {
@@ -40,8 +30,6 @@ export interface WeeklyAsset {
   /** Move of the current (or last completed) weekly candle, open to close */
   weekChangePct: number | null;
   continuity: ContinuityMap;
-  /** Best pending setups for the week ahead, highest confidence first */
-  entries: Signal[];
   dca: DcaPlan;
 }
 
@@ -63,14 +51,17 @@ export interface WeeklyReport {
     fullContinuityDown: number;
     accumulate: number;
     defensive: number;
-    entries: number;
+    /** Ladders whose first rung sits within 5% of spot */
+    nearFill: number;
   };
-  /** Highest-confidence setups across the whole universe */
-  highlights: Signal[];
 }
 
 const changePct = (c: Candle | null | undefined): number | null =>
   c && c.open > 0 ? Number((((c.close - c.open) / c.open) * 100).toFixed(2)) : null;
+
+/** How far the shallowest rung is from spot; Infinity when there is no ladder. */
+export const firstRungDistance = (a: WeeklyAsset): number =>
+  a.dca.rungs[0]?.discountPct ?? Infinity;
 
 /**
  * Monday (UTC) of the week the report plans for. The scheduled run happens
@@ -85,11 +76,7 @@ export function weekOf(at: number): string {
   return monday.toISOString().slice(0, 10);
 }
 
-export function buildWeeklyAsset(
-  symbol: string,
-  series: TimeframeSeries[],
-  opts: WeeklyOptions = DEFAULT_WEEKLY_OPTIONS,
-): WeeklyAsset {
+export function buildWeeklyAsset(symbol: string, series: TimeframeSeries[]): WeeklyAsset {
   const byTf = new Map(series.map((s) => [s.timeframe, s]));
   const weekly = byTf.get('W');
   const monthly = byTf.get('M');
@@ -102,12 +89,6 @@ export function buildWeeklyAsset(
 
   const lastPrice =
     byTf.get('D')?.lastPrice ?? series.find((s) => s.lastPrice > 0)?.lastPrice ?? 0;
-
-  const entries = signalsForSymbol(symbol, series)
-    .filter((s) => opts.entryTimeframes.includes(s.timeframe))
-    .filter((s) => s.confidence >= opts.minEntryConfidence)
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, opts.maxEntriesPerAsset);
 
   const dca = buildDcaPlan({
     symbol,
@@ -123,7 +104,6 @@ export function buildWeeklyAsset(
     lastPrice,
     weekChangePct: changePct(weekly?.forming ?? weekly?.completed[weekly.completed.length - 1]),
     continuity: buildContinuity(current),
-    entries,
     dca,
   };
 }
@@ -131,21 +111,14 @@ export function buildWeeklyAsset(
 export function buildWeeklyReport(
   assets: WeeklyAsset[],
   errors: WeeklyError[],
-  opts: WeeklyOptions = DEFAULT_WEEKLY_OPTIONS,
   at: number = Date.now(),
 ): WeeklyReport {
   const allUp = (a: WeeklyAsset) => TIMEFRAMES.every((tf) => a.continuity[tf] === 'up');
   const allDown = (a: WeeklyAsset) => TIMEFRAMES.every((tf) => a.continuity[tf] === 'down');
 
-  const ranked = [...assets].sort((a, b) => {
-    const top = (x: WeeklyAsset) => x.entries[0]?.confidence ?? 0;
-    return top(b) - top(a);
-  });
-
-  const highlights = assets
-    .flatMap((a) => a.entries)
-    .sort((x, y) => y.confidence - x.confidence)
-    .slice(0, opts.maxHighlights);
+  // Closest-to-filling first: the ladders that could actually take size this
+  // week lead the report, the ones needing a deep flush trail it.
+  const ranked = [...assets].sort((a, b) => firstRungDistance(a) - firstRungDistance(b));
 
   return {
     generatedAt: at,
@@ -158,16 +131,14 @@ export function buildWeeklyReport(
       fullContinuityDown: assets.filter(allDown).length,
       accumulate: assets.filter((a) => a.dca.stance === 'accumulate').length,
       defensive: assets.filter((a) => a.dca.stance === 'defensive').length,
-      entries: assets.reduce((n, a) => n + a.entries.length, 0),
+      nearFill: assets.filter((a) => firstRungDistance(a) <= 5).length,
     },
-    highlights,
   };
 }
 
 /** Fetch every timeframe for every symbol and assemble the weekly report. */
 export async function scanCryptoWeekly(
   symbols: string[],
-  opts: WeeklyOptions = DEFAULT_WEEKLY_OPTIONS,
   onProgress?: (done: number, total: number) => void,
 ): Promise<WeeklyReport> {
   const assets: WeeklyAsset[] = [];
@@ -182,7 +153,7 @@ export async function scanCryptoWeekly(
       if (!symbol) return;
       try {
         const series = await Promise.all(TIMEFRAMES.map((tf) => fetchTimeframe(symbol, tf)));
-        assets.push(buildWeeklyAsset(symbol, series, opts));
+        assets.push(buildWeeklyAsset(symbol, series));
       } catch (e) {
         errors.push({ symbol, message: e instanceof Error ? e.message : String(e) });
       }
@@ -192,5 +163,5 @@ export async function scanCryptoWeekly(
   }
 
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, symbols.length) }, worker));
-  return buildWeeklyReport(assets, errors, opts);
+  return buildWeeklyReport(assets, errors);
 }
