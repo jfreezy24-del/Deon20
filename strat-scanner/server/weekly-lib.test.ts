@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  assetEmbed,
+  assetField,
   chunkEmbeds,
   fmtPrice,
   formatWeeklyDiscord,
   formatWeeklyNtfy,
   ladderTable,
   MAX_EMBEDS_PER_MESSAGE,
+  stanceEmbeds,
 } from './weekly-lib';
 import { buildWeeklyReport, WeeklyAsset, weekOf } from '../src/crypto/weeklyReport';
 import { DcaPlan, DcaRung } from '../src/strat/dca';
@@ -85,51 +86,77 @@ describe('ladderTable', () => {
   });
 });
 
-describe('assetEmbed', () => {
-  it('colours the stripe by stance and marks it with a dot', () => {
-    expect(assetEmbed(asset()).color).toBe(0x57f287);
-    expect(assetEmbed(asset()).title).toContain('🟢');
-
-    const defensive = assetEmbed(asset({ dca: plan({ stance: 'defensive' }) }));
-    expect(defensive.color).toBe(0xed4245);
-    expect(defensive.title).toContain('🔴');
-
-    const neutral = assetEmbed(asset({ dca: plan({ stance: 'neutral' }) }));
-    expect(neutral.color).toBe(0xfee75c);
-    expect(neutral.title).toContain('🟡');
+describe('assetField', () => {
+  it('heads with symbol, name, price and the weekly move', () => {
+    expect(assetField(asset()).name).toBe('BTC-USD · Bitcoin · $118,432 · ▲ 3.2%');
+    expect(assetField(asset({ weekChangePct: -6.9 })).name).toContain('▼ 6.9%');
   });
 
-  it('carries price, weekly move and the ladder in a code block', () => {
-    const embed = assetEmbed(asset());
-    expect(embed.title).toContain('BTC-USD · Bitcoin');
-    expect(embed.description).toContain('**$118,432**');
-    expect(embed.description).toContain('▲ 3.2% this week');
-    expect(embed.description).toMatch(/```[\s\S]*112,400[\s\S]*```/);
-    expect(embed.footer?.text).toBe('avg fill 107,000');
+  it('carries the ladder as a code block', () => {
+    const value = assetField(asset()).value;
+    expect(value.startsWith('```')).toBe(true);
+    expect(value).toContain('112,400');
+    expect(value).toContain('avg  107,000');
+  });
+});
+
+describe('stanceEmbeds', () => {
+  const green = asset({ symbol: 'BTC-USD' });
+  const amber = asset({ symbol: 'SOL-USD', dca: plan({ stance: 'neutral' }) });
+  const red = asset({ symbol: 'TAO-USD', dca: plan({ stance: 'defensive' }) });
+
+  it('produces one card per stance, best first', () => {
+    const embeds = stanceEmbeds([red, amber, green]);
+    expect(embeds.map((e) => e.title)).toEqual(['🟢 Accumulate', '🟡 Neutral', '🔴 Defensive']);
+    expect(embeds.map((e) => e.color)).toEqual([0x57f287, 0xfee75c, 0xed4245]);
   });
 
-  it('marks a weekly loss with a down arrow', () => {
-    expect(assetEmbed(asset({ weekChangePct: -6.9 })).description).toContain('▼ 6.9% this week');
+  it('gathers every asset of a stance into that one card', () => {
+    const embeds = stanceEmbeds([green, amber, asset({ symbol: 'ETH-USD' }), red]);
+    expect(embeds).toHaveLength(3);
+    expect(embeds[0].fields?.map((f) => f.name.split(' ·')[0])).toEqual(['BTC-USD', 'ETH-USD']);
+    expect(embeds[1].fields).toHaveLength(1);
   });
 
-  it('omits the footer when there is no ladder to average', () => {
-    expect(assetEmbed(asset({ dca: plan({ rungs: [], averageFill: null }) })).footer).toBeUndefined();
+  it('skips a stance nothing is in', () => {
+    expect(stanceEmbeds([green, amber]).map((e) => e.title)).toEqual([
+      '🟢 Accumulate',
+      '🟡 Neutral',
+    ]);
+    expect(stanceEmbeds([green])).toHaveLength(1);
+  });
+
+  it('continues into another card of the same colour past the field cap', () => {
+    const many = Array.from({ length: 27 }, (_, i) => asset({ symbol: `SYM${i}-USD` }));
+    const embeds = stanceEmbeds(many);
+    expect(embeds).toHaveLength(2);
+    expect(embeds.every((e) => e.title === '🟢 Accumulate')).toBe(true);
+    expect(embeds[0].fields).toHaveLength(25);
+    expect(embeds[1].fields).toHaveLength(2);
   });
 });
 
 describe('chunkEmbeds', () => {
+  const embed = (over = {}) => ({ title: '🟢 Accumulate', color: 0x57f287, fields: [], ...over });
+
   it('never exceeds ten embeds per message', () => {
-    const groups = chunkEmbeds(Array.from({ length: 23 }, () => assetEmbed(asset())));
+    const groups = chunkEmbeds(Array.from({ length: 23 }, () => embed()));
     expect(groups).toHaveLength(3);
     for (const g of groups) expect(g.length).toBeLessThanOrEqual(MAX_EMBEDS_PER_MESSAGE);
     expect(groups.flat()).toHaveLength(23);
   });
 
   it('splits early when the embeds are character-heavy', () => {
-    const fat = assetEmbed(asset());
-    fat.description = 'x'.repeat(2000);
+    const fat = embed({ description: 'x'.repeat(2000) });
     const groups = chunkEmbeds([fat, { ...fat }, { ...fat }, { ...fat }]);
     expect(groups.length).toBeGreaterThan(1);
+  });
+
+  it('counts field text toward the character budget', () => {
+    const heavy = embed({
+      fields: Array.from({ length: 20 }, () => ({ name: 'x'.repeat(60), value: 'y'.repeat(200) })),
+    });
+    expect(chunkEmbeds([heavy, { ...heavy }, { ...heavy }]).length).toBeGreaterThan(1);
   });
 });
 
@@ -157,14 +184,29 @@ describe('formatWeeklyDiscord', () => {
     Date.UTC(2026, 7, 12),
   );
 
-  it('leads with a header and one embed per asset', () => {
+  it('leads with a header and groups every asset into stance cards', () => {
     const messages = formatWeeklyDiscord(report);
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toContain('## 🪙 Crypto Weekly — week of 2026-08-10');
-    expect(messages[0].embeds.map((e) => e.title.replace(/^\S+ /, ''))).toEqual([
-      'BTC-USD · Bitcoin',
-      'SOL-USD · Solana',
-    ]);
+    expect(messages[0].embeds).toHaveLength(1); // both assets accumulate
+    expect(messages[0].embeds[0].title).toBe('🟢 Accumulate');
+    expect(messages[0].embeds[0].fields).toHaveLength(2);
+  });
+
+  it('never sends more than one card per stance for a normal universe', () => {
+    const mixed = buildWeeklyReport(
+      [
+        asset({ symbol: 'BTC-USD' }),
+        asset({ symbol: 'SOL-USD', dca: plan({ stance: 'neutral' }) }),
+        asset({ symbol: 'ADA-USD', dca: plan({ stance: 'neutral' }) }),
+        asset({ symbol: 'TAO-USD', dca: plan({ stance: 'defensive' }) }),
+      ],
+      [],
+      Date.UTC(2026, 7, 12),
+    );
+    const messages = formatWeeklyDiscord(mixed);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].embeds).toHaveLength(3);
   });
 
   it('reports failed symbols as subtext on the last message', () => {
@@ -179,12 +221,12 @@ describe('formatWeeklyDiscord', () => {
 
   it('puts the header only on the first message when the report spans several', () => {
     const many = buildWeeklyReport(
-      Array.from({ length: 14 }, (_, i) => asset({ symbol: `SYM${i}-USD` })),
+      Array.from({ length: 60 }, (_, i) => asset({ symbol: `SYM${i}-USD` })),
       [],
       Date.UTC(2026, 7, 12),
     );
     const messages = formatWeeklyDiscord(many);
-    expect(messages).toHaveLength(2);
+    expect(messages.length).toBeGreaterThan(1);
     expect(messages[0].content).toContain('Crypto Weekly');
     expect(messages[1].content).toBeUndefined();
   });
