@@ -104,8 +104,11 @@ src/strat/algoAlerts.ts     — confirmed-trigger selection + related plays
 src/strat/dca.ts            — DCA ladders from weekly/monthly Strat structure
 src/crypto/universe.ts      — crypto universe + per-tier ladder profiles
 src/crypto/weeklyReport.ts  — weekly crypto report (DCA ladders)
+src/data/market.ts          — provider router (crypto → Alpaca, rest → Yahoo)
+src/data/alpaca.ts          — Alpaca crypto bars client (native 4H/D/W/M)
 src/data/yahoo.ts           — Yahoo Finance chart API client
-src/data/aggregate.ts       — 1H → 4H aggregation
+src/data/series.ts          — shared series shape + completed/forming split
+src/data/aggregate.ts       — 1H → 4H aggregation (Yahoo only)
 src/scanner.ts              — orchestration across symbols & timeframes
 src/components/             — signal cards + FTFC strip
 src/__tests__/              — engine unit tests (npm test)
@@ -227,6 +230,29 @@ Tuning (optional repo *variables*):
 The universe lives in `server/crypto-watchlist.json` — edit that file to
 change which coins are covered. Run it anywhere with Node 18+:
 `DRY_RUN=true npm run weekly-crypto` to see the report locally.
+
+## Where the market data comes from
+
+| Symbols | Source | Why |
+|---|---|---|
+| Crypto (`BTC-USD`, `SOL-USD`, …) | **Alpaca** crypto bars | Documented, versioned endpoint with **native 4H, daily, weekly and monthly bars** — no aggregation, so the bars match what a chart draws |
+| Stocks, ETFs, FX, futures | Yahoo Finance chart API | The only one of the two that serves them; 4H is aggregated from 1H |
+
+Alpaca's crypto list is US-compliance limited, so tokens it does not carry
+(likely `BNB`, `HYPE`, `TAO`, `JUP`) come back empty — those **fall back to
+Yahoo automatically**, per symbol and per timeframe. A symbol degrading to the
+older source beats a symbol dropping out of the scan. Every fallback is logged
+in the run log with the reason.
+
+No credentials are required: Alpaca crypto bars are free, and the client sends
+auth headers only when `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` are set. Add
+them as repo secrets if Alpaca ever starts requiring auth. To pin everything
+back to Yahoo without a deploy, set the repo *variable* `CRYPTO_PROVIDER` to
+`yahoo`.
+
+Alpaca's crypto history starts around 2021, so monthly structure runs ~5 years
+deep rather than Yahoo's 10. That is well past what the ladder uses — the depth
+cap discards anything that old anyway.
 
 ## Development
 

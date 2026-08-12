@@ -14,6 +14,9 @@
  *   NTFY_SERVER           ntfy server base URL          (default https://ntfy.sh)
  *   DISCORD_WEBHOOK_URL   Discord webhook for the full report (optional)
  *   ALERT_EMAIL           inbox copy of the digest via ntfy e-mail forwarding
+ *   APCA_API_KEY_ID       Alpaca key id     (optional; crypto bars are free)
+ *   APCA_API_SECRET_KEY   Alpaca secret     (optional, paired with the above)
+ *   CRYPTO_PROVIDER       'yahoo' to pin crypto back to the old source
  *   WEEKLY_NTFY_ASSETS    per-asset pushes after the digest           (default 4)
  *   DRY_RUN               'true' to print the report and send nothing
  *   TEST_PING             'true' to send one delivery test and exit
@@ -100,6 +103,16 @@ async function main() {
   );
 
   for (const err of report.errors) console.warn(`  WARN ${err.symbol}: ${err.message}`);
+  for (const f of report.fallbacks) {
+    console.warn(`  FALLBACK ${f.symbol} ${f.timeframe}: ${f.reason} — served by Yahoo instead.`);
+  }
+  const byProvider = report.assets.reduce<Record<string, string[]>>((acc, a) => {
+    (acc[a.provider ?? 'unknown'] ??= []).push(a.symbol);
+    return acc;
+  }, {});
+  for (const [provider, symbols] of Object.entries(byProvider)) {
+    console.log(`  ${provider}: ${symbols.length} symbol(s) — ${symbols.join(', ')}`);
+  }
   if (report.assets.length === 0) {
     throw new Error('Every symbol failed to scan — data provider unreachable?');
   }

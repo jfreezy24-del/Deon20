@@ -130,13 +130,18 @@ describe('formatWeeklyDiscord', () => {
   const report = buildWeeklyReport(
     [asset(), asset({ symbol: 'SOL-USD', name: 'Solana' })],
     [{ symbol: 'FAKE-USD', message: 'no data returned' }],
+    Date.UTC(2026, 7, 12),
   );
 
-  it('opens with the header and stays under the Discord limit', () => {
+  it('opens with the title and stays under the Discord limit', () => {
     const messages = formatWeeklyDiscord(report);
-    expect(messages[0]).toContain('Crypto Weekly');
-    expect(messages[0]).toContain('2 ladders');
+    expect(messages[0].split('\n')[0]).toBe('**🪙 Crypto Weekly — week of 2026-08-10**');
     for (const m of messages) expect(m.length).toBeLessThanOrEqual(2000);
+  });
+
+  it('carries no breadth counts or standing explainer', () => {
+    const all = formatWeeklyDiscord(report).join('\n');
+    expect(all).not.toMatch(/ladders ·|within 5% of spot|Stance:|Not financial advice/);
   });
 
   it('includes every asset and reports failed symbols', () => {

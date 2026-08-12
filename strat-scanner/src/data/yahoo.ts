@@ -1,5 +1,8 @@
 import { Candle, Timeframe } from '../strat/types';
 import { aggregateTo4H } from './aggregate';
+import { splitForming, TimeframeSeries } from './series';
+
+export type { TimeframeSeries };
 
 /**
  * Market data via Yahoo Finance's public chart API. Works for stocks, ETFs,
@@ -77,34 +80,6 @@ async function fetchChart(symbol: string, interval: string, range: string): Prom
     gmtOffsetSeconds: result.meta.gmtoffset ?? 0,
     name: result.meta.shortName ?? result.meta.longName,
   };
-}
-
-/** Approximate bar duration in seconds, used to decide if the last bar is still forming. */
-const TF_SECONDS: Record<Timeframe, number> = {
-  '4H': 4 * 3600,
-  D: 86400,
-  W: 7 * 86400,
-  M: 31 * 86400,
-};
-
-export interface TimeframeSeries {
-  timeframe: Timeframe;
-  /** Fully closed candles; the last one is the actionable trigger bar. */
-  completed: Candle[];
-  /** The live, still-forming candle (if the market produced one). */
-  forming: Candle | null;
-  lastPrice: number;
-  name?: string;
-}
-
-function splitForming(candles: Candle[], tf: Timeframe): { completed: Candle[]; forming: Candle | null } {
-  if (candles.length === 0) return { completed: [], forming: null };
-  const last = candles[candles.length - 1];
-  const now = Date.now() / 1000;
-  const isForming = now < last.time + TF_SECONDS[tf];
-  return isForming
-    ? { completed: candles.slice(0, -1), forming: last }
-    : { completed: candles, forming: null };
 }
 
 export async function fetchTimeframe(symbol: string, tf: Timeframe): Promise<TimeframeSeries> {
