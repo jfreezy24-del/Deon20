@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assetField,
   chunkEmbeds,
+  describeDiscord,
   fmtPrice,
   formatWeeklyDiscord,
   formatWeeklyNtfy,
@@ -229,6 +230,30 @@ describe('formatWeeklyDiscord', () => {
     expect(messages.length).toBeGreaterThan(1);
     expect(messages[0].content).toContain('Crypto Weekly');
     expect(messages[1].content).toBeUndefined();
+  });
+});
+
+describe('describeDiscord', () => {
+  const report = buildWeeklyReport(
+    [asset(), asset({ symbol: 'TAO-USD', dca: plan({ stance: 'defensive' }) })],
+    [],
+    Date.UTC(2026, 7, 12),
+  );
+
+  it('renders every card and ladder the message will actually carry', () => {
+    const text = formatWeeklyDiscord(report).map(describeDiscord).join('\n');
+    expect(text).toContain('🟢 Accumulate');
+    expect(text).toContain('🔴 Defensive');
+    expect(text).toContain('BTC-USD · Bitcoin');
+    expect(text).toContain('112,400');
+    expect(text).toContain('avg  107,000');
+  });
+
+  it('never prints undefined for a section the embed does not use', () => {
+    // Grouped embeds carry fields and no description; the dry-run log used to
+    // print the missing description as "undefined" and hide the whole report.
+    const text = formatWeeklyDiscord(report).map(describeDiscord).join('\n');
+    expect(text).not.toContain('undefined');
   });
 });
 

@@ -25,7 +25,12 @@ import path from 'node:path';
 import { CRYPTO_UNIVERSE } from '../src/crypto/universe';
 import { DEFAULT_WEEKLY_OPTIONS, scanCryptoWeekly } from '../src/crypto/weeklyReport';
 import { buildNtfyPayload, PushMessage } from './lib';
-import { DiscordMessage, formatWeeklyDiscord, formatWeeklyNtfy } from './weekly-lib';
+import {
+  describeDiscord,
+  DiscordMessage,
+  formatWeeklyDiscord,
+  formatWeeklyNtfy,
+} from './weekly-lib';
 import { loadSymbolList } from './watchlist-file';
 
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
@@ -59,16 +64,6 @@ async function sendDiscord(webhookUrl: string, message: DiscordMessage) {
     }),
   });
   if (!res.ok) throw new Error(`Discord responded ${res.status}: ${await res.text()}`);
-}
-
-/** Readable rendering of an embed message for the dry-run log. */
-function describeDiscord(message: DiscordMessage): string {
-  return [
-    message.content ?? '',
-    ...message.embeds.map(
-      (e) => `┌ ${e.title}\n${e.description}\n└ ${e.footer?.text ?? ''}`,
-    ),
-  ].join('\n');
 }
 
 /** Discord rate-limits bursts; a short gap keeps a long report in order. */
