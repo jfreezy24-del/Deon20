@@ -105,6 +105,21 @@ describe('buildWriteup', () => {
     expect(text).not.toMatch(/\bpivot\b/i);
   });
 
+  it('punctuates with commas, never dashes', () => {
+    const cases = [
+      input(),
+      input({ structure: buildStructure(lowerLows, lowerLows, 120), lastPrice: 120 }),
+      input({ continuity: { '4H': 'up', D: 'up', W: 'up', M: 'up' } }),
+      input({ continuity: { '4H': 'down', D: 'down', W: 'down', M: 'down' } }),
+      input({ dca: plan({ stance: 'defensive' }) }),
+      input({ dca: plan({ stance: 'accumulate' }) }),
+    ];
+    for (const c of cases) {
+      // Em and en dashes only. Hyphens inside words ("4-hour") are untouched.
+      expect(all(buildWriteup(c))).not.toMatch(/[—–]/);
+    }
+  });
+
   it('still carries the principles, in plain words', () => {
     const text = all(buildWriteup(input()));
     expect(text).toMatch(/inside the month before it/i);
