@@ -108,6 +108,23 @@ export function findPivotLows(candles: Candle[], width = 2): Candle[] {
   return out;
 }
 
+/**
+ * Swing highs — the mirror of findPivotLows. The ladder itself never looks
+ * up, but the write-up needs the places price previously ran out of buyers:
+ * those are where a break travels to.
+ */
+export function findPivotHighs(candles: Candle[], width = 2): Candle[] {
+  const out: Candle[] = [];
+  for (let i = width; i < candles.length - width; i++) {
+    let isPivot = true;
+    for (let j = i - width; j <= i + width && isPivot; j++) {
+      if (j !== i && candles[j].high > candles[i].high) isPivot = false;
+    }
+    if (isPivot) out.push(candles[i]);
+  }
+  return out;
+}
+
 /** Average bar range over the last `n` bars, as a fraction of the last close. */
 function averageRangePct(candles: Candle[], n = 12): number {
   const window = candles.slice(-n).filter((c) => c.close > 0);

@@ -4,6 +4,7 @@ import { Candle, ContinuityMap, Timeframe, TIMEFRAMES } from '../strat/types';
 import { fetchTimeframeWithProvider, ProviderName } from '../data/market';
 import { TimeframeSeries } from '../data/series';
 import { cryptoName, ladderProfileFor } from './universe';
+import { AssetStructure, buildStructure } from './structure';
 
 /**
  * The weekly crypto report: the standing DCA ladder underneath every asset in
@@ -34,6 +35,8 @@ export interface WeeklyAsset {
   weekChangePct: number | null;
   continuity: ContinuityMap;
   dca: DcaPlan;
+  /** Two-sided higher-timeframe facts, for the written analysis */
+  structure: AssetStructure;
 }
 
 export interface WeeklyError {
@@ -121,6 +124,7 @@ export function buildWeeklyAsset(
     weekChangePct: changePct(weekly?.forming ?? weekly?.completed[weekly.completed.length - 1]),
     continuity: buildContinuity(current),
     dca,
+    structure: buildStructure(weekly?.completed ?? [], monthly?.completed ?? [], lastPrice),
   };
 }
 

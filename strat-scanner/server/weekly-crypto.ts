@@ -18,6 +18,7 @@
  *   APCA_API_SECRET_KEY   Alpaca secret     (optional, paired with the above)
  *   CRYPTO_PROVIDER       'yahoo' to pin crypto back to the old source
  *   WEEKLY_NTFY_ASSETS    per-asset pushes after the digest           (default 4)
+ *   WRITEUP_SYMBOL        symbol for the written analysis      (default SOL-USD)
  *   DRY_RUN               'true' to print the report and send nothing
  *   TEST_PING             'true' to send one delivery test and exit
  */
@@ -30,7 +31,9 @@ import {
   DiscordMessage,
   formatWeeklyDiscord,
   formatWeeklyNtfy,
+  formatWriteupDiscord,
 } from './weekly-lib';
+import { buildWriteup } from '../src/crypto/writeup';
 import { loadSymbolList } from './watchlist-file';
 
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
@@ -126,7 +129,33 @@ async function main() {
       `${report.errors.length} errors.`,
   );
 
-  const discordMessages = formatWeeklyDiscord(report);
+  // The ladder report covers the whole universe; the written analysis covers
+  // one symbol in depth and rides along as its own message.
+  const writeupSymbol = (process.env.WRITEUP_SYMBOL ?? 'SOL-USD').trim().toUpperCase();
+  const subject = report.assets.find((a) => a.symbol === writeupSymbol);
+  if (!subject && writeupSymbol) {
+    console.warn(`  WARN write-up symbol ${writeupSymbol} was not scanned — skipping the analysis.`);
+  }
+
+  const discordMessages = [
+    ...formatWeeklyDiscord(report),
+    ...(subject
+      ? [
+          formatWriteupDiscord(
+            buildWriteup({
+              symbol: subject.symbol,
+              name: subject.name,
+              lastPrice: subject.lastPrice,
+              weekChangePct: subject.weekChangePct,
+              continuity: subject.continuity,
+              structure: subject.structure,
+              dca: subject.dca,
+            }),
+            subject.dca,
+          ),
+        ]
+      : []),
+  ];
   const ntfyMessages = formatWeeklyNtfy(
     report,
     num(process.env.WEEKLY_NTFY_ASSETS, DEFAULT_WEEKLY_OPTIONS.maxFeatured),
