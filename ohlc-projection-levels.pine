@@ -1,53 +1,96 @@
 //@version=6
 // =============================================================================
-// OHLC Projection Levels (Mean / Median) — Historical-Feed Edition
+// OHLC Projection Levels — Adaptive Edition (CRYPTO)
 // -----------------------------------------------------------------------------
-// Concept (rebuilt from a public description, not copied source):
-//   At the start of each period (4H/1D/1W/1M/1Y) it anchors to the OPEN and
-//   projects symmetric levels around it:
-//     * Manipulation (M)  = typical COUNTER-trend wick   -> liquidity / stop-hunt
-//     * Distribution (D)  = typical IN-trend expansion    -> profit targets
-//   Ratios are derived from a historical sample (mean AND median), so the
-//   band between mean & median is a zone rather than a single line.
-//   Hold-rate = how often a zone was reached and then reversed price back through.
+// Anchors to each period's OPEN (4H/1D/1W/1M/1Y) and projects statistical
+// levels around it, derived from the deepest higher-timeframe history the
+// data provider allows:
+//     * Manipulation (M) = the counter-trend excursion (liquidity / stop-hunt)
+//     * Distribution (D) = the in-trend expansion       (profit targets)
+//
+// WHAT MAKES THIS "ADAPTIVE" (vs. a flat average of raw percentages):
+//
+//  1. VOLATILITY NORMALIZATION. Raw percentages mix regimes: 2011 BTC wicked
+//     10%+ per day, 2024 BTC wicks ~2%. Averaging them describes the regime
+//     mix, not tomorrow. In "Log + ATR" mode each period is stored as
+//     excursion / ATR%-prevailing-at-that-time (a dimensionless "how many
+//     ATRs did it wick"), then projected with TODAY's ATR%. This is what
+//     makes a 5,000-period sample genuinely usable instead of merely large.
+//
+//  2. ASYMMETRY. Up and down excursions are not mirror images. Four separate
+//     statistics are tracked (+M, -M, +D, -D) instead of one number mirrored.
+//
+//  3. PERCENTILES. Mean and median both answer "what is typical". A percentile
+//     answers "only X% of periods extend past here" — an actual probability
+//     attached to a target.
+//
+//  4. RECENCY WEIGHTING. Optional exponential half-life so recent periods
+//     dominate without discarding the tail.
+//
+//  5. CONTEXT CONDITIONING. Optionally restrict the sample to periods sharing
+//     today's context: same weekday, similar prior-period range, or similar
+//     opening gap. Range expansion clusters, so this is not cosmetic.
+//
+//  6. HONEST SAMPLING. Standard errors are shown next to every ratio, the
+//     table turns amber below the minimum-sample threshold, and reach/hold
+//     rates are measured strictly walk-forward (each period judged only
+//     against estimates built from periods BEFORE it) over the same rolling
+//     window as the ratios themselves.
 //
 // DATA SOURCE:
-//   The statistical sample is NOT built from the chart's own bars anymore.
-//   It is requested at the projection timeframe via request.security, which
-//   carries the symbol's FULL higher-timeframe history. By default it uses
-//   YOUR CHART SYMBOL — so it works identically on OKX, Kraken, MEXC,
-//   Coinbase, Bitstamp or any other exchange/asset with zero setup:
-//     * You get the full higher-timeframe history your TV plan allows
-//       (thousands of daily bars) even while viewing a 1m/5m/15m chart.
-//     * Stats are identical on every chart timeframe — no more thin samples.
-//   OPTIONAL: if your exchange listed the asset recently, you can override
-//   the source with a longer-history feed, and/or POOL up to two extra feeds
-//   into the sample. Long BTC feeds for reference:
-//     BITSTAMP:BTCUSD (2011+) · KRAKEN:BTCUSD (2013+) · COINBASE:BTCUSD (2015+)
-//     CRYPTO:BTCUSD (TradingView aggregate index)
-//   Ratios are percentages of the open, so whichever feed supplies them, they
-//   are always applied to YOUR chart symbol's open.
+//   Defaults to YOUR CHART SYMBOL, requested at the projection timeframe, so
+//   it works identically on OKX, Kraken, MEXC, Coinbase, Bitstamp or anywhere
+//   else with zero setup. Optionally override with a longer-history feed and
+//   pool up to two more. Long BTC feeds: BITSTAMP:BTCUSD (2011+),
+//   KRAKEN:BTCUSD (2013+), COINBASE:BTCUSD (2015+), CRYPTO:BTCUSD (index).
+//   Ratios are dimensionless or percentage based, so whichever provider
+//   supplies them they are always applied to YOUR chart symbol's open.
 //
-// NOTE: View this on a chart timeframe EQUAL TO OR FINER THAN the projection TF
-//       (e.g. view 5m/15m/1H while projecting 1D or 1W; view 1D/1W for 1M;
-//       view 1W/1M for 1Y). The 4H option uses exchange-time alignment.
+// PERFORMANCE NOTE: every enabled feed and every extra confluence timeframe
+//   costs one request.security call, and Pine executes all of them whether or
+//   not you use the result. Context conditioning and recency weighting both
+//   add per-recompute work. If load time gets slow, disable pooling and extra
+//   timeframes first.
+//
+// NOTE: run this on a chart timeframe EQUAL TO OR FINER THAN the projection
+//   timeframe (view 5m/15m/1H while projecting 1D or 1W, etc).
 // =============================================================================
 
-indicator("OHLC Projection Levels (Mean/Median)", shorttitle="OHLC Proj",
-     overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("OHLC Projection Levels — Adaptive", shorttitle="OHLC Proj+",
+     overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
-// ---------------------------------- Inputs -----------------------------------
-tfSel       = input.string("1D", "Projection Timeframe", options=["4H","1D","1W","1M","1Y"])
-periodsShow = input.int(2,    "Historical Periods to Show", minval=1, maxval=20)
-sampleLen   = input.int(2000, "Sample Size (completed periods for stats)", minval=20, maxval=5000, tooltip="Upper cap per feed. With a historical feed the sample is pulled from the feed's full higher-timeframe history, so leave this high to use the most data possible.")
+// ================================== Inputs ===================================
+grpP        = "Projection"
+tfSel       = input.string("1D", "Projection Timeframe", options=["4H","1D","1W","1M","1Y"], group=grpP)
+periodsShow = input.int(2,    "Historical Periods to Show", minval=1, maxval=20, group=grpP)
+sampleLen   = input.int(2000, "Sample Size (completed periods)", minval=20, maxval=5000, group=grpP, tooltip="Rolling window of completed periods used for every statistic, including reach/hold rates. Leave high to use the most history possible.")
+
+grpMod   = "Statistical Model"
+transform = input.string("Log + ATR", "Excursion measure", options=["Percent","Log","Log + ATR"], group=grpMod, tooltip="Percent: (high-open)/open. Simple, but distorts on huge multi-year price ranges and mixes volatility regimes.\n\nLog: ln(high/open). Makes up and down moves symmetric — matters on 1M/1Y and on assets spanning orders of magnitude.\n\nLog + ATR (recommended): stores each period as log-excursion divided by the ATR% prevailing at that time, then re-scales by today's ATR%. Makes old history comparable to today instead of dragging the average toward a dead regime.")
+atrLen    = input.int(14, "ATR length (periods, on projection TF)", minval=2, maxval=200, group=grpMod, tooltip="Volatility yardstick used by the 'Log + ATR' measure. Measured on the projection timeframe, always from bars that closed BEFORE the period being measured.")
+uncondMode = input.bool(false, "Unconditional excursion mode", group=grpMod, tooltip="OFF (default, conditional): the original M/D model. Manipulation is sampled from periods that closed AGAINST that side (a down-wick on a green period), distribution from periods that closed WITH it.\n\nON (unconditional): every period contributes its up excursion and its down excursion with no reference to how it closed. This removes the subtle mismatch that the conditional model is defined by the period's close — something you do not know at the open. In this mode M and D differ only by their percentile setting.")
+pctM      = input.float(50, "Manipulation percentile", minval=1, maxval=99, step=5, group=grpMod, tooltip="Percentile of the manipulation distribution to draw. 50 = median. Read it as: this level is exceeded by (100 - p)% of periods.")
+pctD      = input.float(80, "Distribution percentile", minval=1, maxval=99, step=5, group=grpMod, tooltip="Percentile of the distribution/expansion sample. 80 means only 20% of periods extend beyond this level — a target with a stated probability rather than an average.")
+recOn     = input.bool(false, "Recency weighting (exponential)", group=grpMod, tooltip="Weight recent periods more heavily. Costs load time and trims the effective sample to about six half-lives, since older data carries under 2% weight.")
+halfLife  = input.int(250, "Half-life (periods)", minval=10, maxval=2000, group=grpMod, tooltip="A period this far back counts half as much as the newest one.")
+condMode  = input.string("None", "Condition sample on", options=["None","Weekday","Prior range tercile","Gap direction"], group=grpMod, tooltip="Restrict the sample to periods sharing the current period's context.\n\nWeekday: Monday behaves differently from Friday (use on 4H/1D only).\nPrior range tercile: range expansion clusters — after a compressed period the next one expands.\nGap direction: for gapping markets, an up-gap open is a different animal from a flat one.\n\nConditioning splits the sample, so watch the n column and the amber warning.")
+minSample = input.int(30, "Minimum sample per level", minval=5, maxval=500, group=grpMod, tooltip="Below this the table turns amber and reach/hold measurement stays in burn-in. A 1Y projection will often sit under this permanently — that is the honest answer, not a bug.")
 
 grpS   = "Historical Data Source"
-useCustomFeed = input.bool(false, "Override with a custom history feed", group=grpS, tooltip="OFF (default) = stats are built from YOUR chart symbol's own higher-timeframe history — works the same on OKX, Kraken, MEXC, Coinbase, Bitstamp or any other exchange/asset, no setup needed. ON = borrow history from the feed below instead (useful when your exchange listed the asset recently and another exchange has a longer record).")
-sym1   = input.symbol("BITSTAMP:BTCUSD", "Custom history feed", group=grpS, tooltip="Only used when the override above is ON. Pick the same asset on the exchange with the longest history, e.g. BITSTAMP:BTCUSD (2011+), KRAKEN:BTCUSD (2013+), COINBASE:BTCUSD (2015+), CRYPTO:BTCUSD (aggregate index).")
-use2   = input.bool(false, "Pool extra feed #2", group=grpS, tooltip="Adds this feed's completed periods to the sample. Point it at the SAME asset on another exchange. Periods overlap in time, so pooling smooths exchange-specific wicks rather than extending history.")
+useCustomFeed = input.bool(false, "Override with a custom history feed", group=grpS, tooltip="OFF (default) = build stats from YOUR chart symbol's own higher-timeframe history. Works the same on any exchange, no setup. ON = borrow history from the feed below.")
+sym1   = input.symbol("BITSTAMP:BTCUSD", "Custom history feed", group=grpS)
+use2   = input.bool(false, "Pool extra feed #2", group=grpS, tooltip="Point it at the SAME asset on another exchange. Periods overlap in time, so pooling smooths exchange-specific wicks rather than extending history.")
 sym2   = input.symbol("COINBASE:BTCUSD", "Extra feed #2", group=grpS)
 use3   = input.bool(false, "Pool extra feed #3", group=grpS)
 sym3   = input.symbol("KRAKEN:BTCUSD", "Extra feed #3", group=grpS)
+
+grpC   = "Confluence (extra timeframes)"
+cf2On  = input.bool(false, "Overlay timeframe #2", group=grpC, tooltip="Draws the current period's levels for a second timeframe and highlights where they cluster with the primary. Where a daily D level sits on a weekly M level is where reactions concentrate.")
+cf2Tf  = input.string("1W", "Timeframe #2", options=["4H","1D","1W","1M","1Y"], group=grpC)
+cf3On  = input.bool(false, "Overlay timeframe #3", group=grpC)
+cf3Tf  = input.string("1M", "Timeframe #3", options=["4H","1D","1W","1M","1Y"], group=grpC)
+cfTol  = input.float(0.25, "Confluence tolerance (%)", minval=0.01, maxval=5.0, step=0.05, group=grpC)
+cfCol  = input.color(color.new(color.yellow, 80), "Confluence shading", group=grpC)
 
 grpM   = "Manipulation (wick / liquidity)"
 showM  = input.bool(true,  "Show Manipulation levels", group=grpM)
@@ -60,229 +103,519 @@ colD   = input.color(color.teal, "Color", group=grpD)
 grpO   = "Open & Display"
 showO  = input.bool(true,  "Show Open line", group=grpO)
 colO   = input.color(color.gray, "Open color", group=grpO)
-showFill   = input.bool(true,  "Shade mean–median zones", group=grpO)
+showMean = input.bool(true, "Draw mean lines", group=grpO)
+showMed  = input.bool(true, "Draw median lines", group=grpO)
+showPct  = input.bool(true, "Draw percentile lines", group=grpO)
+showFill   = input.bool(true,  "Shade mean-median zones", group=grpO)
 showLabels = input.bool(true,  "Show labels", group=grpO)
 
 grpW     = "Projection Width"
-projBars = input.int(60, "Zone width (bars to the right)", minval=5, maxval=500, group=grpW, tooltip="How far the zones stretch right of the open. Larger = less squished at the start of a new period.")
-extendCur = input.bool(true, "Always reach current bar if past width", group=grpW, tooltip="If the period runs longer than the set width, keep stretching to the current bar.")
+projBars = input.int(60, "Zone width (bars to the right)", minval=5, maxval=500, group=grpW)
+extendCur = input.bool(true, "Always reach current bar if past width", group=grpW)
 
 grpT     = "Stats Table"
 showTbl  = input.bool(true, "Show stats table", group=grpT)
+showSeq  = input.bool(true, "Show sequencing & timing rows", group=grpT, tooltip="Measured on the CHART timeframe (the only place intra-period order is visible), so it carries its own smaller sample size. It answers the model's core claim: does the manipulation side actually get swept BEFORE the distribution target, and when in the period do the extremes print?")
 tblPos   = input.string("top_right", "Position", options=["top_right","top_left","bottom_right","bottom_left","middle_right"], group=grpT)
 tblSize  = input.string("normal", "Text size", options=["tiny","small","normal","large"], group=grpT)
 
-// map selection to a timeframe string  (Year = "12M" in TradingView)
-tf = tfSel == "4H" ? "240" : tfSel == "1W" ? "1W" : tfSel == "1M" ? "1M" : tfSel == "1Y" ? "12M" : "1D"
+grpA     = "Alerts"
+alertOn  = input.bool(true, "Enable alert() calls", group=grpA, tooltip="Fires on first tag of each level in a period, and on the close-back-through that actually confirms a manipulation.")
 
-// ----------------------- Historical sample (feed context) ---------------------
-// Runs INSIDE request.security at the projection timeframe, iterating the
-// feed's entire higher-timeframe history. Each completed HTF bar is one
-// sample period. Only bar[1] (confirmed) data is used, so nothing repaints.
-f_stats(int maxN) =>
-    var array<float> mA = array.new<float>()
-    var array<float> dA = array.new<float>()
-    // hit-rate counters: tagged = price reached the zone; hold = it then reversed back through
-    var int mMeanTag  = 0
-    var int mMeanHold = 0
-    var int mMedTag   = 0
-    var int mMedHold  = 0
-    var int dMeanTag  = 0
-    var int dMeanHold = 0
-    var int dMedTag   = 0
-    var int dMedHold  = 0
-    if bar_index > 0
+// map selection to a timeframe string  (Year = "12M" in TradingView)
+f_tf(string s) => s == "4H" ? "240" : s == "1W" ? "1W" : s == "1M" ? "1M" : s == "1Y" ? "12M" : "1D"
+tf  = f_tf(tfSel)
+tfB = f_tf(cf2Tf)
+tfC = f_tf(cf3Tf)
+
+// number of context buckets implied by the conditioning mode
+nBuckets = condMode == "Weekday" ? 7 : condMode == "None" ? 1 : 3
+
+// ============================ Shared math helpers =============================
+// Rebuild a price level from a stored ratio. Mirrors the excursion measure so
+// that whatever transform went in comes back out as a price.
+f_lvl(string tfm, float v, float o, float atrp, bool up) =>
+    float r = na
+    if not na(v) and not na(o)
+        if tfm == "Percent"
+            r := up ? o * (1.0 + v) : o * (1.0 - v)
+        else if tfm == "Log"
+            r := up ? o * math.exp(v) : o * math.exp(-v)
+        else if not na(atrp)
+            r := up ? o * math.exp(v * atrp) : o * math.exp(-v * atrp)
+    r
+
+// Exponentially weighted mean. Falls back to a plain average when weighting
+// is off, which is the common path and stays on the native implementation.
+f_wmean(array<float> vals, float hl) =>
+    int n = array.size(vals)
+    float res = na
+    if n > 0
+        if na(hl) or hl <= 0
+            res := array.avg(vals)
+        else
+            float decay = math.pow(0.5, 1.0 / hl)
+            float sw = 0.0
+            float sv = 0.0
+            for i = 0 to n - 1
+                float w = math.pow(decay, n - 1 - i)
+                sw += w
+                sv += array.get(vals, i) * w
+            res := sw > 0 ? sv / sw : na
+    res
+
+// Weighted percentile. Sorting is native; only the cumulative-weight walk is
+// interpreted, and it exits as soon as the threshold is crossed.
+f_wpct(array<float> vals, float hl, float pct) =>
+    int n = array.size(vals)
+    float res = na
+    if n > 0
+        if na(hl) or hl <= 0
+            res := array.percentile_linear_interpolation(vals, pct)
+        else
+            float decay = math.pow(0.5, 1.0 / hl)
+            float tot = decay >= 1.0 ? n : (1.0 - math.pow(decay, n)) / (1.0 - decay)
+            array<int> idx = array.sort_indices(vals, order.ascending)
+            float target = tot * pct / 100.0
+            float cum = 0.0
+            for k = 0 to n - 1
+                int i = array.get(idx, k)
+                cum += math.pow(decay, n - 1 - i)
+                if cum >= target
+                    res := array.get(vals, i)
+                    break
+            if na(res)
+                res := array.get(vals, array.get(idx, n - 1))
+    res
+
+// Which context bucket does a period belong to?
+f_bucket(string cond, int nb, float o, float prevC, float prevRange, float t1, float t2, float atrp, int tm) =>
+    int b = 0
+    if cond == "Weekday"
+        b := dayofweek(tm) - 1
+    else if cond == "Prior range tercile"
+        b := na(t1) or na(prevRange) ? 1 : prevRange <= t1 ? 0 : prevRange <= t2 ? 1 : 2
+    else if cond == "Gap direction"
+        float g = na(prevC) or prevC == 0 ? 0.0 : (o - prevC) / prevC
+        float th = na(atrp) ? 0.0 : 0.25 * atrp
+        b := g < -th ? 0 : g > th ? 2 : 1
+    math.max(0, math.min(nb - 1, b))
+
+// ========================== Engine result container ===========================
+// Only scalar fields cross the request.security boundary. Returning the sample
+// arrays themselves copies thousands of floats per chart bar and exhausts
+// Pine's memory budget — that is what this layout exists to avoid.
+type Res
+    float m0 = na
+    float d0 = na
+    float p0 = na
+    float s0 = na
+    float n0 = 0.0
+    float m1 = na
+    float d1 = na
+    float p1 = na
+    float s1 = na
+    float n1 = 0.0
+    float m2 = na
+    float d2 = na
+    float p2 = na
+    float s2 = na
+    float n2 = 0.0
+    float m3 = na
+    float d3 = na
+    float p3 = na
+    float s3 = na
+    float n3 = 0.0
+    float rd0 = na
+    float hd0 = na
+    float rp0 = na
+    float hp0 = na
+    float rd1 = na
+    float hd1 = na
+    float rp1 = na
+    float hp1 = na
+    float rd2 = na
+    float hd2 = na
+    float rp2 = na
+    float hp2 = na
+    float rd3 = na
+    float hd3 = na
+    float rp3 = na
+    float hp3 = na
+    float evalN = 0.0
+    float bothR = na
+    float atrP = na
+
+// Rolling walk-forward outcome record for one (level, statistic) combination.
+type Outcome
+    array<float> reach
+    array<float> held
+
+// Write one role's statistics into the cache slot k.
+f_store(array<float> cM, array<float> cD, array<float> cP, array<float> cS,
+         array<float> cN, int k, array<float> f, float hl, float pct) =>
+    int m = array.size(f)
+    array.set(cN, k, m)
+    if m >= 2
+        array.set(cM, k, f_wmean(f, hl))
+        array.set(cD, k, f_wpct(f, hl, 50.0))
+        array.set(cP, k, f_wpct(f, hl, pct))
+        array.set(cS, k, array.stdev(f, false))
+    else
+        array.set(cM, k, na)
+        array.set(cD, k, na)
+        array.set(cP, k, na)
+        array.set(cS, k, na)
+
+// Record one walk-forward outcome, trimmed to the same window as the ratios.
+f_push(Outcome oc, bool reached, bool held, int maxN) =>
+    array.push(oc.reach, reached ? 1.0 : 0.0)
+    array.push(oc.held, held ? 1.0 : 0.0)
+    if array.size(oc.reach) > maxN
+        array.shift(oc.reach)
+        array.shift(oc.held)
+
+f_reachRate(Outcome oc) =>
+    array.size(oc.reach) > 0 ? array.sum(oc.reach) / array.size(oc.reach) : na
+
+f_holdRate(Outcome oc) =>
+    float r = array.sum(oc.reach)
+    r > 0 ? array.sum(oc.held) / r : na
+
+// ================================= The engine =================================
+// Runs INSIDE request.security at the projection timeframe, walking the
+// provider's entire higher-timeframe history. Every period is read from bar[1]
+// so only confirmed data enters the sample and nothing repaints.
+//
+// Role indices: 0 = +M (upper manipulation), 1 = -M (lower manipulation),
+//               2 = +D (upper distribution), 3 = -D (lower distribution).
+f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
+         int nb, bool uncond, float pM, float pD, int minN) =>
+    var array<float> upA = array.new<float>()
+    var array<float> dnA = array.new<float>()
+    var array<float> blA = array.new<float>()
+    var array<float> bkA = array.new<float>()
+    var array<float> rgA = array.new<float>()
+    var array<float> cM  = array.new<float>(4 * nb, na)
+    var array<float> cD  = array.new<float>(4 * nb, na)
+    var array<float> cP  = array.new<float>(4 * nb, na)
+    var array<float> cS  = array.new<float>(4 * nb, na)
+    var array<float> cN  = array.new<float>(4 * nb, 0)
+    var array<Outcome> ocs = array.new<Outcome>()
+    var float terc1 = na
+    var float terc2 = na
+    var int sinceRe = 999
+    var float bothN = 0.0
+    var float bothHit = 0.0
+
+    if array.size(ocs) == 0
+        for j = 0 to 7
+            array.push(ocs, Outcome.new(reach = array.new<float>(), held = array.new<float>()))
+
+    // ta.atr must be evaluated on every bar, never inside a branch, or its
+    // internal state desynchronises from the series.
+    float atrSeries = ta.atr(aLen)
+
+    float hl = na
+    if recOn_
+        hl := hl_
+    // Beyond ~6 half-lives a period carries under 2% weight, so trimming there
+    // costs nothing statistically and keeps the weighted walk bounded.
+    int effMax = recOn_ ? int(math.min(maxN, math.round(hl_ * 6.0))) : maxN
+
+    if bar_index > 1
         float o = open[1]
         float h = high[1]
         float l = low[1]
         float c = close[1]
-        // --- hit-rate: judge the completed period against the ratios that were live for it ---
-        if array.size(mA) >= 5
-            emMean = array.avg(mA)
-            emMed  = array.median(mA)
-            edMean = array.avg(dA)
-            edMed  = array.median(dA)
-            // M mean (check both sides; tag = reached, hold = closed back through)
-            float up = o * (1 + emMean)
-            float dn = o * (1 - emMean)
-            if h >= up
-                mMeanTag += 1
-                if c < up
-                    mMeanHold += 1
-            if l <= dn
-                mMeanTag += 1
-                if c > dn
-                    mMeanHold += 1
-            // M median
-            up := o * (1 + emMed)
-            dn := o * (1 - emMed)
-            if h >= up
-                mMedTag += 1
-                if c < up
-                    mMedHold += 1
-            if l <= dn
-                mMedTag += 1
-                if c > dn
-                    mMedHold += 1
-            // D mean
-            up := o * (1 + edMean)
-            dn := o * (1 - edMean)
-            if h >= up
-                dMeanTag += 1
-                if c < up
-                    dMeanHold += 1
-            if l <= dn
-                dMeanTag += 1
-                if c > dn
-                    dMeanHold += 1
-            // D median
-            up := o * (1 + edMed)
-            dn := o * (1 - edMed)
-            if h >= up
-                dMedTag += 1
-                if c < up
-                    dMedHold += 1
-            if l <= dn
-                dMedTag += 1
-                if c > dn
-                    dMedHold += 1
-        // record the completed period into the sample
-        isBull = c >= o
-        // manipulation = counter-trend wick ; distribution = in-trend expansion
-        manip = isBull ? (o - l) / o : (h - o) / o
-        dist  = isBull ? (h - o) / o : (o - l) / o
-        array.push(mA, manip)
-        array.push(dA, dist)
-        if array.size(mA) > maxN
-            array.shift(mA)
-            array.shift(dA)
-    // return scalars only — returning the arrays themselves would copy them
-    // across the security boundary on every chart bar and exhaust memory
-    int  n  = array.size(mA)
-    bool ok = n >= 5
-    [ok ? array.avg(mA) : na, ok ? array.median(mA) : na, ok ? array.avg(dA) : na, ok ? array.median(dA) : na, n, mMeanTag, mMeanHold, mMedTag, mMedHold, dMeanTag, dMeanHold, dMedTag, dMedHold]
+        float pc = close[2]
+        // Volatility yardstick known strictly BEFORE the period being measured.
+        float atrPrev = close[2] > 0 ? atrSeries[2] / close[2] : na
+        float prevRange = na(close[2]) or close[2] == 0 ? na : (high[2] - low[2]) / close[2]
 
+        if o > 0 and h > 0 and l > 0
+            // ---- excursions, in the selected measure ----
+            float upV = tfm == "Percent" ? (h - o) / o : math.log(h / o)
+            float dnV = tfm == "Percent" ? (o - l) / o : math.log(o / l)
+            if tfm == "Log + ATR"
+                if na(atrPrev) or atrPrev <= 0
+                    upV := na
+                    dnV := na
+                else
+                    upV := upV / atrPrev
+                    dnV := dnV / atrPrev
+
+            if not na(upV) and not na(dnV)
+                int bk = f_bucket(cond, nb, o, pc, prevRange, terc1, terc2, atrPrev, time[1])
+                int base = 4 * bk
+
+                // ---- walk-forward scoring: judge this period against estimates
+                // built only from periods that preceded it ----
+                for r = 0 to 3
+                    bool upSide = r == 0 or r == 2
+                    if array.get(cN, base + r) >= minN
+                        float vd = array.get(cD, base + r)
+                        float vp = array.get(cP, base + r)
+                        float ld = f_lvl(tfm, vd, o, atrPrev, upSide)
+                        float lp = f_lvl(tfm, vp, o, atrPrev, upSide)
+                        bool rd = upSide ? h >= ld : l <= ld
+                        bool hd = rd and (upSide ? c < ld : c > ld)
+                        bool rp = upSide ? h >= lp : l <= lp
+                        bool hp = rp and (upSide ? c < lp : c > lp)
+                        f_push(array.get(ocs, r), rd, hd, effMax)
+                        f_push(array.get(ocs, 4 + r), rp, hp, effMax)
+
+                // ---- whipsaw: how often BOTH manipulation sides get tagged ----
+                if array.get(cN, base) >= minN and array.get(cN, base + 1) >= minN
+                    float lu = f_lvl(tfm, array.get(cD, base), o, atrPrev, true)
+                    float ldn = f_lvl(tfm, array.get(cD, base + 1), o, atrPrev, false)
+                    bothN += 1.0
+                    if h >= lu and l <= ldn
+                        bothHit += 1.0
+
+                // ---- record the period ----
+                array.push(upA, upV)
+                array.push(dnA, dnV)
+                array.push(blA, c >= o ? 1.0 : 0.0)
+                array.push(bkA, bk)
+                if array.size(upA) > effMax
+                    array.shift(upA)
+                    array.shift(dnA)
+                    array.shift(blA)
+                    array.shift(bkA)
+                if not na(prevRange)
+                    array.push(rgA, prevRange)
+                    if array.size(rgA) > 500
+                        array.shift(rgA)
+
+                // ---- throttled recompute of cached statistics ----
+                // The estimate barely moves between adjacent periods once the
+                // sample is large, so recomputing every bar is wasted work.
+                int n = array.size(upA)
+                sinceRe += 1
+                int reEvery = n < 250 ? 1 : 25
+                if sinceRe >= reEvery or barstate.islast
+                    sinceRe := 0
+                    if cond == "Prior range tercile" and array.size(rgA) >= 30
+                        terc1 := array.percentile_linear_interpolation(rgA, 33.3333)
+                        terc2 := array.percentile_linear_interpolation(rgA, 66.6667)
+                    for b = 0 to nb - 1
+                        array<float> f0 = array.new<float>()
+                        array<float> f1 = array.new<float>()
+                        array<float> f2 = array.new<float>()
+                        array<float> f3 = array.new<float>()
+                        // n is at least 1 here: the current period was just pushed
+                        for i = 0 to n - 1
+                            if nb == 1 or int(array.get(bkA, i)) == b
+                                float u = array.get(upA, i)
+                                float d = array.get(dnA, i)
+                                if uncond
+                                    array.push(f0, u)
+                                    array.push(f1, d)
+                                    array.push(f2, u)
+                                    array.push(f3, d)
+                                else if array.get(blA, i) > 0.5
+                                    array.push(f1, d)
+                                    array.push(f2, u)
+                                else
+                                    array.push(f0, u)
+                                    array.push(f3, d)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 0, f0, hl, pM)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 1, f1, hl, pM)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 2, f2, hl, pD)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 3, f3, hl, pD)
+
+    // ---- assemble the result for the period about to be projected ----
+    float atrNow = close[1] > 0 ? atrSeries[1] / close[1] : na
+    float pcNow = close[2]
+    float rangeNow = na(close[2]) or close[2] == 0 ? na : (high[2] - low[2]) / close[2]
+    int bkNow = f_bucket(cond, nb, open[1], pcNow, rangeNow, terc1, terc2, atrNow, time)
+    int bn = 4 * bkNow
+
+    Res out = Res.new()
+    out.m0 := array.get(cM, bn + 0)
+    out.d0 := array.get(cD, bn + 0)
+    out.p0 := array.get(cP, bn + 0)
+    out.s0 := array.get(cS, bn + 0)
+    out.n0 := array.get(cN, bn + 0)
+    out.m1 := array.get(cM, bn + 1)
+    out.d1 := array.get(cD, bn + 1)
+    out.p1 := array.get(cP, bn + 1)
+    out.s1 := array.get(cS, bn + 1)
+    out.n1 := array.get(cN, bn + 1)
+    out.m2 := array.get(cM, bn + 2)
+    out.d2 := array.get(cD, bn + 2)
+    out.p2 := array.get(cP, bn + 2)
+    out.s2 := array.get(cS, bn + 2)
+    out.n2 := array.get(cN, bn + 2)
+    out.m3 := array.get(cM, bn + 3)
+    out.d3 := array.get(cD, bn + 3)
+    out.p3 := array.get(cP, bn + 3)
+    out.s3 := array.get(cS, bn + 3)
+    out.n3 := array.get(cN, bn + 3)
+    out.rd0 := f_reachRate(array.get(ocs, 0))
+    out.hd0 := f_holdRate(array.get(ocs, 0))
+    out.rd1 := f_reachRate(array.get(ocs, 1))
+    out.hd1 := f_holdRate(array.get(ocs, 1))
+    out.rd2 := f_reachRate(array.get(ocs, 2))
+    out.hd2 := f_holdRate(array.get(ocs, 2))
+    out.rd3 := f_reachRate(array.get(ocs, 3))
+    out.hd3 := f_holdRate(array.get(ocs, 3))
+    out.rp0 := f_reachRate(array.get(ocs, 4))
+    out.hp0 := f_holdRate(array.get(ocs, 4))
+    out.rp1 := f_reachRate(array.get(ocs, 5))
+    out.hp1 := f_holdRate(array.get(ocs, 5))
+    out.rp2 := f_reachRate(array.get(ocs, 6))
+    out.hp2 := f_holdRate(array.get(ocs, 6))
+    out.rp3 := f_reachRate(array.get(ocs, 7))
+    out.hp3 := f_holdRate(array.get(ocs, 7))
+    out.evalN := array.size(array.get(ocs, 0).reach)
+    out.bothR := bothN > 0 ? bothHit / bothN : na
+    out.atrP := atrNow
+    out
+
+// ============================== Feed requests =================================
 statSym1 = useCustomFeed ? sym1 : syminfo.tickerid
 
-[mMean1, mMed1, dMean1, dMed1, n1, mMtT1, mMtH1, mMdT1, mMdH1, dMtT1, dMtH1, dMdT1, dMdH1] = request.security(statSym1, tf, f_stats(sampleLen))
-[mMean2, mMed2, dMean2, dMed2, n2, mMtT2, mMtH2, mMdT2, mMdH2, dMtT2, dMtH2, dMdT2, dMdH2] = request.security(sym2,     tf, f_stats(sampleLen))
-[mMean3, mMed3, dMean3, dMed3, n3, mMtT3, mMtH3, mMdT3, mMdH3, dMtT3, dMtH3, dMdT3, dMdH3] = request.security(sym3,     tf, f_stats(sampleLen))
+s1 = request.security(statSym1, tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
+s2 = request.security(sym2,     tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
+s3 = request.security(sym3,     tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
 
-// ------------------------- Pool enabled feeds ----------------------------------
-// weight per feed = its sample size (0 if disabled or not enough data yet)
-w1 = na(mMean1) ? 0 : nz(n1)
-w2 = use2 and not na(mMean2) ? nz(n2) : 0
-w3 = use3 and not na(mMean3) ? nz(n3) : 0
-sampleN = w1 + w2 + w3
+// Volatility scale is always taken from the CHART symbol, so ATR-normalized
+// ratios borrowed from another provider land on the right absolute size here.
+chartAtrP = request.security(syminfo.tickerid, tf, ta.atr(atrLen)[1] / close[1])
 
-// sample-size-weighted combination; for the median this is an approximation
-// (feeds track the same asset, so their medians sit close together)
-poolStat(float a, float b, float c) =>
-    sampleN > 0 ? (nz(a) * w1 + nz(b) * w2 + nz(c) * w3) / sampleN : na
+// Extra timeframes for confluence use the primary feed only.
+sB = request.security(statSym1, tfB, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
+sC = request.security(statSym1, tfC, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
+chartAtrB = request.security(syminfo.tickerid, tfB, ta.atr(atrLen)[1] / close[1])
+chartAtrC = request.security(syminfo.tickerid, tfC, ta.atr(atrLen)[1] / close[1])
 
-sum3(int a, int b, int c) =>
-    nz(a) + (use2 ? nz(b) : 0) + (use3 ? nz(c) : 0)
+// =============================== Pooling ======================================
+// Sample-size-weighted blend. For the mean this is exact; for median and
+// percentile it is an approximation, which is acceptable because pooled feeds
+// track the same asset and their quantiles sit close together.
+f_pool(float a, float b, float c, float na_, float nb_, float nc_) =>
+    float w1 = na(a) ? 0.0 : nz(na_)
+    float w2 = use2 and not na(b) ? nz(nb_) : 0.0
+    float w3 = use3 and not na(c) ? nz(nc_) : 0.0
+    float tot = w1 + w2 + w3
+    tot > 0 ? (nz(a) * w1 + nz(b) * w2 + nz(c) * w3) / tot : na
 
-mMeanTag  = sum3(mMtT1, mMtT2, mMtT3)
-mMeanHold = sum3(mMtH1, mMtH2, mMtH3)
-mMedTag   = sum3(mMdT1, mMdT2, mMdT3)
-mMedHold  = sum3(mMdH1, mMdH2, mMdH3)
-dMeanTag  = sum3(dMtT1, dMtT2, dMtT3)
-dMeanHold = sum3(dMtH1, dMtH2, dMtH3)
-dMedTag   = sum3(dMdT1, dMdT2, dMdT3)
-dMedHold  = sum3(dMdH1, dMdH2, dMdH3)
+f_poolN(float a, float b, float c) =>
+    nz(a) + (use2 ? nz(b) : 0.0) + (use3 ? nz(c) : 0.0)
 
-// --------------------------------- Stats --------------------------------------
-hasStats = sampleN >= 5
-mMean = hasStats ? poolStat(mMean1, mMean2, mMean3) : na
-mMed  = hasStats ? poolStat(mMed1,  mMed2,  mMed3)  : na
-dMean = hasStats ? poolStat(dMean1, dMean2, dMean3) : na
-dMed  = hasStats ? poolStat(dMed1,  dMed2,  dMed3)  : na
+// role 0 = +M, 1 = -M, 2 = +D, 3 = -D
+n0 = f_poolN(s1.n0, s2.n0, s3.n0)
+n1 = f_poolN(s1.n1, s2.n1, s3.n1)
+n2 = f_poolN(s1.n2, s2.n2, s3.n2)
+n3 = f_poolN(s1.n3, s2.n3, s3.n3)
 
-// ----------------------------- Group container --------------------------------
+mean0 = f_pool(s1.m0, s2.m0, s3.m0, s1.n0, s2.n0, s3.n0)
+mean1 = f_pool(s1.m1, s2.m1, s3.m1, s1.n1, s2.n1, s3.n1)
+mean2 = f_pool(s1.m2, s2.m2, s3.m2, s1.n2, s2.n2, s3.n2)
+mean3 = f_pool(s1.m3, s2.m3, s3.m3, s1.n3, s2.n3, s3.n3)
+med0  = f_pool(s1.d0, s2.d0, s3.d0, s1.n0, s2.n0, s3.n0)
+med1  = f_pool(s1.d1, s2.d1, s3.d1, s1.n1, s2.n1, s3.n1)
+med2  = f_pool(s1.d2, s2.d2, s3.d2, s1.n2, s2.n2, s3.n2)
+med3  = f_pool(s1.d3, s2.d3, s3.d3, s1.n3, s2.n3, s3.n3)
+pct0  = f_pool(s1.p0, s2.p0, s3.p0, s1.n0, s2.n0, s3.n0)
+pct1  = f_pool(s1.p1, s2.p1, s3.p1, s1.n1, s2.n1, s3.n1)
+pct2  = f_pool(s1.p2, s2.p2, s3.p2, s1.n2, s2.n2, s3.n2)
+pct3  = f_pool(s1.p3, s2.p3, s3.p3, s1.n3, s2.n3, s3.n3)
+
+// Standard error of the mean: sd / sqrt(n). The honest width of the estimate.
+f_se(float sd, float n) => na(sd) or nz(n) < 2 ? na : sd / math.sqrt(n)
+se0 = f_se(s1.s0, s1.n0)
+se1 = f_se(s1.s1, s1.n1)
+se2 = f_se(s1.s2, s1.n2)
+se3 = f_se(s1.s3, s1.n3)
+
+smallestN = math.min(math.min(n0, n1), math.min(n2, n3))
+hasStats = smallestN >= 5
+thin = smallestN < minSample
+
+// ========================== Current period anchor =============================
+// Levels are projected from YOUR chart symbol's open; only the ratios and the
+// volatility scale come from the provider.
+var float curO = na
+var int   startBar = na
+newP = ta.change(time(tf)) != 0
+if newP
+    curO := open
+    startBar := bar_index
+
+appliedAtr = transform == "Log + ATR" ? chartAtrP : na
+
+lvlPMm = f_lvl(transform, mean0, curO, appliedAtr, true)
+lvlPMd = f_lvl(transform, med0,  curO, appliedAtr, true)
+lvlPMp = f_lvl(transform, pct0,  curO, appliedAtr, true)
+lvlNMm = f_lvl(transform, mean1, curO, appliedAtr, false)
+lvlNMd = f_lvl(transform, med1,  curO, appliedAtr, false)
+lvlNMp = f_lvl(transform, pct1,  curO, appliedAtr, false)
+lvlPDm = f_lvl(transform, mean2, curO, appliedAtr, true)
+lvlPDd = f_lvl(transform, med2,  curO, appliedAtr, true)
+lvlPDp = f_lvl(transform, pct2,  curO, appliedAtr, true)
+lvlNDm = f_lvl(transform, mean3, curO, appliedAtr, false)
+lvlNDd = f_lvl(transform, med3,  curO, appliedAtr, false)
+lvlNDp = f_lvl(transform, pct3,  curO, appliedAtr, false)
+
+// ============================= Drawing helpers ================================
 type LevelGroup
     array<line>     lines
     array<linefill> fills
     array<label>    labels
 
 var array<LevelGroup> groups = array.new<LevelGroup>()
-
-// -------------------- Current-period anchor (chart symbol) --------------------
-// Levels are projected from YOUR chart symbol's period open; only the ratios
-// come from the historical feed(s).
-var float curO = na
-var int   startBar = na
-
-newP = ta.change(time(tf)) != 0
-
-if newP
-    curO := open
-    startBar := bar_index
-
-// ------------------------------- Helpers --------------------------------------
-mkLine(int x, float y, color c, string st, int w) =>
-    line.new(x, y, x + projBars, y, xloc=xloc.bar_index, color=c, style=st, width=w)
-
-mkLabel(int x, float y, string txt, color c) =>
-    label.new(x, y, txt, xloc=xloc.bar_index, style=label.style_label_left,
-         color=color.new(c, 90), textcolor=c, size=size.small)
-
-// keep a handle to the active group so we can extend it each bar
 var LevelGroup active = na
 
-// -------------------- Build a fresh group at each new period ------------------
+mkLine(int x, float y, color c, string st, int w) =>
+    na(y) ? na : line.new(x, y, x + projBars, y, xloc=xloc.bar_index, color=c, style=st, width=w)
+
+mkLabel(int x, float y, string txt, color c) =>
+    na(y) ? na : label.new(x, y, txt, xloc=xloc.bar_index, style=label.style_label_left,
+         color=color.new(c, 90), textcolor=c, size=size.small)
+
+f_add(LevelGroup g, line ln) =>
+    if not na(ln)
+        array.push(g.lines, ln)
+
+f_addLbl(LevelGroup g, label lb) =>
+    if not na(lb)
+        array.push(g.labels, lb)
+
+// Draw one side of one level family: mean, median and percentile.
+f_drawSet(LevelGroup g, int x, float vm, float vd, float vp, color col, string tag) =>
+    line lm = showMean ? mkLine(x, vm, col, line.style_solid, 1) : na
+    line ld = showMed ? mkLine(x, vd, col, line.style_dashed, 1) : na
+    line lp = showPct ? mkLine(x, vp, col, line.style_dotted, 2) : na
+    f_add(g, lm)
+    f_add(g, ld)
+    f_add(g, lp)
+    if showFill and not na(lm) and not na(ld)
+        array.push(g.fills, linefill.new(lm, ld, color.new(col, 86)))
+    if showLabels
+        float pShown = (tag == "+M" or tag == "-M") ? pctM : pctD
+        f_addLbl(g, showMean ? mkLabel(x, vm, tag + " mu  " + str.tostring(vm, format.mintick), col) : na)
+        f_addLbl(g, showMed ? mkLabel(x, vd, tag + " ~  " + str.tostring(vd, format.mintick), col) : na)
+        f_addLbl(g, showPct ? mkLabel(x, vp, tag + " p" + str.tostring(pShown, "#") + "  " + str.tostring(vp, format.mintick), col) : na)
+
+// ==================== Build a fresh group at each new period ==================
 if newP and hasStats
     g = LevelGroup.new(array.new<line>(), array.new<linefill>(), array.new<label>())
-
-    // Open
     if showO
-        ol = mkLine(startBar, curO, colO, line.style_dotted, 1)
-        array.push(g.lines, ol)
+        f_add(g, mkLine(startBar, curO, colO, line.style_dotted, 1))
         if showLabels
-            array.push(g.labels, mkLabel(startBar, curO, "Open  " + str.tostring(curO, format.mintick), colO))
-
-    // Manipulation +/- (mean & median)
+            f_addLbl(g, mkLabel(startBar, curO, "Open  " + str.tostring(curO, format.mintick), colO))
     if showM
-        pMmean = curO * (1 + mMean), pMmed = curO * (1 + mMed)
-        nMmean = curO * (1 - mMean), nMmed = curO * (1 - mMed)
-        l1 = mkLine(startBar, pMmean, colM, line.style_solid,  1)
-        l2 = mkLine(startBar, pMmed,  colM, line.style_dashed, 1)
-        l3 = mkLine(startBar, nMmean, colM, line.style_solid,  1)
-        l4 = mkLine(startBar, nMmed,  colM, line.style_dashed, 1)
-        array.push(g.lines, l1), array.push(g.lines, l2)
-        array.push(g.lines, l3), array.push(g.lines, l4)
-        if showFill
-            array.push(g.fills, linefill.new(l1, l2, color.new(colM, 85)))
-            array.push(g.fills, linefill.new(l3, l4, color.new(colM, 85)))
-        if showLabels
-            array.push(g.labels, mkLabel(startBar, pMmean, "+M μ  " + str.tostring(pMmean, format.mintick), colM))
-            array.push(g.labels, mkLabel(startBar, pMmed,  "+M ~  " + str.tostring(pMmed,  format.mintick), colM))
-            array.push(g.labels, mkLabel(startBar, nMmean, "-M μ  " + str.tostring(nMmean, format.mintick), colM))
-            array.push(g.labels, mkLabel(startBar, nMmed,  "-M ~  " + str.tostring(nMmed,  format.mintick), colM))
-
-    // Distribution +/- (mean & median)
+        f_drawSet(g, startBar, lvlPMm, lvlPMd, lvlPMp, colM, "+M")
+        f_drawSet(g, startBar, lvlNMm, lvlNMd, lvlNMp, colM, "-M")
     if showD
-        pDmean = curO * (1 + dMean), pDmed = curO * (1 + dMed)
-        nDmean = curO * (1 - dMean), nDmed = curO * (1 - dMed)
-        d1 = mkLine(startBar, pDmean, colD, line.style_solid,  1)
-        d2 = mkLine(startBar, pDmed,  colD, line.style_dashed, 1)
-        d3 = mkLine(startBar, nDmean, colD, line.style_solid,  1)
-        d4 = mkLine(startBar, nDmed,  colD, line.style_dashed, 1)
-        array.push(g.lines, d1), array.push(g.lines, d2)
-        array.push(g.lines, d3), array.push(g.lines, d4)
-        if showFill
-            array.push(g.fills, linefill.new(d1, d2, color.new(colD, 88)))
-            array.push(g.fills, linefill.new(d3, d4, color.new(colD, 88)))
-        if showLabels
-            array.push(g.labels, mkLabel(startBar, pDmean, "+D μ  " + str.tostring(pDmean, format.mintick), colD))
-            array.push(g.labels, mkLabel(startBar, pDmed,  "+D ~  " + str.tostring(pDmed,  format.mintick), colD))
-            array.push(g.labels, mkLabel(startBar, nDmean, "-D μ  " + str.tostring(nDmean, format.mintick), colD))
-            array.push(g.labels, mkLabel(startBar, nDmed,  "-D ~  " + str.tostring(nDmed,  format.mintick), colD))
+        f_drawSet(g, startBar, lvlPDm, lvlPDd, lvlPDp, colD, "+D")
+        f_drawSet(g, startBar, lvlNDm, lvlNDd, lvlNDp, colD, "-D")
 
     array.push(groups, g)
     active := g
-
-    // trim old periods
     if array.size(groups) > periodsShow
         old = array.shift(groups)
         for fl in old.fills
@@ -292,7 +625,6 @@ if newP and hasStats
         for lb in old.labels
             label.delete(lb)
 
-// ---------------- Extend active period's lines to the right -------------------
 if not na(active)
     rightX = extendCur ? math.max(startBar + projBars, bar_index) : startBar + projBars
     for ln in active.lines
@@ -300,65 +632,242 @@ if not na(active)
     for lb in active.labels
         label.set_x(lb, rightX)
 
-// --------------------------------- Stats table --------------------------------
+// ======================= Sequencing & timing (chart TF) =======================
+// Intra-period ordering is invisible on higher-timeframe bars, so this is
+// measured on the chart's own bars and carries its own smaller sample.
+var int   pBars   = 0
+var int   hiBar   = 0
+var int   loBar   = 0
+var float pHi     = na
+var float pLo     = na
+var bool  tagM    = false
+var bool  tagD    = false
+var int   firstM  = -1
+var int   firstD  = -1
+var float lockPM  = na
+var float lockNM  = na
+var float lockPD  = na
+var float lockND  = na
+
+var float seqN     = 0.0
+var float seqMwin  = 0.0
+var float seqDwin  = 0.0
+var float sumHiFr  = 0.0
+var float sumLoFr  = 0.0
+var float sumMFr   = 0.0
+var float mFrN     = 0.0
+var float extN     = 0.0
+
+if newP
+    if pBars > 1 and not na(pHi)
+        float span = math.max(1.0, float(pBars - 1))
+        sumHiFr += float(hiBar) / span
+        sumLoFr += float(loBar) / span
+        extN += 1.0
+        if firstM >= 0 or firstD >= 0
+            seqN += 1.0
+            if firstM >= 0 and (firstD < 0 or firstM < firstD)
+                seqMwin += 1.0
+            else if firstD >= 0
+                seqDwin += 1.0
+        if firstM >= 0
+            sumMFr += float(firstM) / span
+            mFrN += 1.0
+    pBars := 0
+    hiBar := 0
+    loBar := 0
+    pHi := high
+    pLo := low
+    tagM := false
+    tagD := false
+    firstM := -1
+    firstD := -1
+    lockPM := lvlPMd
+    lockNM := lvlNMd
+    lockPD := lvlPDd
+    lockND := lvlNDd
+else
+    pBars += 1
+    if na(pHi) or high > pHi
+        pHi := high
+        hiBar := pBars
+    if na(pLo) or low < pLo
+        pLo := low
+        loBar := pBars
+
+hitPMnow = not na(lockPM) and high >= lockPM
+hitNMnow = not na(lockNM) and low <= lockNM
+hitPDnow = not na(lockPD) and high >= lockPD
+hitNDnow = not na(lockND) and low <= lockND
+
+newTagM = (hitPMnow or hitNMnow) and not tagM
+newTagD = (hitPDnow or hitNDnow) and not tagD
+if newTagM
+    tagM := true
+    firstM := pBars
+if newTagD
+    tagD := true
+    firstD := pBars
+
+// A manipulation is only "confirmed" once price closes back through the level
+// it swept — the reversal, not the touch, is the signal.
+confM = tagM and ((hitPMnow and close < lockPM) or (hitNMnow and close > lockNM))
+
+// ================================== Alerts ====================================
+alertcondition(newTagM, "Manipulation level tagged", "Price reached a manipulation level")
+alertcondition(newTagD, "Distribution level tagged", "Price reached a distribution target")
+alertcondition(confM,   "Manipulation confirmed",    "Price swept a manipulation level and closed back through")
+
+if alertOn
+    if newTagM
+        alert("Manipulation level tagged on " + syminfo.ticker + " (" + tfSel + " projection)", alert.freq_once_per_bar)
+    if newTagD
+        alert("Distribution target tagged on " + syminfo.ticker + " (" + tfSel + " projection)", alert.freq_once_per_bar)
+    if confM
+        alert("Manipulation CONFIRMED on " + syminfo.ticker + " — swept and closed back through", alert.freq_once_per_bar)
+
+// ================================ Confluence ==================================
+// Where levels from different timeframes stack up is where reactions cluster.
+var array<box> cfBoxes = array.new<box>()
+
+f_lvlsOf(Res s, float atrp, float o) =>
+    array<float> a = array.new<float>()
+    float ap = transform == "Log + ATR" ? atrp : na
+    array.push(a, f_lvl(transform, s.d0, o, ap, true))
+    array.push(a, f_lvl(transform, s.p0, o, ap, true))
+    array.push(a, f_lvl(transform, s.d1, o, ap, false))
+    array.push(a, f_lvl(transform, s.p1, o, ap, false))
+    array.push(a, f_lvl(transform, s.d2, o, ap, true))
+    array.push(a, f_lvl(transform, s.p2, o, ap, true))
+    array.push(a, f_lvl(transform, s.d3, o, ap, false))
+    array.push(a, f_lvl(transform, s.p3, o, ap, false))
+    a
+
+if barstate.islast and (cf2On or cf3On)
+    for bx in cfBoxes
+        box.delete(bx)
+    array.clear(cfBoxes)
+    array<float> base = f_lvlsOf(s1, chartAtrP, curO)
+    array<float> other = array.new<float>()
+    if cf2On
+        array<float> b2 = f_lvlsOf(sB, chartAtrB, curO)
+        for v in b2
+            array.push(other, v)
+    if cf3On
+        array<float> b3 = f_lvlsOf(sC, chartAtrC, curO)
+        for v in b3
+            array.push(other, v)
+    int x1 = math.max(0, bar_index - projBars)
+    for a in base
+        if not na(a)
+            for b in other
+                if not na(b) and math.abs(a - b) / a * 100.0 <= cfTol
+                    float lo = math.min(a, b)
+                    float hi = math.max(a, b)
+                    float pad = a * cfTol / 100.0 * 0.5
+                    array.push(cfBoxes, box.new(x1, hi + pad, bar_index + projBars, lo - pad,
+                         border_color=color.new(color.yellow, 60), bgcolor=cfCol, xloc=xloc.bar_index))
+                    break
+
+// ================================ Stats table =================================
 posSel  = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : tblPos == "middle_right" ? position.middle_right : position.top_right
 sizeSel = tblSize == "tiny" ? size.tiny : tblSize == "small" ? size.small : tblSize == "large" ? size.large : size.normal
 
-f_hold(int hold, int tag) =>
-    tag > 0 ? str.tostring(math.round(hold / tag * 100)) + "%" : "—"
+// Units follow the measure: ATR mode is dimensionless, the rest are percentages.
+f_ratio(float v) =>
+    na(v) ? "—" : transform == "Log + ATR" ? str.tostring(v, "#.##") + "x" : str.tostring(v * 100, "#.##") + "%"
 
-var table t = table.new(posSel, 5, 6, border_width=1, frame_color=color.new(color.gray, 50), frame_width=1)
+f_ratioSe(float v, float se) =>
+    na(v) ? "—" : f_ratio(v) + (na(se) ? "" : " ±" + (transform == "Log + ATR" ? str.tostring(se, "#.##") : str.tostring(se * 100, "#.##")))
+
+f_rate(float r) => na(r) ? "—" : str.tostring(math.round(r * 100)) + "%"
+
+var table t = table.new(posSel, 7, 12, border_width=1, frame_color=color.new(color.gray, 50), frame_width=1)
 
 if barstate.islast and showTbl
-    bg  = color.new(color.black, 20)
-    hbg = color.new(color.gray, 40)
-    txt = color.white
+    bg   = color.new(color.black, 20)
+    hbg  = color.new(color.gray, 40)
+    warn = color.new(color.orange, 35)
+    txt  = color.white
+    rowBg = thin ? warn : bg
 
-    mMeanS = hasStats ? str.tostring(mMean * 100, "#.##") + "%" : "—"
-    mMedS  = hasStats ? str.tostring(mMed  * 100, "#.##") + "%" : "—"
-    dMeanS = hasStats ? str.tostring(dMean * 100, "#.##") + "%" : "—"
-    dMedS  = hasStats ? str.tostring(dMed  * 100, "#.##") + "%" : "—"
+    table.cell(t, 0, 0, tfSel, bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Measure: " + transform + (uncondMode ? " · unconditional" : " · conditional") + (recOn ? " · half-life " + str.tostring(halfLife) : "") + (condMode != "None" ? " · conditioned on " + condMode : ""))
+    table.cell(t, 1, 0, "Mean ±SE", bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 0, "Median",   bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 3, 0, "Pctile",   bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 0, "Reach",    bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="How often price TOUCHED the median level. This is the number you want for setting targets.")
+    table.cell(t, 5, 0, "Hold",     bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Of the times it was reached, how often price closed back through it — the reversal rate.")
+    table.cell(t, 6, 0, "n",        bgcolor=hbg, text_color=txt, text_size=sizeSel)
 
-    // header row
-    table.cell(t, 0, 0, tfSel, bgcolor=hbg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 1, 0, "Mean",  bgcolor=hbg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 0, "Hold",  bgcolor=hbg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 3, 0, "Med",   bgcolor=hbg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 0, "Hold",  bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    // +M
+    table.cell(t, 0, 1, "+M", bgcolor=rowBg, text_color=colM, text_size=sizeSel)
+    table.cell(t, 1, 1, f_ratioSe(mean0, se0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 1, f_ratio(med0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 3, 1, f_ratio(pct0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 1, f_rate(s1.rd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp0))
+    table.cell(t, 5, 1, f_rate(s1.hd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp0))
+    table.cell(t, 6, 1, str.tostring(n0, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
-    // Manipulation row (ratio + hold-rate); tooltip shows sample size n
-    table.cell(t, 0, 1, "Manip (M)", bgcolor=bg, text_color=colM, text_size=sizeSel)
-    table.cell(t, 1, 1, mMeanS, bgcolor=bg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 1, f_hold(mMeanHold, mMeanTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(mMeanTag))
-    table.cell(t, 3, 1, mMedS, bgcolor=bg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 1, f_hold(mMedHold, mMedTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(mMedTag))
+    // -M
+    table.cell(t, 0, 2, "-M", bgcolor=rowBg, text_color=colM, text_size=sizeSel)
+    table.cell(t, 1, 2, f_ratioSe(mean1, se1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 2, f_ratio(med1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 3, 2, f_ratio(pct1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 2, f_rate(s1.rd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp1))
+    table.cell(t, 5, 2, f_rate(s1.hd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp1))
+    table.cell(t, 6, 2, str.tostring(n1, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
-    // Distribution row
-    table.cell(t, 0, 2, "Distr (D)", bgcolor=bg, text_color=colD, text_size=sizeSel)
-    table.cell(t, 1, 2, dMeanS, bgcolor=bg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 2, f_hold(dMeanHold, dMeanTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(dMeanTag))
-    table.cell(t, 3, 2, dMedS, bgcolor=bg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 2, f_hold(dMedHold, dMedTag), bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="n=" + str.tostring(dMedTag))
+    // +D
+    table.cell(t, 0, 3, "+D", bgcolor=rowBg, text_color=colD, text_size=sizeSel)
+    table.cell(t, 1, 3, f_ratioSe(mean2, se2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 3, f_ratio(med2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 3, 3, f_ratio(pct2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 3, f_rate(s1.rd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp2))
+    table.cell(t, 5, 3, f_rate(s1.hd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp2))
+    table.cell(t, 6, 3, str.tostring(n2, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
-    // current open
-    table.cell(t, 0, 3, "Open", bgcolor=bg, text_color=colO, text_size=sizeSel)
-    table.cell(t, 1, 3, na(curO) ? "—" : str.tostring(curO, format.mintick), bgcolor=bg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 3, "", bgcolor=bg)
-    table.cell(t, 3, 3, "", bgcolor=bg)
-    table.cell(t, 4, 3, "", bgcolor=bg)
+    // -D
+    table.cell(t, 0, 4, "-D", bgcolor=rowBg, text_color=colD, text_size=sizeSel)
+    table.cell(t, 1, 4, f_ratioSe(mean3, se3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 4, f_ratio(med3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 3, 4, f_ratio(pct3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 4, f_rate(s1.rd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp3))
+    table.cell(t, 5, 4, f_rate(s1.hd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp3))
+    table.cell(t, 6, 4, str.tostring(n3, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
-    // sample count
-    table.cell(t, 0, 4, "Sample", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 1, 4, str.tostring(sampleN), bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 2, 4, "periods", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 3, 4, "", bgcolor=bg)
-    table.cell(t, 4, 4, "", bgcolor=bg)
+    // Open / whipsaw
+    table.cell(t, 0, 5, "Open", bgcolor=bg, text_color=colO, text_size=sizeSel)
+    table.cell(t, 1, 5, na(curO) ? "—" : str.tostring(curO, format.mintick), bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 2, 5, "both-side", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip="How often BOTH manipulation levels were tagged in the same period — the whipsaw rate, i.e. how often this model's premise fails.")
+    table.cell(t, 3, 5, f_rate(s1.bothR), bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 4, 5, "vol", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+    table.cell(t, 5, 5, na(chartAtrP) ? "—" : str.tostring(chartAtrP * 100, "#.##") + "%", bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="Current ATR as a percentage of price on the projection timeframe. In 'Log + ATR' mode this is the scale every stored ratio is multiplied by.")
+    table.cell(t, 6, 5, "", bgcolor=bg)
 
-    // data source
+    // Source / sample
     nFeeds = 1 + (use2 ? 1 : 0) + (use3 ? 1 : 0)
     srcTip = statSym1 + (use2 ? "\n" + sym2 : "") + (use3 ? "\n" + sym3 : "")
-    table.cell(t, 0, 5, "Source", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 1, 5, useCustomFeed ? statSym1 : "Chart", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
-    table.cell(t, 2, 5, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
-    table.cell(t, 3, 5, "", bgcolor=bg)
-    table.cell(t, 4, 5, "", bgcolor=bg)
+    table.cell(t, 0, 6, "Source", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+    table.cell(t, 1, 6, useCustomFeed ? statSym1 : "Chart", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
+    table.cell(t, 2, 6, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
+    table.cell(t, 3, 6, "scored", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+    table.cell(t, 4, 6, str.tostring(s1.evalN, "#"), bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip="Periods scored walk-forward for the reach/hold columns, over the same rolling window as the ratios.")
+    table.cell(t, 5, 6, thin ? "THIN SAMPLE" : "", bgcolor=thin ? warn : bg, text_color=txt, text_size=sizeSel, tooltip=thin ? "At least one level has fewer than " + str.tostring(minSample) + " samples. Treat these levels as indicative only." : "")
+    table.cell(t, 6, 6, "", bgcolor=bg)
+
+    if showSeq
+        table.cell(t, 0, 7, "Sequence", bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Measured on the chart timeframe over " + str.tostring(seqN, "#") + " periods — a much smaller sample than the level statistics above.")
+        table.cell(t, 1, 7, "M first", bgcolor=bg, text_color=colM, text_size=sizeSel)
+        table.cell(t, 2, 7, seqN > 0 ? f_rate(seqMwin / seqN) : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
+        table.cell(t, 3, 7, "D first", bgcolor=bg, text_color=colD, text_size=sizeSel)
+        table.cell(t, 4, 7, seqN > 0 ? f_rate(seqDwin / seqN) : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
+        table.cell(t, 5, 7, "n=" + str.tostring(seqN, "#"), bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+        table.cell(t, 6, 7, "", bgcolor=bg)
+
+        table.cell(t, 0, 8, "Timing", bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Average position within the period, as a fraction of its length, at which each event printed.")
+        table.cell(t, 1, 8, "high at", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+        table.cell(t, 2, 8, extN > 0 ? str.tostring(sumHiFr / extN * 100, "#") + "%" : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
+        table.cell(t, 3, 8, "low at", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+        table.cell(t, 4, 8, extN > 0 ? str.tostring(sumLoFr / extN * 100, "#") + "%" : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
+        table.cell(t, 5, 8, "M tag at", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
+        table.cell(t, 6, 8, mFrN > 0 ? str.tostring(sumMFr / mFrN * 100, "#") + "%" : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
