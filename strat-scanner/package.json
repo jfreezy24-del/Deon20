@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "alert": "tsx server/scan-and-notify.ts",
     "algo-alert": "tsx server/algo-alerts.ts",
-    "weekly-crypto": "tsx server/weekly-crypto.ts"
+    "weekly-crypto": "tsx server/weekly-crypto.ts",
+    "ladder-fills": "tsx server/ladder-fills.ts"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.1.2",

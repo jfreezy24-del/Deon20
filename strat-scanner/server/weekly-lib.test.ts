@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   assetField,
+  formatFillsDiscord,
   parseWebhooks,
+  positionLine,
   chunkEmbeds,
   describeDiscord,
   fmtPrice,
@@ -65,6 +67,78 @@ const asset = (over: Partial<WeeklyAsset> = {}): WeeklyAsset => ({
   dca: plan(),
   structure: structure(),
   ...over,
+});
+
+describe('positionLine', () => {
+  it('reports fills against the plan', () => {
+    expect(
+      positionLine({
+        filledCount: 3,
+        totalCount: 4,
+        averageFill: 171,
+        deployedPct: 72,
+        plannedAverage: 166,
+      }),
+    ).toBe('3 of 4 filled, average $171 against $166 planned, 72% deployed');
+  });
+
+  it('says nothing at all before the first fill', () => {
+    expect(
+      positionLine({
+        filledCount: 0,
+        totalCount: 4,
+        averageFill: null,
+        deployedPct: 0,
+        plannedAverage: 166,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('formatFillsDiscord', () => {
+  const fill = (over = {}) => ({
+    symbol: 'SOL-USD',
+    price: 186,
+    allocationPct: 20,
+    source: 'Prior week low',
+    filledOn: '2026-08-13',
+    ...over,
+  });
+
+  it('groups fills by symbol', () => {
+    const msg = formatFillsDiscord(
+      [fill(), fill({ price: 171, allocationPct: 24 }), fill({ symbol: 'BTC-USD' })],
+      [],
+    );
+    expect(msg.embeds[0].fields).toHaveLength(2);
+    expect(msg.embeds[0].fields?.[0].name).toContain('SOL-USD · 2 rungs filled');
+    expect(msg.embeds[0].fields?.[0].value).toContain('20% at $186 on 2026-08-13');
+  });
+
+  it('lists expired rungs separately from fills', () => {
+    const msg = formatFillsDiscord(
+      [],
+      [
+        {
+          price: 120,
+          allocationPct: 29,
+          source: 'Monthly pivot low',
+          timeframe: 'M',
+          placedOn: '2026-01-01',
+          filledOn: null,
+          ageDays: 120,
+        },
+      ],
+    );
+    expect(msg.embeds[0].title).toBe('Stale rungs cleared');
+    expect(msg.embeds[0].fields?.[0].name).toBe('Expired, never filled');
+    expect(msg.embeds[0].fields?.[0].value).toContain('resting 120 days');
+  });
+
+  it('colours a fill green and a bare expiry amber', () => {
+    expect(formatFillsDiscord([fill()], []).embeds[0].color).toBe(0x57f287);
+    expect(formatFillsDiscord([], []).embeds[0].color).toBe(0xfee75c);
+  });
 });
 
 describe('parseWebhooks', () => {
