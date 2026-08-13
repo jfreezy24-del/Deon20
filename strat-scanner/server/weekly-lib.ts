@@ -2,6 +2,7 @@ import { continuityStrip } from '../src/strat/continuity';
 import { DcaPlan } from '../src/strat/dca';
 import { firstRungDistance, WeeklyAsset, WeeklyReport } from '../src/crypto/weeklyReport';
 import { money, Writeup } from '../src/crypto/writeup';
+import { CostBasis, ExpiredRung, FillEvent } from '../src/crypto/ladderState';
 import { PushMessage } from './lib';
 
 /** Discord rejects messages over 2000 characters; leave room for the fences. */
@@ -160,15 +161,17 @@ export function ladderTable(dca: DcaPlan): string {
 }
 
 /** One asset inside its stance group: heading line plus the ladder table. */
-export function assetField(a: WeeklyAsset): DiscordField {
+export function assetField(a: WeeklyAsset, basis?: CostBasis): DiscordField {
   const move =
     a.weekChangePct === null
       ? ''
       : ` · ${a.weekChangePct >= 0 ? '▲' : '▼'} ${Math.abs(a.weekChangePct).toFixed(1)}%`;
 
+  const position = basis ? positionLine(basis) : null;
+
   return {
     name: `${a.symbol}${a.name ? ` · ${a.name}` : ''} · $${fmtPrice(a.lastPrice)}${move}`,
-    value: `\`\`\`\n${ladderTable(a.dca)}\n\`\`\``,
+    value: `\`\`\`\n${ladderTable(a.dca)}\n\`\`\`${position ? `\n-# ${position}` : ''}`,
   };
 }
 
@@ -176,7 +179,10 @@ export function assetField(a: WeeklyAsset): DiscordField {
 const MAX_FIELDS_PER_EMBED = 25;
 
 /** One card per stance, coloured to match, holding every asset in that group. */
-export function stanceEmbeds(assets: WeeklyAsset[]): DiscordEmbed[] {
+export function stanceEmbeds(
+  assets: WeeklyAsset[],
+  basisFor: (symbol: string) => CostBasis | undefined = () => undefined,
+): DiscordEmbed[] {
   const embeds: DiscordEmbed[] = [];
 
   for (const stance of STANCE_ORDER) {
@@ -190,7 +196,7 @@ export function stanceEmbeds(assets: WeeklyAsset[]): DiscordEmbed[] {
       embeds.push({
         title: `${STANCE_DOT[stance]} ${STANCE_TITLE[stance]}`,
         color: STANCE_COLOR[stance],
-        fields: slice.map(assetField),
+        fields: slice.map((a) => assetField(a, basisFor(a.symbol))),
       });
     }
   }
@@ -224,8 +230,11 @@ export function chunkEmbeds(embeds: DiscordEmbed[]): DiscordEmbed[][] {
 }
 
 /** The whole report as Discord-ready messages, in order. */
-export function formatWeeklyDiscord(report: WeeklyReport): DiscordMessage[] {
-  const groups = chunkEmbeds(stanceEmbeds(report.assets));
+export function formatWeeklyDiscord(
+  report: WeeklyReport,
+  basisFor: (symbol: string) => CostBasis | undefined = () => undefined,
+): DiscordMessage[] {
+  const groups = chunkEmbeds(stanceEmbeds(report.assets, basisFor));
   const header = `## 🪙 Crypto Weekly — week of ${report.weekOf}`;
   const messages: DiscordMessage[] = groups.map((embeds, i) => ({
     ...(i === 0 ? { content: header } : {}),
@@ -240,6 +249,55 @@ export function formatWeeklyDiscord(report: WeeklyReport): DiscordMessage[] {
     last.content = last.content ? `${last.content}\n${note}` : note;
   }
   return messages;
+}
+
+/** "3 of 4 filled, average $171 against $166 planned, 72% deployed" */
+export function positionLine(basis: CostBasis): string | null {
+  if (basis.filledCount === 0) return null;
+  const planned =
+    basis.plannedAverage !== null ? ` against ${money(basis.plannedAverage)} planned` : '';
+  return (
+    `${basis.filledCount} of ${basis.totalCount} filled, average ` +
+    `${money(basis.averageFill ?? 0)}${planned}, ${basis.deployedPct}% deployed`
+  );
+}
+
+/**
+ * A fill is the one thing here worth interrupting someone for: a resting bid
+ * became a position while they were not looking.
+ */
+export function formatFillsDiscord(fills: FillEvent[], expired: ExpiredRung[]): DiscordMessage {
+  const bySymbol = new Map<string, FillEvent[]>();
+  for (const fill of fills) {
+    bySymbol.set(fill.symbol, [...(bySymbol.get(fill.symbol) ?? []), fill]);
+  }
+
+  const fields: DiscordField[] = [...bySymbol.entries()].map(([symbol, events]) => ({
+    name: `${symbol} · ${events.length} rung${events.length > 1 ? 's' : ''} filled`,
+    value: events
+      .map((f) => `${f.allocationPct}% at ${money(f.price)} on ${f.filledOn} (${f.source})`)
+      .join('\n'),
+  }));
+
+  if (expired.length > 0) {
+    fields.push({
+      name: 'Expired, never filled',
+      value: expired
+        .map((r) => `${r.allocationPct}% at ${money(r.price)}, resting ${r.ageDays} days`)
+        .join('\n'),
+    });
+  }
+
+  return {
+    content: `## 🎯 Ladder fills`,
+    embeds: [
+      {
+        title: fills.length > 0 ? `${fills.length} rung(s) filled` : 'Stale rungs cleared',
+        color: fills.length > 0 ? 0x57f287 : 0xfee75c,
+        fields,
+      },
+    ],
+  };
 }
 
 /**

@@ -37,6 +37,8 @@ import {
 } from './weekly-lib';
 import { buildWriteup } from '../src/crypto/writeup';
 import { loadSymbolList } from './watchlist-file';
+import { loadState, saveState } from './state-file';
+import { costBasis, isoDate, reconcilePlan } from '../src/crypto/ladderState';
 
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
 
@@ -128,6 +130,23 @@ async function main() {
       `${report.errors.length} errors.`,
   );
 
+  // Fold this week's plan into the tracked position: filled rungs are kept,
+  // and a level the plan still wants keeps its original placement date so the
+  // staleness clock is not reset by republishing the same ladder.
+  const state = loadState();
+  const today = isoDate(report.generatedAt);
+  for (const asset of report.assets) {
+    const existing = state.positions[asset.symbol];
+    state.positions[asset.symbol] = {
+      ...reconcilePlan(existing, asset.dca.rungs, today),
+      symbol: asset.symbol,
+    };
+  }
+  const basisFor = (symbol: string) => {
+    const position = state.positions[symbol];
+    return position ? costBasis(position) : undefined;
+  };
+
   // The ladder report covers the whole universe; the written analysis covers
   // one symbol in depth and rides along as its own message.
   const writeupSymbol = (process.env.WRITEUP_SYMBOL ?? 'SOL-USD').trim().toUpperCase();
@@ -137,7 +156,7 @@ async function main() {
   }
 
   const discordMessages = [
-    ...formatWeeklyDiscord(report),
+    ...formatWeeklyDiscord(report, basisFor),
     ...(subject
       ? [
           formatWriteupDiscord(
@@ -208,6 +227,10 @@ async function main() {
     }
     if (discordWebhooks.length > 0) await pause(600);
   }
+
+  // Saved after sending so the tracked plan matches what was published.
+  saveState(state);
+  console.log('Ladder state saved.');
 
   if (sendErrors.length > 0) {
     throw new Error(`${sendErrors.length} message(s) failed to send: ${sendErrors[0]}`);

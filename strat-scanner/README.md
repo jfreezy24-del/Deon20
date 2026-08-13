@@ -258,6 +258,45 @@ Alpaca's crypto history starts around 2021, so monthly structure runs ~5 years
 deep rather than Yahoo's 10. That is well past what the ladder uses — the depth
 cap discards anything that old anyway.
 
+## 🎯 Ladder fills (the position record)
+
+The weekly report plans where the bids go. A second workflow
+(`.github/workflows/ladder-fills.yml`) runs **daily at 00:20 UTC** and records
+what happened to them.
+
+**Fill alerts.** Any rung price traded down to is marked filled, on the day it
+happened rather than up to a week later. A touch counts as a fill: these are
+resting limit orders, so a bar whose low reaches the level would have executed
+it. Fills push to ntfy at high priority and post to Discord.
+
+**Running cost basis.** Each ladder card in the weekly report carries a line
+like `3 of 4 filled, average $171 against $166 planned, 72% deployed`. The
+average is weighted by allocation, not by rung count, so a big deep fill moves
+it more than a small shallow one.
+
+**Stale rung expiry.** A rung that rests unfilled past `RUNG_TTL_DAYS`
+(default 90) is dropped and reported. A level only means something while the
+structure that produced it still stands; months later it is a stale order, not
+a plan. Filled rungs are never expired, because they are the position.
+
+Republishing the same ladder every week does **not** reset the staleness
+clock: a level the new plan still wants keeps its original placement date.
+Without that, nothing could ever go stale.
+
+The record lives in `data/ladder-state.json`, **committed to the repo** rather
+than kept in the Actions cache. A cache is evictable, and a position record
+you lose is worse than one you never had; committing it also means every fill
+shows up in git history. Both workflows share a concurrency group so they
+never write it at once, and an unreadable state file stops the run rather than
+silently starting over, which would re-report every old rung as a new fill.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RUNG_TTL_DAYS` | `90` | Days a rung may rest unfilled before expiring |
+
+Run it anywhere with Node 18+: `DRY_RUN=true npm run ladder-fills` prints what
+would be recorded and saves nothing.
+
 ## Development
 
 ```bash

@@ -1,35 +1,29 @@
-name: Crypto Weekly Report
+name: Ladder Fills
 
 on:
   schedule:
-    # Mondays 01:00 UTC — an hour after the weekly crypto candle closes, so the
-    # week that just ended is a completed bar and its high/low are the levels
-    # the report plans around. (Sunday 9pm ET / 8pm CT.)
-    - cron: '0 1 * * 1'
+    # Daily at 00:20 UTC, after the crypto daily candle closes, so the bar
+    # being checked is complete.
+    - cron: '20 0 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Print the report to the run log instead of sending it'
-        type: boolean
-        default: false
-      test_ping:
-        description: 'Send one test notification to verify delivery (skips the scan)'
+        description: 'Print fills to the log, send nothing and save no state'
         type: boolean
         default: false
 
-# The weekly run seeds the tracked ladder, which is committed.
+# The position record is committed, so this job needs write access.
 permissions:
   contents: write
 
-# Shares a group with Ladder Fills: both write the position record.
 concurrency:
   group: ladder-state
   cancel-in-progress: false
 
 jobs:
-  report:
+  fills:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: strat-scanner
@@ -45,27 +39,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The weekly report is stateless: it always publishes the current picture,
-      # so there is no dedupe cache to restore or save.
-      - name: Build and send the weekly crypto report
+      - name: Check ladder fills
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_SERVER: ${{ vars.NTFY_SERVER }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
-          # Optional: Alpaca crypto bars are free, and the client works without
-          # credentials. Set both secrets if Alpaca ever requires auth.
           APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
-          # Set to 'yahoo' to pin crypto back to the old source without a deploy.
           CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
-          WEEKLY_NTFY_ASSETS: ${{ vars.WEEKLY_NTFY_ASSETS || '4' }}
+          RUNG_TTL_DAYS: ${{ vars.RUNG_TTL_DAYS || '90' }}
           DRY_RUN: ${{ inputs.dry_run }}
-          TEST_PING: ${{ inputs.test_ping }}
-        run: npm run weekly-crypto
+        run: npm run ladder-fills
 
+      # Every fill lands in git history, so the position record is auditable.
       - name: Commit the position record
-        if: ${{ !inputs.dry_run && !inputs.test_ping }}
+        if: ${{ !inputs.dry_run }}
         run: |
           cd "$GITHUB_WORKSPACE"
           if git diff --quiet -- strat-scanner/data/ladder-state.json; then
@@ -75,7 +63,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add strat-scanner/data/ladder-state.json
-          git commit -m "Update ladder plan record"
+          git commit -m "Update ladder position record"
           # The branch may have moved while the scan ran.
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
