@@ -68,7 +68,9 @@ jobs:
         if: ${{ !inputs.dry_run && !inputs.test_ping }}
         run: |
           cd "$GITHUB_WORKSPACE"
-          if git diff --quiet -- strat-scanner/data/ladder-state.json; then
+          # --porcelain, not diff: the record is untracked on its first write,
+          # and git diff does not report untracked files.
+          if [ -z "$(git status --porcelain -- strat-scanner/data/ladder-state.json)" ]; then
             echo "No ladder state change to commit."
             exit 0
           fi
