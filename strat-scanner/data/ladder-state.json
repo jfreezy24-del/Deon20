@@ -4,7 +4,7 @@
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
           "price": 75.681,
@@ -16,7 +16,7 @@
         },
         {
           "price": 72.141,
-          "allocationPct": 24,
+          "allocationPct": 28,
           "source": "Prior month low",
           "timeframe": "M",
           "placedOn": "2026-08-13",
@@ -24,15 +24,15 @@
         },
         {
           "price": 66.3454,
-          "allocationPct": 27,
-          "source": "Monthly pivot low",
-          "timeframe": "M",
+          "allocationPct": 34,
+          "source": "Weekly pivot low",
+          "timeframe": "W",
           "placedOn": "2026-08-13",
           "filledOn": null
         },
         {
           "price": 60.1779,
-          "allocationPct": 29,
+          "allocationPct": 38,
           "source": "Weekly pivot low",
           "timeframe": "W",
           "placedOn": "2026-08-13",
@@ -42,7 +42,7 @@
     },
     "AVAX-USD": {
       "symbol": "AVAX-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
           "price": 6.35,
@@ -72,7 +72,7 @@
     },
     "DOGE-USD": {
       "symbol": "DOGE-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
           "price": 0.069462,
@@ -81,6 +81,14 @@
           "timeframe": "W",
           "placedOn": "2026-08-13",
           "filledOn": "2026-08-13"
+        },
+        {
+          "price": 0.068218,
+          "allocationPct": 28,
+          "source": "Prior month low",
+          "timeframe": "M",
+          "placedOn": "2026-08-14",
+          "filledOn": null
         },
         {
           "price": 0.056373,
@@ -102,7 +110,7 @@
     },
     "BTC-USD": {
       "symbol": "BTC-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
           "price": 62216.21,
@@ -140,19 +148,11 @@
     },
     "LTC-USD": {
       "symbol": "LTC-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
-          "price": 43.9169,
-          "allocationPct": 28,
-          "source": "Prior week low",
-          "timeframe": "W",
-          "placedOn": "2026-08-13",
-          "filledOn": null
-        },
-        {
           "price": 41.0905,
-          "allocationPct": 34,
+          "allocationPct": 45,
           "source": "Prior month low",
           "timeframe": "M",
           "placedOn": "2026-08-13",
@@ -160,7 +160,7 @@
         },
         {
           "price": 39.2775,
-          "allocationPct": 38,
+          "allocationPct": 55,
           "source": "Weekly pivot low",
           "timeframe": "W",
           "placedOn": "2026-08-13",
@@ -170,7 +170,7 @@
     },
     "ETH-USD": {
       "symbol": "ETH-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
           "price": 1827.19,
@@ -208,7 +208,7 @@
     },
     "DOT-USD": {
       "symbol": "DOT-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
           "price": 0.743579,
@@ -219,41 +219,41 @@
           "filledOn": null
         },
         {
-          "price": 0.669456,
+          "price": 0.653539,
           "allocationPct": 24,
           "source": "Measured move",
           "timeframe": "W",
-          "placedOn": "2026-08-13",
+          "placedOn": "2026-08-14",
           "filledOn": null
         },
         {
-          "price": 0.56579,
+          "price": 0.552338,
           "allocationPct": 27,
           "source": "Measured move",
           "timeframe": "W",
-          "placedOn": "2026-08-13",
+          "placedOn": "2026-08-14",
           "filledOn": null
         },
         {
-          "price": 0.462124,
+          "price": 0.451136,
           "allocationPct": 29,
           "source": "Measured move",
           "timeframe": "W",
-          "placedOn": "2026-08-13",
+          "placedOn": "2026-08-14",
           "filledOn": null
         }
       ]
     },
     "LINK-USD": {
       "symbol": "LINK-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
-          "price": 8.1162,
+          "price": 8.057,
           "allocationPct": 45,
-          "source": "Monthly pivot low",
-          "timeframe": "M",
-          "placedOn": "2026-08-13",
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-08-14",
           "filledOn": null
         },
         {
@@ -268,37 +268,45 @@
     },
     "XRP-USD": {
       "symbol": "XRP-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
-          "price": 0.901069,
-          "allocationPct": 28,
+          "price": 0.890741,
+          "allocationPct": 20,
           "source": "Measured move",
           "timeframe": "W",
-          "placedOn": "2026-08-13",
+          "placedOn": "2026-08-14",
           "filledOn": null
         },
         {
-          "price": 0.791907,
-          "allocationPct": 34,
+          "price": 0.782831,
+          "allocationPct": 24,
           "source": "Measured move",
           "timeframe": "W",
-          "placedOn": "2026-08-13",
+          "placedOn": "2026-08-14",
           "filledOn": null
         },
         {
-          "price": 0.682746,
-          "allocationPct": 38,
+          "price": 0.67492,
+          "allocationPct": 27,
           "source": "Measured move",
           "timeframe": "W",
-          "placedOn": "2026-08-13",
+          "placedOn": "2026-08-14",
+          "filledOn": null
+        },
+        {
+          "price": 0.5076,
+          "allocationPct": 29,
+          "source": "Weekly pivot low",
+          "timeframe": "W",
+          "placedOn": "2026-08-14",
           "filledOn": null
         }
       ]
     },
     "ADA-USD": {
       "symbol": "ADA-USD",
-      "planDate": "2026-08-13",
+      "planDate": "2026-08-14",
       "rungs": [
         {
           "price": 0.148585,
