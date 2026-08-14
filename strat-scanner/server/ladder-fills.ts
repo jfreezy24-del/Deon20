@@ -15,6 +15,7 @@
  *   DISCORD_WEBHOOK_URL   webhook(s), comma separated
  *   APCA_API_KEY_ID       Alpaca key id                           (optional)
  *   APCA_API_SECRET_KEY   Alpaca secret                           (optional)
+ *   DISCORD_ROLE_ID       role to @mention on a fill, numeric id
  *   RUNG_TTL_DAYS         days a rung may rest unfilled          (default 90)
  *   DRY_RUN               'true' to print and send nothing, saving no state
  *
@@ -30,7 +31,14 @@ import {
   isoDate,
 } from '../src/crypto/ladderState';
 import { buildNtfyPayload, PushMessage } from './lib';
-import { formatFillsDiscord, parseWebhooks, positionLine } from './weekly-lib';
+import {
+  formatFillsDiscord,
+  parseRoleIds,
+  parseWebhooks,
+  positionLine,
+  roleForWebhook,
+  withRoleMention,
+} from './weekly-lib';
 import { money } from '../src/crypto/writeup';
 import { loadState, saveState } from './state-file';
 
@@ -80,6 +88,7 @@ async function main() {
   const topic = process.env.NTFY_TOPIC?.trim();
   const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
   const webhooks = parseWebhooks(process.env.DISCORD_WEBHOOK_URL);
+  const roleIds = parseRoleIds(process.env.DISCORD_ROLE_ID);
   const dryRun = isTrue(process.env.DRY_RUN);
   const ttlDays = num(process.env.RUNG_TTL_DAYS, 90);
   const today = isoDate(Date.now());
@@ -152,10 +161,12 @@ async function main() {
     }
     for (const [i, hook] of webhooks.entries()) {
       try {
-        await sendDiscord(hook, {
-          content: message.content,
-          embeds: message.embeds,
-        });
+        // A fill is a position opening while nobody watched: ping it. A bare
+        // expiry is housekeeping and does not deserve a notification.
+        await sendDiscord(
+          hook,
+          withRoleMention(message, fills.length > 0 ? roleForWebhook(roleIds, i) : undefined),
+        );
       } catch (e) {
         sendErrors.push(`webhook ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
       }

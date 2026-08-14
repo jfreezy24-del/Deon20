@@ -20,6 +20,9 @@
  *   CRYPTO_PROVIDER       'yahoo' to pin crypto back to the old source
  *   WEEKLY_NTFY_ASSETS    per-asset pushes after the digest           (default 4)
  *   WRITEUP_SYMBOL        symbol for the written analysis      (default SOL-USD)
+ *   DISCORD_ROLE_ID       role to @mention, numeric id. One id pings every
+ *                         channel; give one per webhook, in the same order,
+ *                         when the channels are in different servers.
  *   DRY_RUN               'true' to print the report and send nothing
  *   TEST_PING             'true' to send one delivery test and exit
  */
@@ -33,7 +36,10 @@ import {
   formatWeeklyDiscord,
   formatWeeklyNtfy,
   formatWriteupDiscord,
+  parseRoleIds,
   parseWebhooks,
+  roleForWebhook,
+  withRoleMention,
 } from './weekly-lib';
 import { buildWriteup } from '../src/crypto/writeup';
 import { loadSymbolList } from './watchlist-file';
@@ -68,6 +74,8 @@ async function sendDiscord(webhookUrl: string, message: DiscordMessage) {
     body: JSON.stringify({
       ...(message.content ? { content: message.content.slice(0, 2000) } : {}),
       embeds: message.embeds,
+      // Must be forwarded, or the role ping is parsed permissively instead.
+      ...(message.allowed_mentions ? { allowed_mentions: message.allowed_mentions } : {}),
     }),
   });
   if (!res.ok) throw new Error(`Discord responded ${res.status}: ${await res.text()}`);
@@ -80,6 +88,7 @@ async function main() {
   const topic = process.env.NTFY_TOPIC?.trim();
   const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
   const discordWebhooks = parseWebhooks(process.env.DISCORD_WEBHOOK_URL);
+  const roleIds = parseRoleIds(process.env.DISCORD_ROLE_ID);
   const email = process.env.ALERT_EMAIL?.trim() || undefined;
   const dryRun = isTrue(process.env.DRY_RUN);
 
@@ -215,7 +224,12 @@ async function main() {
   for (const [i, content] of discordMessages.entries()) {
     for (const [w, hook] of discordWebhooks.entries()) {
       try {
-        await sendDiscord(hook, content);
+        // Only the first message pings: the report is several messages, and
+        // one run should notify once.
+        await sendDiscord(
+          hook,
+          withRoleMention(content, i === 0 ? roleForWebhook(roleIds, w) : undefined),
+        );
         console.log(
           `  discord -> message ${i + 1}/${discordMessages.length} to webhook ${w + 1}/${discordWebhooks.length}`,
         );

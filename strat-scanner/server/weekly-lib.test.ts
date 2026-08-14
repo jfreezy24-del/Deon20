@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   assetField,
   formatFillsDiscord,
+  parseRoleIds,
   parseWebhooks,
   positionLine,
+  roleForWebhook,
+  withRoleMention,
   chunkEmbeds,
   describeDiscord,
   fmtPrice,
@@ -138,6 +141,49 @@ describe('formatFillsDiscord', () => {
   it('colours a fill green and a bare expiry amber', () => {
     expect(formatFillsDiscord([fill()], []).embeds[0].color).toBe(0x57f287);
     expect(formatFillsDiscord([], []).embeds[0].color).toBe(0xfee75c);
+  });
+});
+
+describe('role mentions', () => {
+  beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reads ids, bare or already wrapped', () => {
+    expect(parseRoleIds('123456789012345678')).toEqual(['123456789012345678']);
+    expect(parseRoleIds('<@&123456789012345678>')).toEqual(['123456789012345678']);
+    expect(parseRoleIds('111111111,222222222')).toEqual(['111111111', '222222222']);
+  });
+
+  it('ignores anything that is not a numeric id', () => {
+    expect(parseRoleIds('@traders')).toEqual([]);
+    expect(parseRoleIds(undefined)).toEqual([]);
+    expect(console.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses one id for every channel, or one per channel in order', () => {
+    expect(roleForWebhook(['111111111'], 0)).toBe('111111111');
+    expect(roleForWebhook(['111111111'], 3)).toBe('111111111');
+    expect(roleForWebhook(['111111111', '222222222'], 1)).toBe('222222222');
+    expect(roleForWebhook([], 0)).toBeUndefined();
+  });
+
+  it('puts the mention on the content line, never in an embed', () => {
+    const msg = withRoleMention({ content: '## Header', embeds: [] }, '111111111');
+    // Discord does not notify for mentions inside embeds.
+    expect(msg.content).toBe('<@&111111111> ## Header');
+    expect(JSON.stringify(msg.embeds)).not.toContain('111111111');
+  });
+
+  it('names the role explicitly so nothing else can ping', () => {
+    const msg = withRoleMention({ content: 'hi', embeds: [] }, '111111111');
+    expect(msg.allowed_mentions).toEqual({ parse: [], roles: ['111111111'] });
+  });
+
+  it('suppresses every mention when no role is configured', () => {
+    // A stray "@everyone" in an error string must not ping a server.
+    const msg = withRoleMention({ content: '@everyone hi', embeds: [] }, undefined);
+    expect(msg.allowed_mentions).toEqual({ parse: [] });
+    expect(msg.content).toBe('@everyone hi');
   });
 });
 

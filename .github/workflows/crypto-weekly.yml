@@ -59,6 +59,8 @@ jobs:
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
           # Set to 'yahoo' to pin crypto back to the old source without a deploy.
           CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+          # Numeric role id to @mention. Not a secret; a repo variable.
+          DISCORD_ROLE_ID: ${{ vars.DISCORD_ROLE_ID }}
           WEEKLY_NTFY_ASSETS: ${{ vars.WEEKLY_NTFY_ASSETS || '4' }}
           DRY_RUN: ${{ inputs.dry_run }}
           TEST_PING: ${{ inputs.test_ping }}

@@ -47,6 +47,8 @@ jobs:
           APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
           CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+          # Numeric role id to @mention. Not a secret; a repo variable.
+          DISCORD_ROLE_ID: ${{ vars.DISCORD_ROLE_ID }}
           RUNG_TTL_DAYS: ${{ vars.RUNG_TTL_DAYS || '90' }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: npm run ladder-fills
