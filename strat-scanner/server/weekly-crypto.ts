@@ -107,8 +107,17 @@ async function main() {
       console.log('Test ping sent (ntfy accepted it).');
     }
     for (const [i, hook] of discordWebhooks.entries()) {
-      await sendDiscord(hook, { content: `**${msg.title}**\n${msg.body}`, embeds: [] });
-      console.log(`Test ping sent (Discord webhook ${i + 1} accepted it).`);
+      // The test ping carries the role mention too: this is the cheap way to
+      // check a role id resolves, without republishing the whole report.
+      const roleId = roleForWebhook(roleIds, i);
+      await sendDiscord(
+        hook,
+        withRoleMention({ content: `**${msg.title}**\n${msg.body}`, embeds: [] }, roleId),
+      );
+      console.log(
+        `Test ping sent (Discord webhook ${i + 1} accepted it)` +
+          `${roleId ? ` mentioning role ${roleId}.` : ', no role configured.'}`,
+      );
     }
     return;
   }
