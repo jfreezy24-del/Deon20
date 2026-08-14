@@ -68,6 +68,46 @@ export function parseWebhooks(raw: string | undefined): string[] {
   return valid;
 }
 
+/**
+ * Discord role IDs to ping, read the same way as the webhooks.
+ *
+ * Give one ID to ping the same role everywhere, or one per webhook in the
+ * same order when the channels live in different servers: a role ID only
+ * resolves inside its own server, and elsewhere it renders as dead text.
+ */
+export function parseRoleIds(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(/[\s,]+/)
+    .map((id) => id.trim().replace(/^<@&|>$/g, ''))
+    .filter((id) => {
+      if (id === '') return false;
+      if (/^\d{5,25}$/.test(id)) return true;
+      console.warn('Ignoring an entry in DISCORD_ROLE_ID that is not a numeric role ID.');
+      return false;
+    });
+}
+
+/** The role to ping on webhook `index`: one ID covers every channel. */
+export const roleForWebhook = (roleIds: string[], index: number): string | undefined =>
+  roleIds.length === 1 ? roleIds[0] : roleIds[index];
+
+/**
+ * Attach a role ping to a message.
+ *
+ * The mention goes on the content line because Discord does not notify for
+ * mentions inside embeds, and allowed_mentions names the role explicitly:
+ * without it the payload is parsed permissively, so any stray "@everyone" in
+ * a symbol name or error string could ping the whole server.
+ */
+export function withRoleMention(message: DiscordMessage, roleId?: string): DiscordMessage {
+  if (!roleId) return { ...message, allowed_mentions: { parse: [] } };
+  return {
+    ...message,
+    content: `<@&${roleId}>${message.content ? ` ${message.content}` : ''}`,
+    allowed_mentions: { parse: [], roles: [roleId] },
+  };
+}
+
 /** Discord embed limits: 10 embeds per message, 6000 characters across them. */
 export const MAX_EMBEDS_PER_MESSAGE = 10;
 const MAX_EMBED_CHARS = 5500;
@@ -111,6 +151,8 @@ export interface DiscordEmbed {
 export interface DiscordMessage {
   content?: string;
   embeds: DiscordEmbed[];
+  /** Which mentions may actually notify; omitted means Discord parses all */
+  allowed_mentions?: { parse: string[]; roles?: string[] };
 }
 
 /** Groups are read best-first: where to add, then wait, then defend. */
