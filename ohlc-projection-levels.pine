@@ -491,6 +491,22 @@ sC = request.security(statSym1, tfC, f_engine(sampleLen, atrLen, transform, recO
 chartAtrB = request.security(syminfo.tickerid, tfB, ta.atr(atrLen)[1] / close[1])
 chartAtrC = request.security(syminfo.tickerid, tfC, ta.atr(atrLen)[1] / close[1])
 
+// A feed returns na for bars that predate its history — Coinbase has no 2011,
+// SPY has no 1970 — and reading a field off an na object is a runtime error,
+// not a silent na. Coarser charts reach further back, which is why this only
+// bit above 4H. Substitute an empty result so a feed that does not reach this
+// far back contributes nothing instead of taking the whole script down.
+var Res EMPTY = Res.new()
+e1 = na(s1) ? EMPTY : s1
+e2 = na(s2) ? EMPTY : s2
+e3 = na(s3) ? EMPTY : s3
+eB = na(sB) ? EMPTY : sB
+eC = na(sC) ? EMPTY : sC
+
+// Projection must be at least as coarse as the chart, or period detection
+// degenerates and every chart bar looks like a fresh period.
+tfInverted = timeframe.in_seconds(timeframe.period) > timeframe.in_seconds(tf)
+
 // =============================== Pooling ======================================
 // Sample-size-weighted blend. For the mean this is exact; for median and
 // percentile it is an approximation, which is acceptable because pooled feeds
@@ -506,30 +522,30 @@ f_poolN(float a, float b, float c) =>
     nz(a) + (use2 ? nz(b) : 0.0) + (use3 ? nz(c) : 0.0)
 
 // role 0 = +M, 1 = -M, 2 = +D, 3 = -D
-n0 = f_poolN(s1.n0, s2.n0, s3.n0)
-n1 = f_poolN(s1.n1, s2.n1, s3.n1)
-n2 = f_poolN(s1.n2, s2.n2, s3.n2)
-n3 = f_poolN(s1.n3, s2.n3, s3.n3)
+n0 = f_poolN(e1.n0, e2.n0, e3.n0)
+n1 = f_poolN(e1.n1, e2.n1, e3.n1)
+n2 = f_poolN(e1.n2, e2.n2, e3.n2)
+n3 = f_poolN(e1.n3, e2.n3, e3.n3)
 
-mean0 = f_pool(s1.m0, s2.m0, s3.m0, s1.n0, s2.n0, s3.n0)
-mean1 = f_pool(s1.m1, s2.m1, s3.m1, s1.n1, s2.n1, s3.n1)
-mean2 = f_pool(s1.m2, s2.m2, s3.m2, s1.n2, s2.n2, s3.n2)
-mean3 = f_pool(s1.m3, s2.m3, s3.m3, s1.n3, s2.n3, s3.n3)
-med0  = f_pool(s1.d0, s2.d0, s3.d0, s1.n0, s2.n0, s3.n0)
-med1  = f_pool(s1.d1, s2.d1, s3.d1, s1.n1, s2.n1, s3.n1)
-med2  = f_pool(s1.d2, s2.d2, s3.d2, s1.n2, s2.n2, s3.n2)
-med3  = f_pool(s1.d3, s2.d3, s3.d3, s1.n3, s2.n3, s3.n3)
-pct0  = f_pool(s1.p0, s2.p0, s3.p0, s1.n0, s2.n0, s3.n0)
-pct1  = f_pool(s1.p1, s2.p1, s3.p1, s1.n1, s2.n1, s3.n1)
-pct2  = f_pool(s1.p2, s2.p2, s3.p2, s1.n2, s2.n2, s3.n2)
-pct3  = f_pool(s1.p3, s2.p3, s3.p3, s1.n3, s2.n3, s3.n3)
+mean0 = f_pool(e1.m0, e2.m0, e3.m0, e1.n0, e2.n0, e3.n0)
+mean1 = f_pool(e1.m1, e2.m1, e3.m1, e1.n1, e2.n1, e3.n1)
+mean2 = f_pool(e1.m2, e2.m2, e3.m2, e1.n2, e2.n2, e3.n2)
+mean3 = f_pool(e1.m3, e2.m3, e3.m3, e1.n3, e2.n3, e3.n3)
+med0  = f_pool(e1.d0, e2.d0, e3.d0, e1.n0, e2.n0, e3.n0)
+med1  = f_pool(e1.d1, e2.d1, e3.d1, e1.n1, e2.n1, e3.n1)
+med2  = f_pool(e1.d2, e2.d2, e3.d2, e1.n2, e2.n2, e3.n2)
+med3  = f_pool(e1.d3, e2.d3, e3.d3, e1.n3, e2.n3, e3.n3)
+pct0  = f_pool(e1.p0, e2.p0, e3.p0, e1.n0, e2.n0, e3.n0)
+pct1  = f_pool(e1.p1, e2.p1, e3.p1, e1.n1, e2.n1, e3.n1)
+pct2  = f_pool(e1.p2, e2.p2, e3.p2, e1.n2, e2.n2, e3.n2)
+pct3  = f_pool(e1.p3, e2.p3, e3.p3, e1.n3, e2.n3, e3.n3)
 
 // Standard error of the mean: sd / sqrt(n). The honest width of the estimate.
 f_se(float sd, float n) => na(sd) or nz(n) < 2 ? na : sd / math.sqrt(n)
-se0 = f_se(s1.s0, s1.n0)
-se1 = f_se(s1.s1, s1.n1)
-se2 = f_se(s1.s2, s1.n2)
-se3 = f_se(s1.s3, s1.n3)
+se0 = f_se(e1.s0, e1.n0)
+se1 = f_se(e1.s1, e1.n1)
+se2 = f_se(e1.s2, e1.n2)
+se3 = f_se(e1.s3, e1.n3)
 
 smallestN = math.min(math.min(n0, n1), math.min(n2, n3))
 hasStats = smallestN >= 5
@@ -747,14 +763,14 @@ if barstate.islast and (cf2On or cf3On)
     for bx in cfBoxes
         box.delete(bx)
     array.clear(cfBoxes)
-    array<float> base = f_lvlsOf(s1, chartAtrP, curO)
+    array<float> base = f_lvlsOf(e1, chartAtrP, curO)
     array<float> other = array.new<float>()
     if cf2On
-        array<float> b2 = f_lvlsOf(sB, chartAtrB, curO)
+        array<float> b2 = f_lvlsOf(eB, chartAtrB, curO)
         for v in b2
             array.push(other, v)
     if cf3On
-        array<float> b3 = f_lvlsOf(sC, chartAtrC, curO)
+        array<float> b3 = f_lvlsOf(eC, chartAtrC, curO)
         for v in b3
             array.push(other, v)
     int x1 = math.max(0, bar_index - projBars)
@@ -804,8 +820,8 @@ if barstate.islast and showTbl
     table.cell(t, 1, 1, f_ratioSe(mean0, se0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 2, 1, f_ratio(med0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 3, 1, f_ratio(pct0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 1, f_rate(s1.rd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp0))
-    table.cell(t, 5, 1, f_rate(s1.hd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp0))
+    table.cell(t, 4, 1, f_rate(e1.rd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp0))
+    table.cell(t, 5, 1, f_rate(e1.hd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp0))
     table.cell(t, 6, 1, str.tostring(n0, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
     // -M
@@ -813,8 +829,8 @@ if barstate.islast and showTbl
     table.cell(t, 1, 2, f_ratioSe(mean1, se1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 2, 2, f_ratio(med1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 3, 2, f_ratio(pct1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 2, f_rate(s1.rd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp1))
-    table.cell(t, 5, 2, f_rate(s1.hd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp1))
+    table.cell(t, 4, 2, f_rate(e1.rd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp1))
+    table.cell(t, 5, 2, f_rate(e1.hd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp1))
     table.cell(t, 6, 2, str.tostring(n1, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
     // +D
@@ -822,8 +838,8 @@ if barstate.islast and showTbl
     table.cell(t, 1, 3, f_ratioSe(mean2, se2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 2, 3, f_ratio(med2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 3, 3, f_ratio(pct2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 3, f_rate(s1.rd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp2))
-    table.cell(t, 5, 3, f_rate(s1.hd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp2))
+    table.cell(t, 4, 3, f_rate(e1.rd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp2))
+    table.cell(t, 5, 3, f_rate(e1.hd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp2))
     table.cell(t, 6, 3, str.tostring(n2, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
     // -D
@@ -831,15 +847,15 @@ if barstate.islast and showTbl
     table.cell(t, 1, 4, f_ratioSe(mean3, se3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 2, 4, f_ratio(med3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
     table.cell(t, 3, 4, f_ratio(pct3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 4, f_rate(s1.rd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(s1.rp3))
-    table.cell(t, 5, 4, f_rate(s1.hd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(s1.hp3))
+    table.cell(t, 4, 4, f_rate(e1.rd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp3))
+    table.cell(t, 5, 4, f_rate(e1.hd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp3))
     table.cell(t, 6, 4, str.tostring(n3, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
 
     // Open / whipsaw
     table.cell(t, 0, 5, "Open", bgcolor=bg, text_color=colO, text_size=sizeSel)
     table.cell(t, 1, 5, na(curO) ? "—" : str.tostring(curO, format.mintick), bgcolor=bg, text_color=txt, text_size=sizeSel)
     table.cell(t, 2, 5, "both-side", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip="How often BOTH manipulation levels were tagged in the same period — the whipsaw rate, i.e. how often this model's premise fails.")
-    table.cell(t, 3, 5, f_rate(s1.bothR), bgcolor=bg, text_color=txt, text_size=sizeSel)
+    table.cell(t, 3, 5, f_rate(e1.bothR), bgcolor=bg, text_color=txt, text_size=sizeSel)
     table.cell(t, 4, 5, "vol", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
     table.cell(t, 5, 5, na(chartAtrP) ? "—" : str.tostring(chartAtrP * 100, "#.##") + "%", bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="Current ATR as a percentage of price on the projection timeframe. In 'Log + ATR' mode this is the scale every stored ratio is multiplied by.")
     table.cell(t, 6, 5, "", bgcolor=bg)
@@ -851,8 +867,8 @@ if barstate.islast and showTbl
     table.cell(t, 1, 6, useCustomFeed ? statSym1 : "Chart", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
     table.cell(t, 2, 6, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
     table.cell(t, 3, 6, "scored", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 4, 6, str.tostring(s1.evalN, "#"), bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip="Periods scored walk-forward for the reach/hold columns, over the same rolling window as the ratios.")
-    table.cell(t, 5, 6, thin ? "THIN SAMPLE" : "", bgcolor=thin ? warn : bg, text_color=txt, text_size=sizeSel, tooltip=thin ? "At least one level has fewer than " + str.tostring(minSample) + " samples. Treat these levels as indicative only." : "")
+    table.cell(t, 4, 6, str.tostring(e1.evalN, "#"), bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip="Periods scored walk-forward for the reach/hold columns, over the same rolling window as the ratios.")
+    table.cell(t, 5, 6, tfInverted ? "CHART > PROJ TF" : thin ? "THIN SAMPLE" : "", bgcolor=(tfInverted or thin) ? warn : bg, text_color=txt, text_size=sizeSel, tooltip=tfInverted ? "Your chart timeframe is coarser than the projection timeframe, so every chart bar registers as a new period and the levels are meaningless. Raise the projection timeframe above your chart timeframe." : thin ? "At least one level has fewer than " + str.tostring(minSample) + " samples. Treat these levels as indicative only." : "")
     table.cell(t, 6, 6, "", bgcolor=bg)
 
     if showSeq
