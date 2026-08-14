@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": null,
+  "lastCheckedOn": "2026-08-14",
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
@@ -12,7 +12,7 @@
           "source": "Weekly pivot low",
           "timeframe": "W",
           "placedOn": "2026-08-13",
-          "filledOn": null
+          "filledOn": "2026-08-13"
         },
         {
           "price": 72.141,
@@ -50,7 +50,7 @@
           "source": "Prior week low",
           "timeframe": "W",
           "placedOn": "2026-08-13",
-          "filledOn": null
+          "filledOn": "2026-08-13"
         },
         {
           "price": 6.1342,
@@ -80,7 +80,7 @@
           "source": "Weekly pivot low",
           "timeframe": "W",
           "placedOn": "2026-08-13",
-          "filledOn": null
+          "filledOn": "2026-08-13"
         },
         {
           "price": 0.056373,
