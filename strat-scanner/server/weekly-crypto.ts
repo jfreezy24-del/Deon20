@@ -33,9 +33,8 @@ import { buildNtfyPayload, PushMessage } from './lib';
 import {
   describeDiscord,
   DiscordMessage,
-  formatWeeklyDiscord,
+  composeWeeklyMessages,
   formatWeeklyNtfy,
-  formatWriteupDiscord,
   parseRoleIds,
   parseWebhooks,
   roleForWebhook,
@@ -173,25 +172,24 @@ async function main() {
     console.warn(`  WARN write-up symbol ${writeupSymbol} was not scanned — skipping the analysis.`);
   }
 
-  const discordMessages = [
-    ...formatWeeklyDiscord(report, basisFor),
-    ...(subject
-      ? [
-          formatWriteupDiscord(
-            buildWriteup({
-              symbol: subject.symbol,
-              name: subject.name,
-              lastPrice: subject.lastPrice,
-              weekChangePct: subject.weekChangePct,
-              continuity: subject.continuity,
-              structure: subject.structure,
-              dca: subject.dca,
-            }),
-            subject.dca,
-          ),
-        ]
-      : []),
-  ];
+  const discordMessages = composeWeeklyMessages(
+    report,
+    basisFor,
+    subject
+      ? {
+          writeup: buildWriteup({
+            symbol: subject.symbol,
+            name: subject.name,
+            lastPrice: subject.lastPrice,
+            weekChangePct: subject.weekChangePct,
+            continuity: subject.continuity,
+            structure: subject.structure,
+            dca: subject.dca,
+          }),
+          dca: subject.dca,
+        }
+      : undefined,
+  );
   const ntfyMessages = formatWeeklyNtfy(
     report,
     num(process.env.WEEKLY_NTFY_ASSETS, DEFAULT_WEEKLY_OPTIONS.maxFeatured),
@@ -233,8 +231,8 @@ async function main() {
   for (const [i, content] of discordMessages.entries()) {
     for (const [w, hook] of discordWebhooks.entries()) {
       try {
-        // Only the first message pings: the report is several messages, and
-        // one run should notify once.
+        // Only the first message pings, and the write-up leads, so the
+        // notification lands on the analysis rather than the ladder cards.
         await sendDiscord(
           hook,
           withRoleMention(content, i === 0 ? roleForWebhook(roleIds, w) : undefined),

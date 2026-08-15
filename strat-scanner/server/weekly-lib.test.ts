@@ -8,6 +8,7 @@ import {
   roleForWebhook,
   withRoleMention,
   chunkEmbeds,
+  composeWeeklyMessages,
   describeDiscord,
   fmtPrice,
   formatWeeklyDiscord,
@@ -405,6 +406,44 @@ describe('formatWeeklyDiscord', () => {
     expect(messages.length).toBeGreaterThan(1);
     expect(messages[0].content).toContain('Crypto Weekly');
     expect(messages[1].content).toBeUndefined();
+  });
+});
+
+describe('composeWeeklyMessages', () => {
+  const report = buildWeeklyReport([asset(), asset({ symbol: 'SOL-USD' })], [], Date.UTC(2026, 7, 12));
+  const writeup = {
+    writeup: {
+      symbol: 'SOL-USD',
+      name: 'Solana',
+      lastPrice: 76.14,
+      weekChangePct: -2.1,
+      standing: 'stands',
+      higher: 'higher',
+      lower: 'lower',
+      picture: 'picture',
+      approach: 'approach',
+      watch: 'watch',
+    },
+    dca: plan(),
+  };
+
+  it('leads with the write-up, ladder cards after', () => {
+    const messages = composeWeeklyMessages(report, () => undefined, writeup);
+    expect(messages[0].content).toContain('📝 Solana, the week ahead');
+    expect(messages[1].content).toContain('🪙 Crypto Weekly');
+  });
+
+  it('puts the role ping on the write-up, since the first message pings', () => {
+    const messages = composeWeeklyMessages(report, () => undefined, writeup);
+    const pinged = withRoleMention(messages[0], '111111111');
+    expect(pinged.content).toContain('<@&111111111>');
+    expect(pinged.content).toContain('Solana');
+  });
+
+  it('falls back to the ladder leading when there is no write-up', () => {
+    // A run still notifies exactly once when the write-up symbol failed.
+    const messages = composeWeeklyMessages(report, () => undefined, undefined);
+    expect(messages[0].content).toContain('🪙 Crypto Weekly');
   });
 });
 
