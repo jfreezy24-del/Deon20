@@ -377,6 +377,27 @@ export function formatWriteupDiscord(w: Writeup, dca: DcaPlan): DiscordMessage {
 }
 
 /**
+ * The full set of Discord messages for a weekly run, in send order.
+ *
+ * The written analysis leads. It is the part a person reads, and the role
+ * ping rides the first message, so putting it first means the notification
+ * lands on the reasoning rather than on a wall of numbers. The ladder cards
+ * follow for anyone who wants the levels.
+ *
+ * When no write-up is available (its symbol failed to scan) the ladder leads
+ * instead and still carries the ping, so a run always notifies exactly once.
+ */
+export function composeWeeklyMessages(
+  report: WeeklyReport,
+  basisFor: (symbol: string) => CostBasis | undefined = () => undefined,
+  writeup?: { writeup: Writeup; dca: DcaPlan },
+): DiscordMessage[] {
+  const ladder = formatWeeklyDiscord(report, basisFor);
+  if (!writeup) return ladder;
+  return [formatWriteupDiscord(writeup.writeup, writeup.dca), ...ladder];
+}
+
+/**
  * Plain-text rendering of an embed message, for the dry-run log. Embeds are
  * a JSON structure, so without this the log shows nothing useful — and a
  * dry run exists precisely to be read before a real send.
