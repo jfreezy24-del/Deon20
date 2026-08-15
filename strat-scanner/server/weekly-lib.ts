@@ -101,9 +101,16 @@ export const roleForWebhook = (roleIds: string[], index: number): string | undef
  */
 export function withRoleMention(message: DiscordMessage, roleId?: string): DiscordMessage {
   if (!roleId) return { ...message, allowed_mentions: { parse: [] } };
+
+  // Appended to the *first* line, so it trails the title rather than the
+  // subtext that can follow it. Content is markdown, so the pill renders
+  // inside the heading.
+  const [title, ...rest] = (message.content ?? '').split('\n');
+  const mentioned = title ? `${title} <@&${roleId}>` : `<@&${roleId}>`;
+
   return {
     ...message,
-    content: `<@&${roleId}>${message.content ? ` ${message.content}` : ''}`,
+    content: [mentioned, ...rest].join('\n'),
     allowed_mentions: { parse: [], roles: [roleId] },
   };
 }

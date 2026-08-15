@@ -168,11 +168,25 @@ describe('role mentions', () => {
     expect(roleForWebhook([], 0)).toBeUndefined();
   });
 
-  it('puts the mention on the content line, never in an embed', () => {
+  it('trails the title, and never sits in an embed', () => {
     const msg = withRoleMention({ content: '## Header', embeds: [] }, '111111111');
     // Discord does not notify for mentions inside embeds.
-    expect(msg.content).toBe('<@&111111111> ## Header');
+    expect(msg.content).toBe('## Header <@&111111111>');
     expect(JSON.stringify(msg.embeds)).not.toContain('111111111');
+  });
+
+  it('stays on the title line when subtext follows it', () => {
+    const msg = withRoleMention(
+      { content: '## Crypto Weekly\n-# 1 symbol(s) failed to scan: FAKE-USD', embeds: [] },
+      '111111111',
+    );
+    expect(msg.content).toBe(
+      '## Crypto Weekly <@&111111111>\n-# 1 symbol(s) failed to scan: FAKE-USD',
+    );
+  });
+
+  it('is the whole content when there is no title', () => {
+    expect(withRoleMention({ embeds: [] }, '111111111').content).toBe('<@&111111111>');
   });
 
   it('names the role explicitly so nothing else can ping', () => {
