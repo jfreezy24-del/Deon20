@@ -17,6 +17,7 @@
     "calibrate": "tsx server/calibrate.ts",
     "sweep": "tsx server/sweep.ts",
     "entry-refinement": "tsx server/entry-refinement.ts",
+    "ladder-backtest": "tsx server/ladder-backtest.ts",
     "prep-sheet": "tsx server/prep-sheet.ts"
   },
   "dependencies": {

@@ -19,8 +19,22 @@ export interface TrackedRung {
   allocationPct: number;
   source: string;
   timeframe: 'W' | 'M';
-  /** ISO date this level was first published */
+  /** ISO date this level was first published — the staleness clock. */
   placedOn: string;
+  /**
+   * ISO date the rung's CURRENT price was set, which is the earliest a fill
+   * can happen.
+   *
+   * Distinct from `placedOn` on purpose. `placedOn` is carried forward when a
+   * level drifts inside the same-price band, so republishing the ladder every
+   * week cannot reset the expiry clock. Using that same date to bound fills
+   * was wrong: a level drifting *upward* within tolerance would be filled
+   * retroactively by a bar that traded before the bid was ever that high.
+   *
+   * Optional so records written before this existed still load; they fall
+   * back to `placedOn`, which is what they were already using.
+   */
+  pricedOn?: string;
   /** ISO date price first traded down to it, null while it is still resting */
   filledOn: string | null;
 }
@@ -64,6 +78,11 @@ export interface FillEvent {
  * the new plan — but a level the new plan still wants keeps its original
  * placement date. Without that, republishing the same ladder every week would
  * reset the clock on every rung and nothing could ever go stale.
+ *
+ * The price it is bid at is tracked separately (`pricedOn`). A level that
+ * drifts by any amount is a new order at a new price even when it is the same
+ * place on the chart, and it must not inherit fill eligibility from bars that
+ * traded while the bid sat somewhere else.
  */
 export function reconcilePlan(
   existing: SymbolPosition | undefined,
@@ -78,12 +97,14 @@ export function reconcilePlan(
     .filter((r) => !filled.some((f) => samePrice(f.price, r.price)))
     .map((r) => {
       const carried = resting.find((old) => samePrice(old.price, r.price));
+      const unmoved = carried !== undefined && carried.price === r.price;
       return {
         price: r.price,
         allocationPct: r.allocationPct,
         source: r.source,
         timeframe: r.timeframe,
         placedOn: carried?.placedOn ?? today,
+        pricedOn: unmoved ? (carried.pricedOn ?? carried.placedOn) : today,
         filledOn: null,
       };
     });
@@ -100,7 +121,8 @@ export function reconcilePlan(
  *
  * A touch is a fill: these are resting limit orders, so any bar whose low
  * reaches the level would have executed it. Only bars from the day the rung
- * was placed onward count — a low from before it existed never filled it.
+ * was priced onward count — a low from before the bid sat at this level never
+ * filled it, even if the level is "the same place on the chart".
  */
 export function applyFills(
   position: SymbolPosition,
@@ -110,8 +132,9 @@ export function applyFills(
   const rungs = position.rungs.map((rung) => {
     if (rung.filledOn !== null) return rung;
 
+    const eligibleFrom = rung.pricedOn ?? rung.placedOn;
     const hit = bars
-      .filter((b) => isoDate(b.time * 1000) >= rung.placedOn)
+      .filter((b) => isoDate(b.time * 1000) >= eligibleFrom)
       .sort((a, b) => a.time - b.time)
       .find((b) => b.low <= rung.price);
 

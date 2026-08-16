@@ -121,6 +121,8 @@ src/strat/policySweep.ts    — exit-policy grid + walk-forward validation
 src/strat/regime.ts         — trend / volatility regime labels from a benchmark
 src/strat/entryRefinement.ts— 60m entry timing (stop only, never selection)
 src/data/intraday.ts        — hourly bars, for entry timing only
+src/crypto/ladderBacktest.ts— weekly ladder replay + control/benchmarks
+src/crypto/ladderReport.ts  — ladder validation statistics + markdown
 src/strat/prepSheet.ts      — daily top-down prep sheet
 src/data/history.ts         — deep daily history (backtest only)
 ```
@@ -327,6 +329,7 @@ nothing else; nothing here posts to it.
 | Confidence calibration | Quarterly / on demand | Nothing, ever | `data/calibration.md` |
 | Policy sweep | Quarterly / on demand | Nothing, ever | `data/policy-sweep.md` |
 | Entry refinement | Monthly / on demand | Nothing, ever | `data/entry-refinement.md` |
+| Ladder validation | Quarterly / on demand | Nothing, ever | `data/ladder-backtest.md` |
 | Prep sheet | Weekday mornings | One push | Actions run summary |
 
 The three report tools divide the question up. Calibration asks **"does the
@@ -602,6 +605,76 @@ it off.
 
 `DRY_RUN=true REFINE_SYMBOLS=SPY,QQQ npm run entry-refinement` prints the
 comparison without writing.
+
+## 🪜 Ladder validation (does the structure earn its place?)
+
+Everything above validates the **signal** engine. The DCA ladder — four
+structural rung sources, a tier-based size skew, a 35–65% depth cap and a
+90-day expiry — had never been tested at all.
+
+`.github/workflows/ladder-backtest.yml` replays the ladder week by week over
+history, running the **production functions** (`buildDcaPlan`,
+`reconcilePlan`, `applyFills`, `expireStaleRungs`) rather than a
+reimplementation, so what is measured is the system that ships. Each asset gets
+a fixed cash budget; plans publish at each weekly close, fills are checked
+against every subsequent daily bar, and stale rungs expire.
+
+### Read two numbers together, always
+
+**Cost efficiency** (average price paid ÷ mean price available) and
+**deployment** (how much of the budget was actually spent). Either alone is a
+way to lie to yourself: a ladder resting at −40% shows a beautiful average
+price on the 8% of capital that ever filled, and a ladder that fills instantly
+deploys everything at no discount. Every table carries both.
+
+### What it answers
+
+- **Does structure beat round numbers?** The headline. The control is a
+  fixed-percentage ladder with *identical tier weights* — beating buy-and-hold
+  proves nothing, since any bid below spot does that in a market that dips. The
+  gap between those two rows is the entire value of reading TheStrat levels.
+- **Which rung source earns its place?** Fill rate per *distinct rung placed*,
+  median days to fill, mean discount, and share of capital deployed. A source
+  offered constantly that rarely fills is not the same as one offered rarely
+  that always fills, and a raw fill count cannot tell them apart.
+- **Is 90 days the right expiry?** Deployment and cost efficiency at 30 / 60 /
+  90 / 180 days and never. If a longer TTL deploys more at a similar price, the
+  expiry is cancelling bids that were about to fill.
+- **Does the tier skew pay?** Each tier replayed under all three profiles, with
+  the live assignment marked ⬅︎. If another row wins its tier consistently, the
+  skew is backwards.
+- **Was `DEFENSIVE` ever right?** It is a forecast, so forward 30/90-day
+  returns are the only way to check it. If defensive weeks were followed by the
+  same returns as accumulate weeks, the stance is decoration.
+
+It also reports **over-commitment**: allocations are re-normalised to 100%
+across each fresh plan while filled rungs are carried forward, so a ladder that
+fills and republishes can commit to more than the budget.
+
+**This job sends nothing, ever.** Discord still carries only the weekly crypto
+report.
+
+| Variable / input | Default | Meaning |
+|---|---|---|
+| `LADDER_YEARS` | `10` | Years of daily history to replay |
+| `LADDER_SYMBOLS` | _(crypto universe)_ | Comma list to replay instead |
+| `LADDER_BUDGET` | `10000` | Cash allotted per asset |
+| `LADDER_TTLS` | `30,60,90,180,0` | Expiries to compare (`0` = never) |
+| `LADDER_NAIVE_DEPTHS` | `8,16,26,38` | Control ladder depths, % below spot |
+
+`DRY_RUN=true LADDER_SYMBOLS=BTC-USD,ETH-USD npm run ladder-backtest` prints
+the report without writing.
+
+> **A bug this found.** `reconcilePlan` carries a rung's `placedOn` forward when
+> the level drifts inside the 0.5% "same place" band, which is correct — it is
+> what stops republishing from resetting the staleness clock. But `applyFills`
+> used that same date as the earliest a fill could occur, so a level drifting
+> **upward** within tolerance was filled retroactively by a bar that traded
+> before the bid was ever that high. That marked rungs filled that never
+> filled, and understated the cost basis in `data/ladder-state.json`. Rungs now
+> carry a separate `pricedOn` for fill eligibility while `placedOn` keeps the
+> expiry clock; records written before the field existed fall back to
+> `placedOn`, so committed state still loads.
 
 ## 📋 Daily prep sheet
 

@@ -1,0 +1,86 @@
+name: Ladder Backtest
+
+on:
+  schedule:
+    # Quarterly, on the 5th at 03:00 UTC — after the calibration and sweep
+    # replays, so the long jobs never contend for the data source or the branch.
+    - cron: '0 3 5 1,4,7,10 *'
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 'Years of daily history to replay'
+        type: string
+        default: '10'
+      symbols:
+        description: 'Comma-separated assets (blank = the crypto universe)'
+        type: string
+        default: ''
+      budget:
+        description: 'Cash allotted per asset'
+        type: string
+        default: '10000'
+      dry_run:
+        description: 'Print the report and write nothing'
+        type: boolean
+        default: false
+
+# The validation report is committed so the answer can be tracked over time.
+permissions:
+  contents: write
+
+concurrency:
+  group: ladder-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No NTFY_TOPIC and no webhook of any kind: this job sends nothing.
+      # Discord carries the weekly crypto report and nothing else.
+      - name: Replay and validate the ladder
+        env:
+          LADDER_YEARS: ${{ inputs.years || '10' }}
+          LADDER_SYMBOLS: ${{ inputs.symbols }}
+          LADDER_BUDGET: ${{ inputs.budget || '10000' }}
+          LADDER_TTLS: ${{ vars.LADDER_TTLS }}
+          LADDER_NAIVE_DEPTHS: ${{ vars.LADDER_NAIVE_DEPTHS }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: npm run ladder-backtest
+
+      - name: Publish the report to the run summary
+        if: ${{ !inputs.dry_run }}
+        run: cat data/ladder-backtest.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit the validation report
+        if: ${{ !inputs.dry_run }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if [ -z "$(git status --porcelain -- strat-scanner/data/ladder-backtest.md)" ]; then
+            echo "No validation change to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add strat-scanner/data/ladder-backtest.md
+          git commit -m "Update ladder validation report"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

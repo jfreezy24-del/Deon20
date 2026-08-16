@@ -226,6 +226,17 @@ function measuredRungs(lastPrice: number, weeklyRangePct: number, needed: number
   }));
 }
 
+/**
+ * The tier weighting, exposed so a control ladder can be built with identical
+ * sizing and different levels. Isolating the two is the only way to tell
+ * whether the structure is doing the work or the skew is.
+ */
+export const ladderWeights = (count: number, profile: LadderProfile): number[] =>
+  allocations(count, profile);
+
+/** Ladder geometry, exposed for the same reason. */
+export const ladderDepthCapPct = (profile: LadderProfile): number => MAX_DEPTH_PCT[profile];
+
 function allocations(count: number, profile: LadderProfile): number[] {
   if (count === 0) return [];
   const base = WEIGHTS[profile].slice(0, count);
