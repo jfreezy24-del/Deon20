@@ -5,6 +5,7 @@
  * per week, sometimes zero; the structure is either there or it isn't.
  */
 import { Signal, Timeframe } from './types';
+import { RefinedEntry } from './entryRefinement';
 import { etfName, isEtf, relatedSymbols } from './universe';
 
 export interface AlgoOptions {
@@ -34,6 +35,14 @@ export interface AlgoAlert {
   signal: Signal;
   /** Stop placement from the setup's Strat structure — the line in the sand */
   riskLine: number;
+  /**
+   * Optional 60-minute entry timing, attached by the alerter after the fact.
+   *
+   * Selection never depends on it: the alert exists, and says exactly the same
+   * thing about direction, trigger and targets, whether or not intraday data
+   * was available. It only offers a tighter place to put the stop.
+   */
+  refined?: RefinedEntry;
   /**
    * Same-direction structure in related names: an ETF alert lists setups in
    * its heavy constituents (the sector spark), a stock alert lists its sector

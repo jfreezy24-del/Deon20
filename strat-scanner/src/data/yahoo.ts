@@ -94,6 +94,14 @@ export async function fetchDailyCandles(symbol: string, range = '5y'): Promise<S
   return fetchChart(symbol, '1d', range);
 }
 
+/**
+ * Hourly candles, for entry timing. Yahoo caps 1h history at roughly 60 days,
+ * which is the hard ceiling on anything measured at this resolution.
+ */
+export async function fetchIntradayCandles(symbol: string, range = '60d'): Promise<SeriesResult> {
+  return fetchChart(symbol, '1h', range);
+}
+
 export async function fetchTimeframe(symbol: string, tf: Timeframe): Promise<TimeframeSeries> {
   let series: SeriesResult;
   let candles: Candle[];

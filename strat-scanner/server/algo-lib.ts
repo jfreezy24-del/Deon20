@@ -29,6 +29,24 @@ export interface EmailMessage {
   body: string;
 }
 
+/**
+ * The 60-minute risk line, when intraday timing was available and tightened
+ * anything.
+ *
+ * Presented as an alternative to the structural stop, never as a replacement:
+ * the higher-timeframe line is where the setup is actually wrong, and a
+ * refined stop trades a smaller loss for a higher chance of taking it. The
+ * alert states both and leaves the choice where it belongs.
+ */
+function refinedLines(alert: AlgoAlert): string[] {
+  const r = alert.refined;
+  if (!r || r.stopSource === 'higher-timeframe') return [];
+  return [
+    `60m RISK LINE: ${fmt(r.stop)} (${r.tightening.toFixed(1)}x tighter — ` +
+      `T1 becomes ${r.rr1}R against ${r.originalRr1}R)`,
+  ];
+}
+
 export function formatAlgoEmail(alert: AlgoAlert): EmailMessage {
   const s = alert.signal;
   const long = s.direction === 'bullish';
@@ -41,6 +59,7 @@ export function formatAlgoEmail(alert: AlgoAlert): EmailMessage {
     '',
     `Entry (break of trigger): ${fmt(s.levels.entry)}`,
     `RISK LINE (stop): ${fmt(alert.riskLine)}`,
+    ...refinedLines(alert),
     `Target 1: ${fmt(s.levels.target1)} (${s.levels.rr1}R)`,
     `Target 2: ${fmt(s.levels.target2)} (${s.levels.rr2}R)`,
     '',
@@ -78,12 +97,18 @@ export function formatAlgoPush(alert: AlgoAlert): PushMessage {
     alert.relatedPlays.length > 0
       ? `\nRelated: ${alert.relatedPlays.map((p) => p.symbol).join(', ')}`
       : '';
+  const refined =
+    alert.refined && alert.refined.stopSource !== 'higher-timeframe'
+      ? `\n60m risk line ${fmt(alert.refined.stop)} (${alert.refined.tightening.toFixed(1)}x tighter, ${alert.refined.rr1}R)`
+      : '';
+
   return {
     title: `${s.symbol} ${long ? '▲ LONG' : '▼ SHORT'} — ${s.pattern} confirmed (${s.timeframe})`,
     body:
       `Entry ${fmt(s.levels.entry)} · Risk line ${fmt(alert.riskLine)} · ` +
       `T1 ${fmt(s.levels.target1)} (${s.levels.rr1}R) · T2 ${fmt(s.levels.target2)} (${s.levels.rr2}R)\n` +
       `Confidence ${s.confidence}% · FTFC ${ftfcLine(s)}` +
+      refined +
       related,
     priority: 'high',
     tags: long ? 'chart_with_upwards_trend' : 'chart_with_downwards_trend',

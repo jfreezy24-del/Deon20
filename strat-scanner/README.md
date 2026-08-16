@@ -119,6 +119,8 @@ src/strat/signalRecord.ts   — the forward record of published signals
 src/strat/backtest.ts       — historical replay of the engine, no look-ahead
 src/strat/policySweep.ts    — exit-policy grid + walk-forward validation
 src/strat/regime.ts         — trend / volatility regime labels from a benchmark
+src/strat/entryRefinement.ts— 60m entry timing (stop only, never selection)
+src/data/intraday.ts        — hourly bars, for entry timing only
 src/strat/prepSheet.ts      — daily top-down prep sheet
 src/data/history.ts         — deep daily history (backtest only)
 ```
@@ -324,6 +326,7 @@ nothing else; nothing here posts to it.
 | Signal outcomes | Daily, silent | Nothing (monthly digest push) | `data/edge-report.md` |
 | Confidence calibration | Quarterly / on demand | Nothing, ever | `data/calibration.md` |
 | Policy sweep | Quarterly / on demand | Nothing, ever | `data/policy-sweep.md` |
+| Entry refinement | Monthly / on demand | Nothing, ever | `data/entry-refinement.md` |
 | Prep sheet | Weekday mornings | One push | Actions run summary |
 
 The three report tools divide the question up. Calibration asks **"does the
@@ -519,6 +522,86 @@ writing.
 **Read the walk-forward section first and the leaderboard second.** The
 leaderboard is the curve-fitted part; the walk-forward number is the only one
 that was not chosen with hindsight.
+
+## ⏱️ Entry refinement (is a 60-minute stop worth it?)
+
+The scanner takes setups from Daily/Weekly/Monthly structure and puts the stop
+at the other side of that bar. A daily 2-1-2 says *"long above 450.20, wrong
+below 443.10"* — and a resting stop order accepts **the whole daily bar** as
+risk. Standard Strat practice is to time the entry on a lower chart: once
+450.20 breaks, the stop can sit under the 60-minute bar that broke it, often a
+third of the distance for exactly the same trade.
+
+That is not free. A tighter stop buys a bigger R on the same objective and buys
+more stop-outs. Which wins is an empirical question, so this ships as **an
+engine plus the measurement of whether it pays**.
+
+### The rules, in order of importance
+
+1. **60m never selects.** The setup, direction, trigger and both targets come
+   from the higher timeframe untouched. Refinement runs *after* a trigger has
+   broken and only moves the stop — it cannot create, cancel or re-rank a
+   signal. The design that 4H is the lowest timeframe *scanned* is unchanged,
+   and 60m is deliberately kept out of the `Timeframe` union so nothing
+   downstream can even represent a 60m setup.
+2. **Targets never move.** Magnitude measures to the prior pivot on the chart
+   that produced the setup. Only the denominator changes — the same objective
+   over less risk is a bigger R.
+3. **It only ever tightens.** Intraday structure wider than the
+   higher-timeframe invalidation is declined and the original stop stands.
+4. **It refuses to be noise.** A stop four ticks from entry is a coin flip with
+   good optics. Floors in both percent of price (`0.15%`) and fraction of the
+   original risk (`20%`) must be cleared, or refinement declines.
+
+### Measuring it
+
+`.github/workflows/entry-refinement.yml` resolves **every signal twice against
+the same hourly bars** — once with the higher-timeframe stop, once with the
+refined one. Same trigger, same targets, same population including signals that
+never triggered; the stop is the single difference.
+
+Both variants resolve on **hourly** bars, not daily. A stop this tight is hit
+and recovered from intraday, so resolving against daily bars would
+systematically under-report the whipsaw that is the entire cost being measured.
+
+The report states which side wins in R per signal, how often refinement
+tightened versus declined and why, and the mean tightening factor with promised
+R before and after — sliced by timeframe (refinement should help most where the
+higher-timeframe bar is widest) and by pattern (compression setups already have
+tight risk and have the least to gain).
+
+> ⚠️ **This is the shortest-horizon report in the repo and cannot be
+> otherwise.** Both providers cap hourly history at ~60 days, so it covers weeks
+> and one market regime. Re-run it and look for a consistent answer rather than
+> acting on a single run. The report says so itself, every time.
+
+### In the live alerts
+
+Confirmed-trigger alerts now carry the 60m risk line alongside the structural
+one — never instead of it:
+
+```
+RISK LINE (stop): 443.10
+60m RISK LINE: 448.30 (2.4x tighter — T1 becomes 4.8R against 2.0R)
+```
+
+The higher-timeframe line is where the setup is genuinely wrong; the refined
+one trades a smaller loss for a higher chance of taking it. The alert states
+both and leaves the choice where it belongs. Refinement is **best-effort**: a
+failed intraday fetch costs the suggestion and nothing else, and can never be
+the reason a confirmed trigger goes unsent. Set `REFINE_ENTRIES=false` to turn
+it off.
+
+| Variable / input | Default | Meaning |
+|---|---|---|
+| `REFINE_DAYS` | `60` | Days of hourly history (provider cap) |
+| `REFINE_SYMBOLS` | _(universe)_ | Comma list to test instead |
+| `REFINE_MIN_CONFIDENCE` | `50` | Confidence floor for the sample |
+| `REFINE_PIVOT_BARS` | `3` | Intraday bars behind the trigger for the stop |
+| `REFINE_ENTRIES` | `true` | Attach the 60m risk line to algo alerts |
+
+`DRY_RUN=true REFINE_SYMBOLS=SPY,QQQ npm run entry-refinement` prints the
+comparison without writing.
 
 ## 📋 Daily prep sheet
 

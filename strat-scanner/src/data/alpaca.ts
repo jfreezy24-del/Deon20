@@ -92,15 +92,20 @@ const isoDaysAgo = (days: number): string =>
   new Date(Date.now() - days * 86400 * 1000).toISOString();
 
 /**
- * Fetch one timeframe, following pagination until the feed is exhausted.
- * Throws on transport or API errors; returns an empty series when Alpaca
- * simply does not list the symbol.
+ * Fetch bars for any Alpaca timeframe string, following pagination until the
+ * feed is exhausted. Throws on transport or API errors; returns an empty array
+ * when Alpaca simply does not list the symbol.
+ *
+ * Takes Alpaca's own timeframe string rather than one of ours, so the intraday
+ * fetch can ask for `1Hour` without `1H` having to become a member of the
+ * `Timeframe` union — the engine is built on 4H/D/W/M and adding a fifth
+ * member would ripple through continuity, scoring and every report.
  */
-export async function fetchAlpacaTimeframe(
+export async function fetchAlpacaBars(
   symbol: string,
-  tf: Timeframe,
-  lookbackDays: number = TF_LOOKBACK_DAYS[tf],
-): Promise<TimeframeSeries> {
+  timeframeParam: string,
+  lookbackDays: number,
+): Promise<Candle[]> {
   const pair = toAlpacaSymbol(symbol);
   const headers = { Accept: 'application/json', ...credentials() };
   const candles: Candle[] = [];
@@ -110,7 +115,7 @@ export async function fetchAlpacaTimeframe(
   do {
     const params = new URLSearchParams({
       symbols: pair,
-      timeframe: TF_PARAM[tf],
+      timeframe: timeframeParam,
       start: isoDaysAgo(lookbackDays),
       limit: '10000',
       sort: 'asc',
@@ -130,6 +135,20 @@ export async function fetchAlpacaTimeframe(
     // Guard against a feed that keeps handing back tokens.
   } while (pageToken && pages < 10);
 
+  return candles;
+}
+
+/** Alpaca's hourly bars, for intraday entry timing only. */
+export const fetchAlpacaHourly = (symbol: string, lookbackDays = 60): Promise<Candle[]> =>
+  fetchAlpacaBars(symbol, '1Hour', lookbackDays);
+
+/** Fetch one of the engine's timeframes as a completed/forming series. */
+export async function fetchAlpacaTimeframe(
+  symbol: string,
+  tf: Timeframe,
+  lookbackDays: number = TF_LOOKBACK_DAYS[tf],
+): Promise<TimeframeSeries> {
+  const candles = await fetchAlpacaBars(symbol, TF_PARAM[tf], lookbackDays);
   const { completed, forming } = splitForming(candles, tf);
   return {
     timeframe: tf,

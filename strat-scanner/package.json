@@ -16,6 +16,7 @@
     "track-outcomes": "tsx server/track-outcomes.ts",
     "calibrate": "tsx server/calibrate.ts",
     "sweep": "tsx server/sweep.ts",
+    "entry-refinement": "tsx server/entry-refinement.ts",
     "prep-sheet": "tsx server/prep-sheet.ts"
   },
   "dependencies": {
