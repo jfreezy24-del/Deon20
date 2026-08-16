@@ -117,6 +117,8 @@ src/strat/outcomes.ts       — forward-walk outcome resolver (shared)
 src/strat/edgeReport.ts     — win rate / expectancy / calibration statistics
 src/strat/signalRecord.ts   — the forward record of published signals
 src/strat/backtest.ts       — historical replay of the engine, no look-ahead
+src/strat/policySweep.ts    — exit-policy grid + walk-forward validation
+src/strat/regime.ts         — trend / volatility regime labels from a benchmark
 src/strat/prepSheet.ts      — daily top-down prep sheet
 src/data/history.ts         — deep daily history (backtest only)
 ```
@@ -321,7 +323,13 @@ nothing else; nothing here posts to it.
 |---|---|---|---|
 | Signal outcomes | Daily, silent | Nothing (monthly digest push) | `data/edge-report.md` |
 | Confidence calibration | Quarterly / on demand | Nothing, ever | `data/calibration.md` |
+| Policy sweep | Quarterly / on demand | Nothing, ever | `data/policy-sweep.md` |
 | Prep sheet | Weekday mornings | One push | Actions run summary |
+
+The three report tools divide the question up. Calibration asks **"does the
+confidence score rank signals?"**; the sweep asks **"given those signals, is
+the way we trade them any good?"**; the outcome record asks **"and did any of
+it survive contact with the live alert stream?"**
 
 ## 📊 Signal outcomes (the performance record)
 
@@ -436,6 +444,81 @@ question ("does this engine have an edge historically"); the outcome record is
 the out-of-sample one ("did the signals actually sent make money"). A large gap
 between them is a live-run problem — missed bars, scheduling, the alert floor —
 not a strategy one.
+
+## ⚖️ Policy sweep (is the way we trade them any good?)
+
+Calibration checks the *scoring*. This checks the *trading*. The live record
+closes every position at target 1, gives the trigger one bar to fire, and holds
+for at most six. Each of those three was a judgement call, and none had ever
+been compared against the alternatives on the same data.
+
+`.github/workflows/policy-sweep.yml` replays detection **once** and then
+re-resolves the identical signals under each policy, so a difference in the
+table is a difference in the exit and never in which setups existed. Eight
+exits are compared:
+
+| Exit | What it tests |
+|---|---|
+| Exit at T1 | The live policy — the baseline everything is measured against |
+| Hold for T2 | Is the first objective leaving money behind? |
+| Fixed 1R / 2R target | **The control.** If a naive fixed-R target matches the pivot-based ones, the magnitude logic in `computeLevels` is not earning its complexity |
+| Trail 2-bar / 4-bar low | Does letting winners run beat taking the objective? |
+| Scale 50% at T1 (± breakeven stop) | The compromise most traders actually use |
+
+Then the entry window (1 or 2 bars) and hold (3 / 6 / 12) are compared **at the
+winning exit** — a two-stage grid of about thirteen policies rather than a
+forty-policy cross-product. That is deliberate: the best of forty noisy numbers
+looks excellent whether or not anything real is there.
+
+### The part that stops it being curve-fitting
+
+A sweep is the easiest way to fool yourself ever invented, so the report leads
+with the walk-forward result, *before* the leaderboard:
+
+- Policies are ranked on the first 70% of dates and then checked on the rest.
+  The headline is not "the best policy scored X" but **"the policy that looked
+  best early ranked Nth later, and switching to it would have been worth ±Y R
+  per signal versus the live one."**
+- The **rank agreement** between the two periods is reported. If policies that
+  led early do not lead later, the report says the sweep is measuring noise and
+  that no policy should be adopted — rather than crowning a winner anyway.
+- The split is chronological, never random: shuffling rows would put the same
+  week on both sides of the fence and leak the answer.
+
+Two more slices attack the same problem from the other side — a single ten-year
+expectancy hides whether the edge was there throughout or came from one good
+year:
+
+- **Year by year**, for the live policy and the winner.
+- **By regime** — benchmark above/below its 200-day average, and annualised
+  20-day realised volatility in **fixed bands**. Never sample quantiles, which
+  would label each day using volatility that had not happened yet.
+
+Two reporting details worth knowing. **R is always measured against the plan's
+original stop**, so trailing and breakeven policies cannot flatter themselves by
+shrinking the denominator they are judged on. And the leaderboard reports
+**Profit%** (trades that came off green, however they came off) separately from
+**Obj%** (trades that reached the objective), because a trailing stop never
+reaches an objective by construction and would otherwise score 0% against
+policies it beat.
+
+**This job sends nothing, ever** — no ntfy, no anything. It publishes to
+`data/policy-sweep.md` and the Actions run summary.
+
+| Variable / input | Default | Meaning |
+|---|---|---|
+| `SWEEP_YEARS` | `10` | Years of daily history to replay |
+| `SWEEP_SYMBOLS` | _(universe)_ | Comma list to replay instead |
+| `SWEEP_MIN_CONFIDENCE` | `50` | Confidence floor for the sample |
+| `SWEEP_IS_FRACTION` | `0.7` | Share of dates used to pick the winner in-sample |
+| `REGIME_BENCHMARK` | `SPY` | Symbol the regime labels come from |
+
+`DRY_RUN=true SWEEP_SYMBOLS=SPY,QQQ npm run sweep` prints a report without
+writing.
+
+**Read the walk-forward section first and the leaderboard second.** The
+leaderboard is the curve-fitted part; the walk-forward number is the only one
+that was not chosen with hindsight.
 
 ## 📋 Daily prep sheet
 

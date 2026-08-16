@@ -15,6 +15,7 @@
     "ladder-fills": "tsx server/ladder-fills.ts",
     "track-outcomes": "tsx server/track-outcomes.ts",
     "calibrate": "tsx server/calibrate.ts",
+    "sweep": "tsx server/sweep.ts",
     "prep-sheet": "tsx server/prep-sheet.ts"
   },
   "dependencies": {

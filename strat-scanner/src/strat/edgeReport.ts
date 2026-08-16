@@ -62,8 +62,18 @@ export interface BucketStats {
   wins: number;
   losses: number;
   timeouts: number;
-  /** Wins / trades. Undefined when nothing triggered. */
+  /** Reached the profit objective / trades. Zero when nothing triggered. */
   winRate: number;
+  /**
+   * Share of trades that came off at a profit, however they came off.
+   *
+   * `winRate` counts reaching the objective, which is the right question for a
+   * fixed-target policy and the wrong one for a trailing stop — a trail that
+   * rides a move and gives back a little exits as TRAILED, never as a "win",
+   * and would score 0% against a policy it beat. This is the measure that
+   * compares across policies.
+   */
+  profitRate: number;
   /** Mean R across trades — expectancy per trade taken. */
   avgR: number;
   /**
@@ -101,6 +111,7 @@ export function bucketStats(label: string, signals: GradedSignal[]): BucketStats
     losses,
     timeouts,
     winRate: pct(wins, trades.length),
+    profitRate: pct(trades.filter((s) => (s.r ?? 0) > 0).length, trades.length),
     avgR: mean(rs),
     avgRPerSignal: pct(total, signals.length),
     totalR: total,

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_RESOLVE_OPTIONS,
+  ResolveOptions,
   resolvePlan,
+  resolveRange,
   TradePlan,
   triggerBarEndFrom,
 } from '../strat/outcomes';
@@ -265,5 +267,150 @@ describe('resolvePlan — extended magnitude is observed, never paid', () => {
     const r = resolvePlan(plan(), bars([[105, 150, 104, 148]]), DEFAULT_RESOLVE_OPTIONS, LATER);
     expect(r.reachedTarget2).toBe(true);
     expect(r.r).toBe(1);
+  });
+});
+
+describe('resolvePlan — exit policies', () => {
+  const opts = (exit: ResolveOptions['exit']): ResolveOptions => ({
+    ...DEFAULT_RESOLVE_OPTIONS,
+    exit,
+  });
+
+  // Runs to target 1 (121) on day 1, drifts, then reaches target 2 (143).
+  const runner = bars([
+    [105, 125, 104, 124],
+    [124, 130, 122, 129],
+    [129, 150, 128, 148],
+  ]);
+
+  it('target1 banks 1R and leaves the rest', () => {
+    const r = resolvePlan(plan(), runner, opts({ kind: 'target1' }), LATER);
+    expect(r.status).toBe('TARGET1');
+    expect(r.r).toBe(1);
+    expect(r.reachedTarget2).toBe(true);
+  });
+
+  it('target2 holds through target 1 for the bigger objective', () => {
+    const r = resolvePlan(plan(), runner, opts({ kind: 'target2' }), LATER);
+    expect(r.status).toBe('TARGET1'); // reached its objective
+    expect(r.exit).toBe(143);
+    expect(r.r).toBe(3);
+  });
+
+  it('target2 gives the whole thing back when price reverses first', () => {
+    const reversal = bars([
+      [105, 125, 104, 124], // through target 1, but target 2 policy holds
+      [124, 126, 90, 92], // straight back through the stop
+    ]);
+    const t1 = resolvePlan(plan(), reversal, opts({ kind: 'target1' }), LATER);
+    const t2 = resolvePlan(plan(), reversal, opts({ kind: 'target2' }), LATER);
+    expect(t1.r).toBe(1);
+    expect(t2.status).toBe('STOPPED');
+    expect(t2.r).toBe(-1);
+  });
+
+  it('rMultiple exits at a fixed multiple of risk, ignoring the pivots', () => {
+    // Risk is 11 (110 entry, 99 stop), so 2R is 132 — past target 1 at 121.
+    const r = resolvePlan(plan(), runner, opts({ kind: 'rMultiple', r: 2 }), LATER);
+    expect(r.exit).toBe(132);
+    expect(r.r).toBe(2);
+  });
+
+  it('scale banks half at target 1 and runs the rest to target 2', () => {
+    const r = resolvePlan(
+      plan(),
+      runner,
+      opts({ kind: 'scale', fraction: 0.5, breakeven: true }),
+      LATER,
+    );
+    // Half at +1R, half at +3R.
+    expect(r.status).toBe('TARGET1');
+    expect(r.r).toBeCloseTo(0.5 * 1 + 0.5 * 3, 3);
+  });
+
+  it('scale still counts as a win when the runner is stopped out after banking', () => {
+    const fade = bars([
+      [105, 125, 104, 124], // target 1 — half off, stop to breakeven
+      [124, 126, 105, 108], // back through the 110 fill
+    ]);
+    const r = resolvePlan(
+      plan(),
+      fade,
+      opts({ kind: 'scale', fraction: 0.5, breakeven: true }),
+      LATER,
+    );
+    expect(r.status).toBe('TARGET1');
+    // Half at +1R, half out at breakeven.
+    expect(r.r).toBeCloseTo(0.5, 3);
+  });
+
+  it('trail rides a move and exits at the trailing stop, not the original one', () => {
+    const trend = bars([
+      [105, 115, 104, 114],
+      [114, 125, 113, 124],
+      [124, 135, 123, 134],
+      [134, 136, 108, 112], // takes out the trail behind the last two bars
+    ]);
+    const r = resolvePlan(plan(), trend, opts({ kind: 'trail', barsBack: 2 }), LATER);
+    expect(r.status).toBe('TRAILED');
+    // Trail sat at 113 (lowest low of the prior two bars), well above the 99
+    // original stop, so the trade came off profitable.
+    expect(r.exit).toBe(113);
+    expect(r.r).toBeGreaterThan(0);
+  });
+
+  it('a trailing stop never sets itself from the bar it is tested against', () => {
+    // One bar that runs up then collapses. A trail computed from this bar's own
+    // low would exit at that low; it must still be on the original stop.
+    const spike = bars([[105, 140, 98, 99]]);
+    const r = resolvePlan(plan(), spike, opts({ kind: 'trail', barsBack: 1 }), LATER);
+    expect(r.status).toBe('STOPPED');
+    expect(r.r).toBe(-1);
+  });
+
+  it('measures R from the original stop even after the stop moves', () => {
+    // Breakeven scaling must not shrink the risk denominator to flatter itself.
+    const r = resolvePlan(
+      plan(),
+      runner,
+      opts({ kind: 'scale', fraction: 0.5, breakeven: true }),
+      LATER,
+    );
+    expect(r.fill).toBe(110);
+    // 1R is still 11 points, so the target-2 leg is exactly 3R.
+    expect(r.r).toBeCloseTo(2, 3);
+  });
+
+  it('leaves every policy EXPIRED when the trigger was never taken', () => {
+    const quiet = bars([[100, 108, 96, 104]]);
+    for (const exit of [
+      { kind: 'target1' } as const,
+      { kind: 'target2' } as const,
+      { kind: 'trail', barsBack: 3 } as const,
+      { kind: 'scale', fraction: 0.5, breakeven: false } as const,
+    ]) {
+      expect(resolvePlan(plan(), quiet, opts(exit), LATER).status).toBe('EXPIRED');
+    }
+  });
+});
+
+describe('resolveRange', () => {
+  it('matches resolvePlan when given the same bars as an index range', () => {
+    const rows = bars([
+      [105, 112, 105, 111],
+      [111, 125, 110, 124],
+    ]);
+    const viaPlan = resolvePlan(plan(), rows, DEFAULT_RESOLVE_OPTIONS, LATER);
+    const viaRange = resolveRange(plan(), rows, 0, rows.length, DEFAULT_RESOLVE_OPTIONS, LATER);
+    expect(viaRange).toEqual(viaPlan);
+  });
+
+  it('honours the upper bound, so a sweep can cap how far it looks', () => {
+    const rows = bars([
+      [105, 112, 105, 111],
+      [111, 125, 110, 124], // would pay target 1, but is out of range
+    ]);
+    const clipped = resolveRange(plan(), rows, 0, 1, DEFAULT_RESOLVE_OPTIONS, LATER);
+    expect(clipped.status).not.toBe('TARGET1');
   });
 });

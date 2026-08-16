@@ -127,6 +127,10 @@ async function main() {
     timeframes: parseTimeframes(process.env.TRACK_TIMEFRAMES),
   };
   const resolveOpts: ResolveOptions = {
+    // The live record always closes at target 1: `rr1` is what the confidence
+    // model scores on, so realised R stays comparable to promised R. The sweep
+    // is where other exit policies get argued about, against the same signals.
+    ...DEFAULT_RESOLVE_OPTIONS,
     entryWindowBars: Number(
       process.env.ENTRY_WINDOW_BARS ?? DEFAULT_RESOLVE_OPTIONS.entryWindowBars,
     ),

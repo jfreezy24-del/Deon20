@@ -4,7 +4,7 @@ import { computeLevels } from './levels';
 import { buildContinuity, scoreContinuity } from './continuity';
 import { scoreConfidence } from './confidence';
 import { GradedSignal } from './edgeReport';
-import { DEFAULT_RESOLVE_OPTIONS, ResolveOptions, resolvePlan } from './outcomes';
+import { DEFAULT_RESOLVE_OPTIONS, ResolveOptions, resolveRange, TradePlan } from './outcomes';
 import { TF_SECONDS } from '../data/series';
 
 /**
@@ -103,28 +103,54 @@ const tail = <T>(xs: T[], n: number): T[] => (xs.length <= n ? xs : xs.slice(xs.
 
 const isoDate = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
 
+/** Everything about a replayed signal that does not depend on the exit policy. */
+export type SignalIdentity = Omit<
+  GradedSignal,
+  'status' | 'r' | 'mfeR' | 'maeR' | 'reachedTarget2'
+>;
+
+export interface ReplayedSignal {
+  identity: SignalIdentity;
+  plan: TradePlan;
+  /** Index into the replay's bars where the "?" bar begins. */
+  fromIndex: number;
+}
+
+export interface Replay {
+  symbol: string;
+  /** The sorted daily bars every `fromIndex` refers into. */
+  bars: Candle[];
+  signals: ReplayedSignal[];
+  /** Wall-clock cutoff: nothing after the last bar can be observed. */
+  asOf: number;
+}
+
 /**
  * Replay one symbol's daily history and return every signal it would have
- * published, graded.
+ * published — detected, scored and levelled, but **not resolved**.
  *
- * Signals still unresolved at the end of the history come back as OPEN or
- * PENDING and are excluded from the report by `buildEdgeReport` — a trade the
- * data cannot settle must not be counted as either a win or a loss.
+ * Detection and scoring are by far the expensive half and are identical no
+ * matter how the position is later taken off, so the policy sweep runs this
+ * once per symbol and then re-resolves the same signals under each policy.
+ * Resolving inside the replay would multiply the whole cost by the size of the
+ * grid for no extra information.
  */
-export function backtestSymbol(
+export function replaySymbol(
   symbol: string,
   daily: Candle[],
   options: Partial<BacktestOptions> = {},
-): GradedSignal[] {
+): Replay {
   const opts: BacktestOptions = { ...DEFAULT_BACKTEST_OPTIONS, ...options };
   const bars = [...daily].sort((a, b) => a.time - b.time);
-  if (bars.length < opts.minBars + 2) return [];
+  if (bars.length < opts.minBars + 2) {
+    return { symbol, bars, signals: [], asOf: 0 };
+  }
 
   // Nothing after the final bar can be observed, so treat the replay's "now"
   // as the moment that bar closed.
   const asOf = bars[bars.length - 1].time + TF_SECONDS.D;
 
-  const out: GradedSignal[] = [];
+  const out: ReplayedSignal[] = [];
 
   const weeklyCompleted: Candle[] = [];
   const monthlyCompleted: Candle[] = [];
@@ -192,37 +218,33 @@ export function backtestSymbol(
         });
         if (conf.score < opts.minConfidence) continue;
 
-        const plan = {
-          direction: match.direction,
-          timeframe: tf,
-          levels,
-          setupBarTime: match.triggerBar.time,
-          triggerBarEnd,
-        };
-        const resolution = resolvePlan(plan, forwardBars(bars, i + 1, tf, opts.resolve), opts.resolve, asOf);
-
         out.push({
-          key: `${symbol}|${tf}|${match.direction}|${match.name}|${match.triggerBar.time}`,
-          symbol,
-          timeframe: tf,
-          direction: match.direction,
-          pattern: match.name,
-          sequence: match.sequence,
-          scenario: match.scenario,
-          compression: match.compression,
-          isReversal: match.isReversal,
-          confidence: conf.score,
-          factorKeys: conf.factors.map((f) => f.key),
-          aligned: contScore.aligned.length,
-          opposed: contScore.opposed.length,
-          fullContinuity: contScore.full,
-          promisedR: levels.rr1,
-          status: resolution.status,
-          r: resolution.r,
-          mfeR: resolution.mfeR,
-          maeR: resolution.maeR,
-          reachedTarget2: resolution.reachedTarget2,
-          date: isoDate(triggerBarEnd),
+          plan: {
+            direction: match.direction,
+            timeframe: tf,
+            levels,
+            setupBarTime: match.triggerBar.time,
+            triggerBarEnd,
+          },
+          fromIndex: i + 1,
+          identity: {
+            key: `${symbol}|${tf}|${match.direction}|${match.name}|${match.triggerBar.time}`,
+            symbol,
+            timeframe: tf,
+            direction: match.direction,
+            pattern: match.name,
+            sequence: match.sequence,
+            scenario: match.scenario,
+            compression: match.compression,
+            isReversal: match.isReversal,
+            confidence: conf.score,
+            factorKeys: conf.factors.map((f) => f.key),
+            aligned: contScore.aligned.length,
+            opposed: contScore.opposed.length,
+            fullContinuity: contScore.full,
+            promisedR: levels.rr1,
+            date: isoDate(triggerBarEnd),
+          },
         });
       }
     };
@@ -243,23 +265,53 @@ export function backtestSymbol(
     }
   }
 
-  return out;
+  return { symbol, bars, signals: out, asOf };
 }
 
 /**
- * The slice of forward bars a plan could possibly resolve against: its entry
- * window plus its hold window, with a margin for non-trading days. Handing the
- * resolver the whole remaining history instead would make the replay
- * quadratic for no extra information.
+ * Resolve a replay under one set of options, producing report-ready rows.
+ *
+ * Signals still unresolved at the end of the history come back as OPEN or
+ * PENDING and are excluded from the report by `buildEdgeReport` — a trade the
+ * data cannot settle must not be counted as either a win or a loss.
  */
-function forwardBars(
-  bars: Candle[],
-  from: number,
-  tf: Timeframe,
-  resolve: ResolveOptions,
-): Candle[] {
+export function gradeReplay(replay: Replay, resolve: ResolveOptions): GradedSignal[] {
+  return replay.signals.map((s) => {
+    const to = s.fromIndex + forwardSpan(s.plan.timeframe, resolve);
+    const resolution = resolveRange(s.plan, replay.bars, s.fromIndex, to, resolve, replay.asOf);
+    return {
+      ...s.identity,
+      status: resolution.status,
+      r: resolution.r,
+      mfeR: resolution.mfeR,
+      maeR: resolution.maeR,
+      reachedTarget2: resolution.reachedTarget2,
+    };
+  });
+}
+
+/**
+ * Replay one symbol's daily history and return every signal it would have
+ * published, graded under a single set of options.
+ */
+export function backtestSymbol(
+  symbol: string,
+  daily: Candle[],
+  options: Partial<BacktestOptions> = {},
+): GradedSignal[] {
+  const opts: BacktestOptions = { ...DEFAULT_BACKTEST_OPTIONS, ...options };
+  return gradeReplay(replaySymbol(symbol, daily, opts), opts.resolve);
+}
+
+/**
+ * How many forward bars a plan could possibly resolve against: its entry window
+ * plus its hold window, with a margin for non-trading days. Bounding the walk
+ * is what keeps the replay linear instead of quadratic, and letting the
+ * resolver work on an index range rather than a slice keeps the sweep from
+ * allocating a fresh array per signal per policy.
+ */
+function forwardSpan(tf: Timeframe, resolve: ResolveOptions): number {
   const seconds = (resolve.entryWindowBars + resolve.maxHoldBars + 1) * TF_SECONDS[tf];
   // Calendar days to trading bars, plus slack for weekends and holidays.
-  const span = Math.ceil(seconds / TF_SECONDS.D) + 10;
-  return bars.slice(from, from + span);
+  return Math.ceil(seconds / TF_SECONDS.D) + 10;
 }

@@ -69,6 +69,9 @@ async function main() {
   const years = Number(process.env.CALIBRATION_YEARS ?? 10);
   const timeframes = parseTimeframes(process.env.CALIBRATION_TIMEFRAMES);
   const resolve = {
+    // Same exit policy as the live record, so calibration and the forward
+    // record stay directly comparable.
+    ...DEFAULT_RESOLVE_OPTIONS,
     entryWindowBars: Number(
       process.env.ENTRY_WINDOW_BARS ?? DEFAULT_RESOLVE_OPTIONS.entryWindowBars,
     ),
