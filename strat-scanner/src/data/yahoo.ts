@@ -82,6 +82,18 @@ async function fetchChart(symbol: string, interval: string, range: string): Prom
   };
 }
 
+/**
+ * Daily candles over an arbitrary Yahoo range (`5y`, `10y`, `max` …).
+ *
+ * `fetchTimeframe` pins daily to one year, which is all the live scanner ever
+ * needs — the deepest lookback in the engine is 21 bars. The backtest needs
+ * years of it, and asking for a decade on every scheduled scan to serve one
+ * occasional job would be the wrong trade.
+ */
+export async function fetchDailyCandles(symbol: string, range = '5y'): Promise<SeriesResult> {
+  return fetchChart(symbol, '1d', range);
+}
+
 export async function fetchTimeframe(symbol: string, tf: Timeframe): Promise<TimeframeSeries> {
   let series: SeriesResult;
   let candles: Candle[];

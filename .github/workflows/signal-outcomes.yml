@@ -1,0 +1,88 @@
+name: Signal Outcomes
+
+on:
+  schedule:
+    # Daily at 01:10 UTC. After the crypto daily candle closes (00:00) and
+    # after the ladder-fills job at 00:20, so the two committed records are
+    # never contending for the same push.
+    - cron: '10 1 * * *'
+    # Monthly on the 1st at 13:00 UTC: same job, but this firing also pushes
+    # the headline digest. Branching on github.event.schedule is what lets one
+    # workflow be both the silent daily job and the monthly summary.
+    - cron: '0 13 1 * *'
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: 'Also push the headline summary to ntfy'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Print everything, write nothing, send nothing'
+        type: boolean
+        default: false
+
+# The outcome record is committed, so this job needs write access.
+permissions:
+  contents: write
+
+concurrency:
+  group: signal-outcomes
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Enrol and resolve signals
+        env:
+          # ntfy only — used solely for the monthly digest. Discord carries the
+          # weekly crypto report and nothing else; this tool stays off it.
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+          DIGEST: ${{ github.event.schedule == '0 13 1 * *' || inputs.digest }}
+          TRACK_MIN_CONFIDENCE: ${{ vars.TRACK_MIN_CONFIDENCE || '50' }}
+          TRACK_TIMEFRAMES: ${{ vars.TRACK_TIMEFRAMES || 'D,W,M' }}
+          ENTRY_WINDOW_BARS: ${{ vars.ENTRY_WINDOW_BARS || '1' }}
+          MAX_HOLD_BARS: ${{ vars.MAX_HOLD_BARS || '6' }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: npm run track-outcomes
+
+      # Every settled signal lands in git history, so the performance record is
+      # auditable and cannot be quietly rewritten.
+      - name: Commit the outcome record
+        if: ${{ !inputs.dry_run }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          # --porcelain, not diff: these files are untracked on the first run,
+          # and git diff does not report untracked files.
+          if [ -z "$(git status --porcelain -- strat-scanner/data)" ]; then
+            echo "No outcome record change to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add strat-scanner/data/signal-outcomes.json \
+                  strat-scanner/data/signal-history.jsonl \
+                  strat-scanner/data/edge-report.md
+          git commit -m "Update signal outcome record"
+          # The branch may have moved while the scan ran.
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

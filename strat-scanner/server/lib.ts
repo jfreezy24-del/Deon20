@@ -78,6 +78,23 @@ export function buildNtfyPayload(topic: string, msg: PushMessage) {
   };
 }
 
+/**
+ * POST a payload to ntfy's JSON publish endpoint.
+ *
+ * ntfy is the only channel the scheduled tools use. Discord carries the weekly
+ * crypto report and nothing else — every other alerter, and every tool added
+ * since, stays off it so the channel keeps carrying one message set a week
+ * rather than a per-signal stream.
+ */
+export async function publishNtfy(server: string, payload: object): Promise<void> {
+  const res = await fetch(server.replace(/\/$/, ''), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`ntfy responded ${res.status}: ${await res.text()}`);
+}
+
 export function formatMessage(s: Signal): PushMessage {
   const bull = s.direction === 'bullish';
   return {

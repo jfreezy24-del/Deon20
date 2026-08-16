@@ -27,7 +27,11 @@ const TF_PARAM: Record<Timeframe, string> = {
   M: '1Month',
 };
 
-/** How far back to ask for each timeframe, in days. */
+/**
+ * How far back to ask for each timeframe, in days. These are the live
+ * scanner's needs; the backtest overrides the daily figure, since it wants
+ * years of daily bars rather than the 400 the engine's deepest lookback uses.
+ */
 const TF_LOOKBACK_DAYS: Record<Timeframe, number> = {
   '4H': 90,
   D: 400,
@@ -95,6 +99,7 @@ const isoDaysAgo = (days: number): string =>
 export async function fetchAlpacaTimeframe(
   symbol: string,
   tf: Timeframe,
+  lookbackDays: number = TF_LOOKBACK_DAYS[tf],
 ): Promise<TimeframeSeries> {
   const pair = toAlpacaSymbol(symbol);
   const headers = { Accept: 'application/json', ...credentials() };
@@ -106,7 +111,7 @@ export async function fetchAlpacaTimeframe(
     const params = new URLSearchParams({
       symbols: pair,
       timeframe: TF_PARAM[tf],
-      start: isoDaysAgo(TF_LOOKBACK_DAYS[tf]),
+      start: isoDaysAgo(lookbackDays),
       limit: '10000',
       sort: 'asc',
     });

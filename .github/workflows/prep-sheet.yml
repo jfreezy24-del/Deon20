@@ -1,0 +1,54 @@
+name: Prep Sheet
+
+on:
+  schedule:
+    # Weekdays at 12:45 UTC — 45 minutes before the US equity open during
+    # daylight saving, so the sheet lands while there is still time to read it.
+    - cron: '45 12 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the sheet to the log and send nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prep-sheet
+  cancel-in-progress: false
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the prep sheet
+        env:
+          # ntfy only, one push per weekday. Discord carries the weekly crypto
+          # report and nothing else.
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+          PREP_MIN_CONFIDENCE: ${{ vars.PREP_MIN_CONFIDENCE || '40' }}
+          PREP_MAX_DISTANCE: ${{ vars.PREP_MAX_DISTANCE || '4' }}
+          PREP_ROWS: ${{ vars.PREP_ROWS || '8' }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: npm run prep-sheet

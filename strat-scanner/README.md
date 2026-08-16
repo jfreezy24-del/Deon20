@@ -112,6 +112,13 @@ src/data/aggregate.ts       — 1H → 4H aggregation (Yahoo only)
 src/scanner.ts              — orchestration across symbols & timeframes
 src/components/             — signal cards + FTFC strip
 src/__tests__/              — engine unit tests (npm test)
+
+src/strat/outcomes.ts       — forward-walk outcome resolver (shared)
+src/strat/edgeReport.ts     — win rate / expectancy / calibration statistics
+src/strat/signalRecord.ts   — the forward record of published signals
+src/strat/backtest.ts       — historical replay of the engine, no look-ahead
+src/strat/prepSheet.ts      — daily top-down prep sheet
+src/data/history.ts         — deep daily history (backtest only)
 ```
 
 ## Real-time alerts with the app closed (alert server)
@@ -296,6 +303,180 @@ silently starting over, which would re-report every old rung as a new fill.
 
 Run it anywhere with Node 18+: `DRY_RUN=true npm run ladder-fills` prints what
 would be recorded and saves nothing.
+
+---
+
+# 🎓 Training tools
+
+Everything above is forward-looking: it finds setups, scores them, explains
+them and places bids. None of it ever looked **backward** and asked whether the
+calls were any good. The three tools below are that other half — the ones that
+turn the scanner from a signal generator into something that can be checked,
+and that train the habits a scanner cannot.
+
+All three are **ntfy-only**. Discord still carries the weekly crypto report and
+nothing else; nothing here posts to it.
+
+| Tool | Cadence | Sends | Reads as |
+|---|---|---|---|
+| Signal outcomes | Daily, silent | Nothing (monthly digest push) | `data/edge-report.md` |
+| Confidence calibration | Quarterly / on demand | Nothing, ever | `data/calibration.md` |
+| Prep sheet | Weekday mornings | One push | Actions run summary |
+
+## 📊 Signal outcomes (the performance record)
+
+Every alert this repo sends is a complete, falsifiable claim — entry here,
+wrong there, first objective at that price — and until now all of it was thrown
+away the moment the notification landed.
+
+`.github/workflows/signal-outcomes.yml` runs **daily at 01:10 UTC** and keeps
+it. It enrols every signal published at or above the alert confidence floor on
+Daily/Weekly/Monthly structure, then replays each one against daily bars until
+it settles:
+
+| Outcome | Meaning |
+|---|---|
+| `EXPIRED` | The "?" bar never took the trigger — never a trade |
+| `TARGET1` | First magnitude objective paid |
+| `STOPPED` | Invalidated at the other side of the actionable bar |
+| `TIMEOUT` | Triggered, then neither side resolved inside the hold window |
+
+Three conventions, all chosen to bias **against** the engine rather than
+flatter it:
+
+- **A bar containing both the stop and the target counts as a stop.** OHLC
+  cannot order two touches inside one bar; assuming the target would inflate
+  every number in the report by exactly the cases hardest to verify.
+- **Gaps fill at the open, not at the level** — the worse entry and the wider
+  risk a plan would really have had.
+- **The trigger is live for one bar only**, because TheStrat's "?" *is* the
+  next bar. A 2-1-2 that needs four more sessions to trigger is not that
+  2-1-2 any more.
+
+Trades are closed at target 1, so realised R stays directly comparable to the
+`rr1` the engine promised. Whether price then ran on to extended magnitude is
+recorded separately — information about whether that exit policy is leaving
+money behind, never counted as profit.
+
+The output is `data/edge-report.md`: trigger rate, win rate, expectancy and
+total R sliced by **pattern, timeframe, confidence band, timeframe continuity,
+reversal vs continuation, compression vs directional, and symbol**. Trigger
+rate is always reported separately from win rate, because they fail
+differently — a setup that rarely triggers but wins when it does is a patience
+problem, one that always triggers and loses is a selection problem, and a
+single blended number hides which you have.
+
+The record lives in two committed files, split by whether a record can still
+change: `data/signal-outcomes.json` (unsettled, rewritten each run) and
+`data/signal-history.jsonl` (settled, append-only, so a day's work is a few
+added lines in the diff instead of a rewrite of the whole history).
+
+**It sends nothing on a normal run.** A tracker that pinged you about its own
+bookkeeping would be one more stream to ignore. The monthly firing (1st, 13:00
+UTC) pushes a single headline digest to ntfy.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TRACK_MIN_CONFIDENCE` | `50` | Confidence floor for enrolment |
+| `TRACK_TIMEFRAMES` | `D,W,M` | Timeframes tracked |
+| `ENTRY_WINDOW_BARS` | `1` | Bars the trigger stays actionable |
+| `MAX_HOLD_BARS` | `6` | Bars held before a timeout |
+
+`DRY_RUN=true npm run track-outcomes` prints everything and saves nothing.
+
+## 🔬 Confidence calibration (does the score mean anything?)
+
+`scoreConfidence` is hand-tuned. Full timeframe continuity is worth 24 points,
+compression 6, volume expansion 5, strong reward/risk 10. **Those weights were
+reasoned about, never measured** — and every alert ever sent carried a number
+derived from them.
+
+`.github/workflows/calibration.yml` replays the *identical* engine over ten
+years of daily bars and resolves every signal with the *identical* resolver the
+outcome tracker uses, then writes `data/calibration.md`. Two tables carry it:
+
+- **Reliability by confidence band.** The score is ordinal, not a probability —
+  the only claim it makes is that a 70 beats a 50. So the test is whether the
+  columns go up as you read down, backed by the Spearman rank correlation
+  between confidence and realised R. Near zero means the score is decoration;
+  negative means it is actively inverted.
+- **Per-term lift.** Mean R per signal when each term fired versus when it did
+  not. A term should lift results roughly in proportion to the points it
+  awards. Flat or negative lift means the points are noise — and every score
+  containing that term is wrong by that many points.
+
+**No look-ahead.** Weekly and monthly candles are rebuilt from the daily bars
+rather than fetched, so a partially formed week contains only the days that had
+actually traded at that instant. Fetching weekly bars directly would hand every
+historical signal the whole week's outcome as its own continuity input, which
+is the easiest way to backtest a fantasy. This is enforced by a test that
+truncates the history mid-replay and requires every earlier signal to score
+identically.
+
+Two honest gaps from live running, documented in the report itself rather than
+buried: **4H is not modelled** (daily history cannot reconstruct it), so
+continuity scores over D/W/M and `ftfc-full` faces a slightly easier test than
+live; and the `in-force` term never fires, because a replay evaluates at a bar
+close, before the "?" has printed.
+
+**This job sends nothing, ever** — no ntfy, no anything. It is a slow report to
+read deliberately. It also publishes to the Actions run summary.
+
+| Variable / input | Default | Meaning |
+|---|---|---|
+| `CALIBRATION_YEARS` | `10` | Years of daily history to replay |
+| `CALIBRATION_SYMBOLS` | _(universe)_ | Comma list to replay instead |
+| `CALIBRATION_TIMEFRAMES` | `D,W,M` | Timeframes to publish on |
+
+`DRY_RUN=true CALIBRATION_SYMBOLS=SPY,QQQ npm run calibrate` prints a report
+locally without writing.
+
+Read this **against** `edge-report.md`. The calibration is the in-sample
+question ("does this engine have an edge historically"); the outcome record is
+the out-of-sample one ("did the signals actually sent make money"). A large gap
+between them is a live-run problem — missed bars, scheduling, the alert floor —
+not a strategy one.
+
+## 📋 Daily prep sheet
+
+The two alerters are reactive by design: a level breaks, your phone buzzes.
+That is the right shape for an entry and the wrong shape for a habit — it
+trains you to click notifications rather than arrive with a view.
+
+`.github/workflows/prep-sheet.yml` runs **weekdays at 12:45 UTC**, 45 minutes
+before the US open, and lays out the board:
+
+- **Where we are in the higher-timeframe candles.** A new weekly open resets
+  the line that decides weekly continuity for the next five sessions; a new
+  monthly open frames every lower timeframe for the month. The sheet says when
+  those candles open and close, and which day of the week you are on.
+- **Higher-timeframe structure** — weekly and monthly actionable bars, with
+  inside-bar compression sorted to the top, since that is the tightest risk on
+  the board.
+- **In play today** — daily triggers within reach of a normal session, nearest
+  first, with the distance in percent. Anything further than 4% away is
+  dropped: a level today cannot reach is not in play, and listing it is the
+  noise this sheet exists to remove.
+- **Timeframe continuity** — which symbols are in full continuity each way, and
+  where the daily is fighting the weekly.
+
+Nothing here is a trade call; there are no entries to take at 08:00. It is the
+map you read first.
+
+Delivery is **one ntfy push** at default priority — a scheduled briefing, not a
+level breaking, so it does not wake the phone the way a trigger alert does. The
+full sheet goes to the Actions run summary. Nothing is committed: a prep sheet
+is worth reading on the day and worthless a week later.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PREP_MIN_CONFIDENCE` | `40` | Confidence floor for rows |
+| `PREP_MAX_DISTANCE` | `4` | Max % from price to trigger to count as in play |
+| `PREP_ROWS` | `8` | Daily rows carried in the sheet |
+
+`DRY_RUN=true npm run prep-sheet` prints the sheet and sends nothing.
+
+---
 
 ## Development
 
