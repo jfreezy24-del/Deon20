@@ -6,6 +6,7 @@ import {
   expireStaleRungs,
   isoDate,
   reconcilePlan,
+  remainingBudgetPct,
   SymbolPosition,
   TrackedRung,
 } from '../crypto/ladderState';
@@ -85,6 +86,117 @@ describe('reconcilePlan', () => {
     const next = reconcilePlan(undefined, [planRung(100, 100)], '2026-06-15');
     expect(next.rungs).toHaveLength(1);
     expect(next.rungs[0].filledOn).toBeNull();
+  });
+});
+
+describe('reconcilePlan budgets against what is left', () => {
+  const totalWeight = (p: SymbolPosition) => p.rungs.reduce((s, r) => s + r.allocationPct, 0);
+
+  it('leaves a fresh plan alone when nothing has filled', () => {
+    const next = reconcilePlan(
+      undefined,
+      [planRung(100, 20), planRung(90, 24), planRung(80, 27), planRung(70, 29)],
+      '2026-06-15',
+    );
+    expect(next.rungs.map((r) => r.allocationPct)).toEqual([20, 24, 27, 29]);
+  });
+
+  it('never commits more than the budget once a rung has filled', () => {
+    // The whole bug: buildDcaPlan publishes 100% every week, so a position that
+    // filled 20% and then republished used to be committed to 120%.
+    const existing = position([tracked({ price: 120, allocationPct: 20, filledOn: '2026-06-02' })]);
+    const next = reconcilePlan(
+      existing,
+      [planRung(100, 20), planRung(90, 24), planRung(80, 27), planRung(70, 29)],
+      '2026-06-15',
+    );
+    expect(totalWeight(next)).toBeCloseTo(100, 6);
+    expect(next.rungs.filter((r) => !r.filledOn).reduce((s, r) => s + r.allocationPct, 0)).toBeCloseTo(
+      80,
+      6,
+    );
+  });
+
+  it('keeps the planned proportions while scaling them down', () => {
+    const existing = position([tracked({ price: 120, allocationPct: 50, filledOn: '2026-06-02' })]);
+    const next = reconcilePlan(existing, [planRung(100, 25), planRung(80, 75)], '2026-06-15');
+    // 50 left, split 25/75 → 12.5 / 37.5. The skew survives the scaling.
+    expect(next.rungs.filter((r) => !r.filledOn).map((r) => r.allocationPct)).toEqual([12.5, 37.5]);
+  });
+
+  it('deploys the full remainder across the rungs that are still bid', () => {
+    // The 100 level already filled and is dropped from the new plan, so the
+    // survivors renormalise between themselves rather than stranding its share.
+    const existing = position([tracked({ price: 100, allocationPct: 40, filledOn: '2026-06-02' })]);
+    const next = reconcilePlan(
+      existing,
+      [planRung(100, 40), planRung(80, 20), planRung(60, 40)],
+      '2026-06-15',
+    );
+    const resting = next.rungs.filter((r) => !r.filledOn);
+    expect(resting.map((r) => r.price)).toEqual([80, 60]);
+    expect(resting.map((r) => r.allocationPct)).toEqual([20, 40]);
+    expect(totalWeight(next)).toBeCloseTo(100, 6);
+  });
+
+  it('stops bidding once the position is fully accumulated', () => {
+    const existing = position([tracked({ price: 100, allocationPct: 100, filledOn: '2026-06-02' })]);
+    const next = reconcilePlan(existing, [planRung(80, 100)], '2026-06-15');
+    expect(next.rungs.filter((r) => !r.filledOn)).toEqual([]);
+    expect(next.rungs).toHaveLength(1);
+  });
+
+  it('does not publish a rung for a rounding error of a position', () => {
+    const existing = position([
+      tracked({ price: 100, allocationPct: 99.8, filledOn: '2026-06-02' }),
+    ]);
+    expect(reconcilePlan(existing, [planRung(80, 100)], '2026-06-15').rungs).toHaveLength(1);
+  });
+
+  it('publishes nothing for a position that legacy state over-committed', () => {
+    // Written before allocations were budgeted: 160% filled. Clamping to zero
+    // is the conservative reading — it cannot spend its way further in.
+    const existing = position([
+      tracked({ price: 100, allocationPct: 80, filledOn: '2026-06-02' }),
+      tracked({ price: 90, allocationPct: 80, filledOn: '2026-06-05' }),
+    ]);
+    const next = reconcilePlan(existing, [planRung(70, 100)], '2026-06-15');
+    expect(next.rungs.filter((r) => !r.filledOn)).toEqual([]);
+    expect(remainingBudgetPct(existing)).toBe(0);
+  });
+
+  it('holds the cap across repeated weekly republishing', () => {
+    // The realistic path: plan, fill the shallow rung, replan, fill again.
+    let pos = { ...reconcilePlan(undefined, [planRung(100, 30), planRung(80, 70)], '2026-06-01') };
+    pos = { ...pos, rungs: pos.rungs.map((r) => (r.price === 100 ? { ...r, filledOn: '2026-06-03' } : r)) };
+
+    for (const week of ['2026-06-08', '2026-06-15', '2026-06-22', '2026-06-29']) {
+      pos = reconcilePlan(pos, [planRung(95, 30), planRung(75, 70)], week);
+      expect(totalWeight(pos)).toBeCloseTo(100, 6);
+    }
+  });
+});
+
+describe('remainingBudgetPct', () => {
+  it('is the whole budget before anything fills', () => {
+    expect(remainingBudgetPct(undefined)).toBe(100);
+    expect(remainingBudgetPct(position([tracked({ allocationPct: 100 })]))).toBe(100);
+  });
+
+  it('counts only what actually filled, not what is resting', () => {
+    const p = position([
+      tracked({ price: 100, allocationPct: 30, filledOn: '2026-06-02' }),
+      tracked({ price: 80, allocationPct: 70 }),
+    ]);
+    expect(remainingBudgetPct(p)).toBe(70);
+  });
+
+  it('never goes negative', () => {
+    const p = position([
+      tracked({ price: 100, allocationPct: 90, filledOn: '2026-06-02' }),
+      tracked({ price: 80, allocationPct: 90, filledOn: '2026-06-05' }),
+    ]);
+    expect(remainingBudgetPct(p)).toBe(0);
   });
 });
 
@@ -192,6 +304,15 @@ describe('costBasis', () => {
     const basis = costBasis(position([tracked({ price: 100 })]));
     expect(basis.averageFill).toBeNull();
     expect(basis.deployedPct).toBe(0);
+  });
+
+  it('measures deployment against the budget, not against what is tracked', () => {
+    // A position that bought a third of its size and then found no structure
+    // left to bid is 33% deployed, not 100%.
+    const basis = costBasis(
+      position([tracked({ price: 100, allocationPct: 33, filledOn: '2026-06-02' })]),
+    );
+    expect(basis.deployedPct).toBe(33);
   });
 });
 

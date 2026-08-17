@@ -291,6 +291,19 @@ like `3 of 4 filled, average $171 against $166 planned, 72% deployed`. The
 average is weighted by allocation, not by rung count, so a big deep fill moves
 it more than a small shallow one.
 
+**One budget per symbol.** A ladder is a single accumulation campaign, not a
+fresh 100% every week. `buildDcaPlan` knows nothing about the position and
+always spreads 100% across the rungs it produces, so `reconcilePlan` scales
+each new plan down to the budget that is actually left — filled rungs are
+subtracted first, and the survivors keep their planned proportions between
+them. Once the budget is spent the symbol stops publishing bids, and
+`deployedPct` is measured against the whole budget rather than against
+whatever is tracked right now. Without this the ladder republishes its way to
+several times its own size while still reporting a comfortable percentage.
+Positions written before this may show more than 100% filled; they clamp to
+zero and bid no further, so reset a symbol's state if the over-spend was only
+on paper.
+
 **Stale rung expiry.** A rung that rests unfilled past `RUNG_TTL_DAYS`
 (default 90) is dropped and reported. A level only means something while the
 structure that produced it still stands; months later it is a stale order, not
@@ -675,9 +688,12 @@ deploys everything at no discount. Every table carries both.
   returns are the only way to check it. If defensive weeks were followed by the
   same returns as accumulate weeks, the stance is decoration.
 
-It also reports **over-commitment**: allocations are re-normalised to 100%
-across each fresh plan while filled rungs are carried forward, so a ladder that
-fills and republishes can commit to more than the budget.
+It also reports **over-commitment** — requested spend with no cash behind it.
+This is what caught the budgeting bug: the first run showed $2.5M of unfunded
+spend across nine assets, because each fresh plan re-normalised to 100% while
+filled rungs carried forward. `reconcilePlan` now budgets against what is left,
+so this number should stay at zero; anything else means the ladder is
+committing to size it does not have.
 
 **This job sends nothing, ever.** Discord still carries only the weekly crypto
 report.

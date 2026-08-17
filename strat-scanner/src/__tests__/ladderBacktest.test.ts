@@ -115,10 +115,23 @@ describe('replayLadder', () => {
   });
 
   it('expires more rungs on a short TTL than a long one', () => {
-    const short = replayLadder('X', bars, { ttlDays: 14 });
-    const long = replayLadder('X', bars, { ttlDays: 100_000 });
+    // On a rising series nothing fills, so the budget stays intact and rungs
+    // rest long enough for the TTL to be the thing that removes them. Through a
+    // drawdown the ladder deploys its budget and stops bidding, and there is
+    // nothing left resting for any TTL to expire.
+    const climbing = rising(1000);
+    const short = replayLadder('X', climbing, { ttlDays: 14 });
+    const long = replayLadder('X', climbing, { ttlDays: 100_000 });
     expect(short.expiredCount).toBeGreaterThan(long.expiredCount);
     expect(long.expiredCount).toBe(0);
+  });
+
+  it('stops publishing rungs once the budget is fully accumulated', () => {
+    // The ladder is one accumulation campaign, not a fresh 100% every week.
+    // Spending the budget ends it; it does not roll over into more bids.
+    const run = replayLadder('X', bars);
+    expect(run.deployed).toBeLessThanOrEqual(run.budget + 1e-6);
+    expect(run.unfundedSpend).toBeCloseTo(0, 6);
   });
 
   it('is deterministic', () => {
