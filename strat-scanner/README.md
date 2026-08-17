@@ -246,15 +246,29 @@ Tuning (optional repo *variables*):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WEEKLY_NTFY_ASSETS` | `4` | Per-asset ladder pushes after the digest |
-| `WRITEUP_SYMBOL` | `SOL-USD,BTC-USD,ETH-USD` | Coins that get a written analysis, comma separated |
+| `WEEKLY_NTFY_ASSETS` | every asset | Cap on per-asset ladder pushes |
+| `WRITEUP_SYMBOL` | `SOL-USD,BTC-USD,ETH-USD,HYPE-USD` | Coins that get a written analysis, comma separated |
 
-**Written analyses.** Each coin in `WRITEUP_SYMBOL` is posted as its own
-message *ahead of* the ladder, in the order listed, so the first coin leads
-the report and carries the role ping. More depth costs channel volume: every
-coin added is one more Discord message a week. A symbol that failed to scan is
-skipped with a warning rather than failing the run, and if none resolve the
-ladder leads and still pings.
+**The two channels carry different things.**
+
+| | Discord | ntfy |
+|---|---|---|
+| Written analyses | ✅ one message per coin | — |
+| DCA ladders | — | ✅ one push per asset |
+
+Discord gets the reasoning; ntfy gets the numbers to act on, alongside the
+fill alerts that chase them. Each coin in `WRITEUP_SYMBOL` is one Discord
+message, in the order listed, so the first coin leads and carries the role
+ping. A symbol that failed to scan is skipped with a warning, and if none
+resolve Discord gets nothing that week.
+
+Every coin listed in `WRITEUP_SYMBOL` must also be in
+`server/crypto-watchlist.json` — the write-up is built from the same scan, so
+a coin that is not scanned has no structure to write about.
+
+Ladder pushes now cover **every scanned asset** rather than the top four,
+since ntfy is the only channel carrying them. `WEEKLY_NTFY_ASSETS` caps that
+if it is too many notifications.
 
 The universe lives in `server/crypto-watchlist.json` — edit that file to
 change which coins are covered. Run it anywhere with Node 18+:

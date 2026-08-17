@@ -18,10 +18,11 @@
  *   APCA_API_KEY_ID       Alpaca key id     (optional; crypto bars are free)
  *   APCA_API_SECRET_KEY   Alpaca secret     (optional, paired with the above)
  *   CRYPTO_PROVIDER       'yahoo' to pin crypto back to the old source
- *   WEEKLY_NTFY_ASSETS    per-asset pushes after the digest           (default 4)
+ *   WEEKLY_NTFY_ASSETS    cap on per-asset ladder pushes    (default: every one)
  *   WRITEUP_SYMBOL        symbols for the written analyses, comma separated.
  *                         Each gets its own message ahead of the ladder, in
- *                         the order given.  (default SOL-USD,BTC-USD,ETH-USD)
+ *                         the order given.
+ *                         (default SOL-USD,BTC-USD,ETH-USD,HYPE-USD)
  *   DISCORD_ROLE_ID       role to @mention, numeric id. One id pings every
  *                         channel; give one per webhook, in the same order,
  *                         when the channels are in different servers.
@@ -51,10 +52,10 @@ import { costBasis, isoDate, reconcilePlan } from '../src/crypto/ladderState';
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
 
 /**
- * Coins that get a written analysis. Each one is a separate Discord message,
- * so this is a deliberate trade of channel volume for depth.
+ * Coins that get a written analysis, one Discord message each. Every one must
+ * also be in the scanned watchlist, or there is no structure to write about.
  */
-const DEFAULT_WRITEUP_SYMBOLS = ['SOL-USD', 'BTC-USD', 'ETH-USD'];
+const DEFAULT_WRITEUP_SYMBOLS = ['SOL-USD', 'BTC-USD', 'ETH-USD', 'HYPE-USD'];
 
 const loadUniverse = (): string[] => loadSymbolList(WATCHLIST_FILE, CRYPTO_UNIVERSE);
 
@@ -202,10 +203,13 @@ async function main() {
       `(${writeups.length} message(s) ahead of the ladder).`,
   );
 
-  const discordMessages = composeWeeklyMessages(report, basisFor, writeups);
+  const discordMessages = composeWeeklyMessages(writeups);
+  // Unset means every asset: ntfy is the only channel carrying ladders now.
+  const ntfyCap = Number(process.env.WEEKLY_NTFY_ASSETS);
   const ntfyMessages = formatWeeklyNtfy(
     report,
-    num(process.env.WEEKLY_NTFY_ASSETS, DEFAULT_WEEKLY_OPTIONS.maxFeatured),
+    Number.isFinite(ntfyCap) && ntfyCap > 0 ? ntfyCap : undefined,
+    basisFor,
   );
 
   if (dryRun) {
