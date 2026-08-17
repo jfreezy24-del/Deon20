@@ -177,7 +177,7 @@ async function main() {
   // The ladder report covers the whole universe; the written analysis covers
   // one symbol in depth and rides along as its own message.
   const writeupSymbols = parseSymbols(process.env.WRITEUP_SYMBOL, DEFAULT_WRITEUP_SYMBOLS);
-  const writeups = writeupSymbols.flatMap((symbol) => {
+  const writeups = writeupSymbols.flatMap((symbol, index) => {
     const subject = report.assets.find((a) => a.symbol === symbol);
     if (!subject) {
       console.warn(`  WARN write-up symbol ${symbol} was not scanned — skipping its analysis.`);
@@ -186,6 +186,10 @@ async function main() {
     return [
       {
         writeup: buildWriteup({
+          // Coin, week and position: the same coin reads the same all week,
+          // next week is fresh, and two coins in one report cannot collide on
+          // the same phrasing.
+          seed: `${subject.symbol}:${report.weekOf}#${index}`,
           symbol: subject.symbol,
           name: subject.name,
           lastPrice: subject.lastPrice,
