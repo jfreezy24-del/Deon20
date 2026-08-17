@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Signal } from '../src/strat/types';
 import { AlgoAlert } from '../src/strat/algoAlerts';
+import { RefinedEntry } from '../src/strat/entryRefinement';
 import { algoAlertKey, buildAlgoNtfyPayload, formatAlgoEmail, formatAlgoPush } from './algo-lib';
 
 const sig = (over: Partial<Signal>): Signal => ({
@@ -21,6 +22,7 @@ const sig = (over: Partial<Signal>): Signal => ({
   levels: { entry: 121, stop: 118, target1: 127, target2: 130, rr1: 2, rr2: 3 },
   continuity: { '4H': 'up', D: 'up', W: 'up', M: 'down' },
   setupBarTime: 1_700_000_000,
+  triggerBarEnd: 1_700_086_400,
   ...over,
 });
 
@@ -91,5 +93,58 @@ describe('buildAlgoNtfyPayload', () => {
     const pushOnly = buildAlgoNtfyPayload('topic', alert());
     expect('email' in pushOnly).toBe(false);
     expect(pushOnly.message).toContain('Risk line 118.00');
+  });
+});
+
+describe('the 60-minute risk line', () => {
+  const refined = (over: Partial<RefinedEntry> = {}): RefinedEntry => ({
+    entry: 121,
+    stop: 120,
+    stopSource: 'intraday-pivot',
+    triggeredAt: 1_700_090_000,
+    risk: 1,
+    originalRisk: 3,
+    tightening: 3,
+    rr1: 6,
+    rr2: 9,
+    originalRr1: 2,
+    ...over,
+  });
+
+  it('states both risk lines, never replacing the structural one', () => {
+    // The higher-timeframe line is where the setup is actually wrong; the
+    // refined one trades a smaller loss for a higher chance of taking it.
+    const body = formatAlgoEmail(alert({ refined: refined() })).body;
+    expect(body).toContain('RISK LINE (stop): 118.00');
+    expect(body).toContain('60m RISK LINE: 120.00');
+    expect(body).toContain('3.0x tighter');
+    expect(body).toContain('6R against 2R');
+  });
+
+  it('leaves the alert unchanged when no intraday timing was available', () => {
+    const body = formatAlgoEmail(alert()).body;
+    expect(body).toContain('RISK LINE (stop): 118.00');
+    expect(body).not.toContain('60m RISK LINE');
+  });
+
+  it('says nothing when refinement declined', () => {
+    // A declined refinement carries the higher-timeframe stop; printing it as
+    // a "60m risk line" would imply a tightening that did not happen.
+    const declined = refined({ stopSource: 'higher-timeframe', stop: 118, tightening: 1 });
+    expect(formatAlgoEmail(alert({ refined: declined })).body).not.toContain('60m RISK LINE');
+    expect(formatAlgoPush(alert({ refined: declined })).body).not.toContain('60m risk line');
+  });
+
+  it('carries the tighter line into the push too', () => {
+    const push = formatAlgoPush(alert({ refined: refined() }));
+    expect(push.body).toContain('60m risk line 120.00');
+    // The structural plan is still the headline.
+    expect(push.body).toContain('Risk line 118.00');
+  });
+
+  it('does not alter the alert title, which is about selection', () => {
+    expect(formatAlgoPush(alert({ refined: refined() })).title).toBe(
+      formatAlgoPush(alert()).title,
+    );
   });
 });

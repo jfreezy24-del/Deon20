@@ -1,0 +1,86 @@
+name: Entry Refinement
+
+on:
+  schedule:
+    # Monthly, on the 4th at 03:00 UTC. More often than the decade-long
+    # replays because the hourly window only covers ~60 days — each run sees
+    # largely new data, and the answer is worth re-checking as it rolls.
+    - cron: '0 3 4 * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Days of hourly history (provider cap is ~60)'
+        type: string
+        default: '60'
+      symbols:
+        description: 'Comma-separated symbols (blank = the full universe)'
+        type: string
+        default: ''
+      pivot_bars:
+        description: 'Intraday bars behind the trigger to take the stop from'
+        type: string
+        default: '3'
+      dry_run:
+        description: 'Print the report and write nothing'
+        type: boolean
+        default: false
+
+# The comparison report is committed so the answer can be tracked over time.
+permissions:
+  contents: write
+
+concurrency:
+  group: entry-refinement
+  cancel-in-progress: false
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No NTFY_TOPIC and no webhook of any kind: this job sends nothing.
+      - name: Compare refined against structural stops
+        env:
+          REFINE_DAYS: ${{ inputs.days || '60' }}
+          REFINE_SYMBOLS: ${{ inputs.symbols }}
+          REFINE_TIMEFRAMES: ${{ vars.REFINE_TIMEFRAMES || 'D,W,M' }}
+          REFINE_MIN_CONFIDENCE: ${{ vars.REFINE_MIN_CONFIDENCE || '50' }}
+          REFINE_PIVOT_BARS: ${{ inputs.pivot_bars || '3' }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: npm run entry-refinement
+
+      - name: Publish the report to the run summary
+        if: ${{ !inputs.dry_run }}
+        run: cat data/entry-refinement.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit the comparison
+        if: ${{ !inputs.dry_run }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if [ -z "$(git status --porcelain -- strat-scanner/data/entry-refinement.md)" ]; then
+            echo "No comparison change to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add strat-scanner/data/entry-refinement.md
+          git commit -m "Update entry refinement comparison"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

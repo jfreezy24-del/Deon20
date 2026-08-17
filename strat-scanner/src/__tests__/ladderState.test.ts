@@ -202,3 +202,77 @@ describe('state helpers', () => {
     expect(isoDate(Date.UTC(2026, 7, 12, 3, 0, 0))).toBe('2026-08-12');
   });
 });
+
+describe('a drifting level cannot be filled retroactively', () => {
+  const d = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 1000;
+  const rung = (price: number) => ({
+    price,
+    discountPct: 2,
+    allocationPct: 100,
+    source: 'Prior week low',
+    timeframe: 'W' as const,
+    rationale: '',
+  });
+  // The lowest low after the first placement is 100.2: above a 100.0 bid,
+  // below a 100.4 one.
+  const bars: Candle[] = [
+    { time: d('2024-01-10'), open: 103, high: 104, low: 100.9, close: 103, volume: 1 },
+    { time: d('2024-01-17'), open: 103, high: 104, low: 100.2, close: 103, volume: 1 },
+    { time: d('2024-01-24'), open: 104, high: 105, low: 100.8, close: 104, volume: 1 },
+  ];
+
+  it('does not fill a bid with a bar that traded before the bid moved there', () => {
+    // 100.0 -> 100.4 is inside the 0.5% same-place band, so placedOn is
+    // carried and the staleness clock keeps running. Fill eligibility must
+    // NOT be carried with it: on 17 Jan the bid was at 100.0 and the 100.2 low
+    // would not have touched it.
+    let pos = { ...reconcilePlan(undefined, [rung(100.0)], '2024-01-10'), symbol: 'X' };
+    pos = applyFills(pos, bars).position;
+    expect(pos.rungs[0].filledOn).toBeNull();
+
+    pos = { ...reconcilePlan(pos, [rung(100.4)], '2024-01-24'), symbol: 'X' };
+    // The staleness clock is still the original placement...
+    expect(pos.rungs[0].placedOn).toBe('2024-01-10');
+    // ...but the price is new, so fills only count from today.
+    expect(pos.rungs[0].pricedOn).toBe('2024-01-24');
+
+    expect(applyFills(pos, bars).fills).toHaveLength(0);
+  });
+
+  it('still fills a bid the market genuinely reaches after it moved', () => {
+    let pos = { ...reconcilePlan(undefined, [rung(100.0)], '2024-01-10'), symbol: 'X' };
+    pos = { ...reconcilePlan(pos, [rung(100.4)], '2024-01-17'), symbol: 'X' };
+    // The 17 Jan bar is on the day the bid moved to 100.4, and its low is 100.2.
+    const res = applyFills(pos, bars);
+    expect(res.fills).toHaveLength(1);
+    expect(res.fills[0].filledOn).toBe('2024-01-17');
+  });
+
+  it('keeps fill eligibility when the level is republished unchanged', () => {
+    // An identical price is the same resting order; it must not lose the days
+    // it has already been sitting there.
+    let pos = { ...reconcilePlan(undefined, [rung(100.5)], '2024-01-10'), symbol: 'X' };
+    pos = { ...reconcilePlan(pos, [rung(100.5)], '2024-01-24'), symbol: 'X' };
+    expect(pos.rungs[0].pricedOn).toBe('2024-01-10');
+    expect(applyFills(pos, bars).fills[0]?.filledOn).toBe('2024-01-17');
+  });
+
+  it('falls back to placedOn for records written before pricedOn existed', () => {
+    const legacy = {
+      symbol: 'X',
+      planDate: '2024-01-10',
+      rungs: [
+        {
+          price: 100.4,
+          allocationPct: 100,
+          source: 'Prior week low',
+          timeframe: 'W' as const,
+          placedOn: '2024-01-10',
+          filledOn: null,
+        },
+      ],
+    };
+    // No pricedOn: behaves exactly as it did before, so committed state loads.
+    expect(applyFills(legacy, bars).fills[0]?.filledOn).toBe('2024-01-17');
+  });
+});

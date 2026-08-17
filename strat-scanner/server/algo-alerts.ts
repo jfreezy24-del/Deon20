@@ -14,6 +14,7 @@
  *   NTFY_SERVER           ntfy server base URL         (default https://ntfy.sh)
  *   ALGO_MIN_CONFIDENCE   confidence bar for alerts               (default 60)
  *   ALGO_TIMEFRAMES       comma list of eligible timeframes    (default D,W,M)
+ *   REFINE_ENTRIES        'false' to skip the 60m risk line      (default true)
  *
  * State: server/.state/algo-prev-keys.json (cache it between runs to dedupe).
  */
@@ -23,6 +24,9 @@ import { scanMarket } from '../src/scanner';
 import { ALGO_UNIVERSE } from '../src/strat/universe';
 import { buildAlgoAlerts, DEFAULT_ALGO_OPTIONS } from '../src/strat/algoAlerts';
 import { Timeframe, TIMEFRAMES } from '../src/strat/types';
+import { refineEntry } from '../src/strat/entryRefinement';
+import { TradePlan } from '../src/strat/outcomes';
+import { fetchHourly } from '../src/data/intraday';
 import { algoAlertKey, buildAlgoNtfyPayload, formatAlgoPush } from './algo-lib';
 import { loadSymbolList } from './watchlist-file';
 
@@ -31,6 +35,14 @@ const STATE_FILE = path.join(SERVER_DIR, '.state', 'algo-prev-keys.json');
 const WATCHLIST_FILE = path.join(SERVER_DIR, 'algo-watchlist.json');
 
 const loadUniverse = (): string[] => loadSymbolList(WATCHLIST_FILE, ALGO_UNIVERSE);
+
+/**
+ * Set REFINE_ENTRIES=false to stop attaching 60-minute risk lines — the escape
+ * hatch if the intraday fetch ever starts costing more than the suggestion is
+ * worth.
+ */
+const skipRefinement = (): boolean =>
+  (process.env.REFINE_ENTRIES ?? 'true').trim().toLowerCase() === 'false';
 
 function loadPrevKeys(): Set<string> | null {
   try {
@@ -120,6 +132,32 @@ async function main() {
   const prevKeys = loadPrevKeys();
   const firstRun = prevKeys === null;
   const fresh = firstRun ? [] : alerts.filter((a) => !prevKeys.has(algoAlertKey(a.signal)));
+
+  // 60-minute entry timing, attached only to the handful of alerts actually
+  // going out. Best-effort by design: an alert is complete without it, so a
+  // failed intraday fetch costs a tighter stop suggestion and nothing else —
+  // it must never be the reason a confirmed trigger goes unsent.
+  if (!skipRefinement()) {
+    for (const alert of fresh) {
+      try {
+        const intraday = await fetchHourly(alert.signal.symbol);
+        const plan: TradePlan = {
+          direction: alert.signal.direction,
+          timeframe: alert.signal.timeframe,
+          levels: alert.signal.levels,
+          setupBarTime: alert.signal.setupBarTime,
+          triggerBarEnd: alert.signal.triggerBarEnd,
+        };
+        const refined = refineEntry(plan, intraday.candles);
+        if (refined) alert.refined = refined;
+      } catch (e) {
+        console.warn(
+          `  WARN ${alert.signal.symbol}: 60m entry timing unavailable ` +
+            `(${e instanceof Error ? e.message : e}) — alerting on the structural stop only.`,
+        );
+      }
+    }
+  }
 
   if (!topic) console.log('NTFY_TOPIC not set — ntfy send skipped.');
 

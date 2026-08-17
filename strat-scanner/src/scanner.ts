@@ -3,6 +3,7 @@ import { buildContinuity, scoreContinuity } from './strat/continuity';
 import { computeLevels } from './strat/levels';
 import { scoreConfidence } from './strat/confidence';
 import { buildExplanation } from './strat/explain';
+import { triggerBarEndFrom } from './strat/outcomes';
 import { Candle, Signal, Timeframe, TIMEFRAMES } from './strat/types';
 import { fetchTimeframe } from './data/market';
 import { TimeframeSeries } from './data/series';
@@ -71,6 +72,7 @@ function signalsForSymbol(symbol: string, series: TimeframeSeries[]): Signal[] {
         levels,
         continuity: continuityMap,
         setupBarTime: m.triggerBar.time,
+        triggerBarEnd: triggerBarEndFrom(s.completed, s.forming, s.timeframe),
       });
     }
   }

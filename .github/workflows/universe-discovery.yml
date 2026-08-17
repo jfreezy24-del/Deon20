@@ -1,0 +1,84 @@
+name: Universe Discovery
+
+on:
+  schedule:
+    # Monthly, on the 6th at 04:00 UTC. Watchlists should change slowly — a
+    # weekly proposal would just be churn, and churn is how a curated list
+    # becomes a scan of everything.
+    - cron: '0 4 6 * *'
+  workflow_dispatch:
+    inputs:
+      pool:
+        description: 'Which candidate pool to screen'
+        type: choice
+        options: [both, equities, crypto]
+        default: both
+      years:
+        description: 'Years of daily history'
+        type: string
+        default: '3'
+      dry_run:
+        description: 'Print the report and write nothing'
+        type: boolean
+        default: false
+
+# The proposal is committed so changes to the watchlist have a paper trail.
+permissions:
+  contents: write
+
+concurrency:
+  group: universe-discovery
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No NTFY_TOPIC and no webhook of any kind: this job sends nothing. It
+      # proposes; it never edits a watchlist.
+      - name: Screen the candidate pool
+        env:
+          DISCOVER_POOL: ${{ inputs.pool || 'both' }}
+          DISCOVER_YEARS: ${{ inputs.years || '3' }}
+          DISCOVER_MAX: ${{ vars.DISCOVER_MAX || '15' }}
+          DISCOVER_MIN_VOLUME: ${{ vars.DISCOVER_MIN_VOLUME }}
+          DISCOVER_MAX_CORR: ${{ vars.DISCOVER_MAX_CORR }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: npm run discover
+
+      - name: Publish the proposal to the run summary
+        if: ${{ !inputs.dry_run }}
+        run: cat data/universe-discovery.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit the proposal
+        if: ${{ !inputs.dry_run }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if [ -z "$(git status --porcelain -- strat-scanner/data/universe-discovery.md)" ]; then
+            echo "No discovery change to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add strat-scanner/data/universe-discovery.md
+          git commit -m "Update universe discovery proposal"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

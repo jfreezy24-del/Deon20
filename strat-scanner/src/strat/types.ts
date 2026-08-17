@@ -31,7 +31,29 @@ export type TFTrend = 'up' | 'down' | 'flat';
 /** Direction of the currently forming candle on each timeframe (close vs open). */
 export type ContinuityMap = Partial<Record<Timeframe, TFTrend>>;
 
+/**
+ * Stable identity for each term in the confidence model.
+ *
+ * Labels carry live numbers ("Timeframe continuity: D, W aligned"), so they
+ * cannot be grouped on. These keys can be, which is what lets the edge report
+ * measure each term's realised lift and say whether its weight is earned.
+ */
+export type ConfidenceFactorKey =
+  | 'base'
+  | 'compression'
+  | 'ftfc-full'
+  | 'ftfc-aligned'
+  | 'ftfc-opposed'
+  | 'rr-strong'
+  | 'rr-ok'
+  | 'rr-poor'
+  | 'close-location'
+  | 'volume'
+  | 'reversal-backed'
+  | 'in-force';
+
 export interface ConfidenceFactor {
+  key: ConfidenceFactorKey;
   label: string;
   points: number;
 }
@@ -79,4 +101,11 @@ export interface Signal {
   continuity: ContinuityMap;
   /** Bar time of the trigger (setup) candle */
   setupBarTime: number;
+  /**
+   * Unix seconds at which the trigger bar closed — when the "?" bar opened.
+   * Recorded rather than derived, because a month is not 31 days: the outcome
+   * tracker needs the real boundary to know which bars the "?" is allowed to
+   * act on.
+   */
+  triggerBarEnd: number;
 }

@@ -26,6 +26,7 @@ const sig = (over: Partial<Signal>): Signal => ({
   levels: { entry: 101, stop: 99, target1: 104, target2: 106, rr1: 1.5, rr2: 2.5 },
   continuity: { '4H': 'up', D: 'up', W: 'up', M: 'down' },
   setupBarTime: 1_700_000_000,
+  triggerBarEnd: 1_700_086_400,
   ...over,
 });
 
