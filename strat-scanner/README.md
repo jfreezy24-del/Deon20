@@ -247,6 +247,14 @@ Tuning (optional repo *variables*):
 | Variable | Default | Meaning |
 |---|---|---|
 | `WEEKLY_NTFY_ASSETS` | `4` | Per-asset ladder pushes after the digest |
+| `WRITEUP_SYMBOL` | `SOL-USD,BTC-USD,ETH-USD` | Coins that get a written analysis, comma separated |
+
+**Written analyses.** Each coin in `WRITEUP_SYMBOL` is posted as its own
+message *ahead of* the ladder, in the order listed, so the first coin leads
+the report and carries the role ping. More depth costs channel volume: every
+coin added is one more Discord message a week. A symbol that failed to scan is
+skipped with a warning rather than failing the run, and if none resolve the
+ladder leads and still pings.
 
 The universe lives in `server/crypto-watchlist.json` — edit that file to
 change which coins are covered. Run it anywhere with Node 18+:

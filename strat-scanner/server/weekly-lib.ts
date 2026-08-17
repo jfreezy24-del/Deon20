@@ -383,25 +383,35 @@ export function formatWriteupDiscord(w: Writeup, dca: DcaPlan): DiscordMessage {
   };
 }
 
+/** Symbols for the written analyses, read as a list like the webhooks are. */
+export function parseSymbols(raw: string | undefined, fallback: string[]): string[] {
+  const symbols = (raw ?? '')
+    .split(/[\s,]+/)
+    .map((sym) => sym.trim().toUpperCase())
+    .filter(Boolean);
+  return symbols.length > 0 ? [...new Set(symbols)] : fallback;
+}
+
 /**
  * The full set of Discord messages for a weekly run, in send order.
  *
- * The written analysis leads. It is the part a person reads, and the role
- * ping rides the first message, so putting it first means the notification
+ * The written analyses lead. They are the part a person reads, and the role
+ * ping rides the first message, so putting them first means the notification
  * lands on the reasoning rather than on a wall of numbers. The ladder cards
  * follow for anyone who wants the levels.
  *
- * When no write-up is available (its symbol failed to scan) the ladder leads
- * instead and still carries the ping, so a run always notifies exactly once.
+ * With none available (their symbols failed to scan) the ladder leads instead
+ * and still carries the ping, so a run always notifies exactly once.
  */
 export function composeWeeklyMessages(
   report: WeeklyReport,
   basisFor: (symbol: string) => CostBasis | undefined = () => undefined,
-  writeup?: { writeup: Writeup; dca: DcaPlan },
+  writeups: { writeup: Writeup; dca: DcaPlan }[] = [],
 ): DiscordMessage[] {
   const ladder = formatWeeklyDiscord(report, basisFor);
-  if (!writeup) return ladder;
-  return [formatWriteupDiscord(writeup.writeup, writeup.dca), ...ladder];
+  // Written analyses keep the order they were configured in, so the coin you
+  // care most about leads and takes the ping.
+  return [...writeups.map((w) => formatWriteupDiscord(w.writeup, w.dca)), ...ladder];
 }
 
 /**
