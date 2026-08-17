@@ -115,23 +115,20 @@ describe('replayLadder', () => {
   });
 
   it('expires more rungs on a short TTL than a long one', () => {
-    // On a rising series nothing fills, so the budget stays intact and rungs
-    // rest long enough for the TTL to be the thing that removes them. Through a
-    // drawdown the ladder deploys its budget and stops bidding, and there is
-    // nothing left resting for any TTL to expire.
-    const climbing = rising(1000);
-    const short = replayLadder('X', climbing, { ttlDays: 14 });
-    const long = replayLadder('X', climbing, { ttlDays: 100_000 });
+    const short = replayLadder('X', bars, { ttlDays: 14 });
+    const long = replayLadder('X', bars, { ttlDays: 100_000 });
     expect(short.expiredCount).toBeGreaterThan(long.expiredCount);
     expect(long.expiredCount).toBe(0);
   });
 
-  it('stops publishing rungs once the budget is fully accumulated', () => {
-    // The ladder is one accumulation campaign, not a fresh 100% every week.
-    // Spending the budget ends it; it does not roll over into more bids.
+  it('keeps bidding for the whole window rather than retiring itself', () => {
+    // An ongoing ladder publishes a fresh contribution every week for as long
+    // as the series runs. A replay that goes quiet after the first drawdown is
+    // measuring a few months, not a cycle.
     const run = replayLadder('X', bars);
-    expect(run.deployed).toBeLessThanOrEqual(run.budget + 1e-6);
-    expect(run.unfundedSpend).toBeCloseTo(0, 6);
+    expect(run.plansPublished).toBeGreaterThan(120);
+    const placed = Object.values(run.placementsBySource).reduce((a, b) => a + b, 0);
+    expect(placed).toBeGreaterThan(run.plansPublished);
   });
 
   it('is deterministic', () => {
@@ -340,8 +337,12 @@ describe('buildLadderReport / renderLadderReport', () => {
     expect(report.strategies).toHaveLength(4);
   });
 
-  it('surfaces over-commitment rather than hiding it', () => {
+  it('blames the lump-sum model for unfunded spend rather than the ladder', () => {
+    // The live ladder allocates each week's contribution and replaces its
+    // resting rungs, so it cannot over-commit. A big number here says the
+    // replay ran out of money, which is a fact about the replay.
     const md = renderLadderReport(buildLadderReport([bundle('BTC-USD')]), meta);
-    expect(md).toContain('of requested spend had no cash behind it');
+    expect(md).toContain('after the lump sum ran out');
+    expect(md).toContain('a limit of the replay, not a fault in the ladder');
   });
 });

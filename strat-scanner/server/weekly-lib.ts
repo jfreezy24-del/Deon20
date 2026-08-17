@@ -300,14 +300,16 @@ export function formatWeeklyDiscord(
   return messages;
 }
 
-/** "3 of 4 filled, average $171 against $166 planned, 72% deployed" */
+/** "12 fills, average $171 · 3.4 weeks in · 4 resting against $166 planned" */
 export function positionLine(basis: CostBasis): string | null {
   if (basis.filledCount === 0) return null;
   const planned =
     basis.plannedAverage !== null ? ` against ${money(basis.plannedAverage)} planned` : '';
+  const resting =
+    basis.restingCount > 0 ? ` · ${basis.restingCount} resting${planned}` : ' · nothing resting';
   return (
-    `${basis.filledCount} of ${basis.totalCount} filled, average ` +
-    `${money(basis.averageFill ?? 0)}${planned}, ${basis.deployedPct}% deployed`
+    `${basis.filledCount} fill${basis.filledCount === 1 ? '' : 's'}, average ` +
+    `${money(basis.averageFill ?? 0)} · ${basis.contributionsDeployed} weeks in${resting}`
   );
 }
 

@@ -64,51 +64,13 @@ const daysBetween = (fromIso: string, toIso: string): number =>
 const samePrice = (a: number, b: number): boolean => Math.abs(a - b) / b < 0.005;
 
 /**
- * Below this much budget left, no further bids are published. A rung for a
- * fraction of a percent of the position is not an order anyone would place.
+ * One weekly plan's worth of money. `allocationPct` is a share of the
+ * contribution that plan deploys, not of a lifetime position, so a fresh plan
+ * summing to 100 is correct and does not compound: `reconcilePlan` replaces the
+ * resting rungs each week rather than stacking a new ladder on the old one, so
+ * only ever one contribution is committed at a time.
  */
-const MIN_REMAINING_PCT = 0.5;
-
-const pct2 = (v: number) => Number(v.toFixed(2));
-
-/**
- * The share of the budget still available to bid with.
- *
- * `allocationPct` is a share of one accumulation campaign, not of one week's
- * plan: the rungs of a single position sum to 100 across its whole life. Filled
- * rungs are the position and are kept forever, so this only ever shrinks. At
- * zero the campaign for that symbol is complete and the ladder stops bidding.
- *
- * Positions written before allocations were budgeted may already show more than
- * 100% filled. Those clamp to zero and publish nothing further, which is the
- * conservative reading — reset the symbol's state if the over-spend was on
- * paper only.
- */
-export function remainingBudgetPct(position: SymbolPosition | undefined): number {
-  const spent = (position?.rungs ?? [])
-    .filter((r) => r.filledOn !== null)
-    .reduce((sum, r) => sum + r.allocationPct, 0);
-  return Math.max(0, pct2(100 - spent));
-}
-
-/**
- * Spread `remaining` percent of the budget across rungs in their planned
- * proportions.
- *
- * Normalising by the planned weights' own total rather than by 100 matters:
- * once levels already bought have been filtered out, the survivors sum to less
- * than 100, and they should still deploy the whole remaining budget between
- * them rather than leaving the bought rung's share stranded.
- */
-function budgetedAllocations(planned: number[], remaining: number): number[] {
-  const total = planned.reduce((a, b) => a + b, 0);
-  if (planned.length === 0 || total <= 0) return planned.map(() => 0);
-  const scaled = planned.map((p) => pct2((p / total) * remaining));
-  // Rounding drift lands on the deepest rung, where a fraction matters least.
-  const drift = pct2(remaining - scaled.reduce((a, b) => a + b, 0));
-  scaled[scaled.length - 1] = pct2(scaled[scaled.length - 1] + drift);
-  return scaled;
-}
+const ONE_CONTRIBUTION = 100;
 
 export interface FillEvent {
   symbol: string;
@@ -131,13 +93,12 @@ export interface FillEvent {
  * place on the chart, and it must not inherit fill eligibility from bars that
  * traded while the bid sat somewhere else.
  *
- * Allocations are budgeted against what is left, not taken from the plan as
- * published. `buildDcaPlan` always spreads 100% across the rungs it produces,
- * because it is building one week's ladder and knows nothing about the
- * position. Appending that to a position that has already filled would commit
- * to more than the budget — republish weekly for a year and the ladder is
- * nominally several times its own size, while `costBasis` keeps reporting a
- * comfortable percentage because it divides by the inflated total.
+ * A level bought in an earlier week is bid again if the new plan still wants
+ * it. This is an ongoing accumulation, so each week arrives with fresh money
+ * and there is nothing improper about buying $95k twice; retiring every level
+ * the ladder had ever filled progressively starved it of exactly the pivots it
+ * most wanted to bid. Plans publish weekly and rungs sit strictly below spot,
+ * so a level cannot be re-bid inside the week that filled it.
  */
 export function reconcilePlan(
   existing: SymbolPosition | undefined,
@@ -147,24 +108,12 @@ export function reconcilePlan(
   const filled = (existing?.rungs ?? []).filter((r) => r.filledOn !== null);
   const resting = (existing?.rungs ?? []).filter((r) => r.filledOn === null);
 
-  // A level already bought is not re-bid.
-  const wanted = planRungs.filter((r) => !filled.some((f) => samePrice(f.price, r.price)));
-
-  const remaining = remainingBudgetPct(existing);
-  const budgeted =
-    remaining < MIN_REMAINING_PCT
-      ? []
-      : budgetedAllocations(
-          wanted.map((r) => r.allocationPct),
-          remaining,
-        );
-
-  const rungs: TrackedRung[] = wanted.slice(0, budgeted.length).map((r, i) => {
+  const rungs: TrackedRung[] = planRungs.map((r) => {
     const carried = resting.find((old) => samePrice(old.price, r.price));
     const unmoved = carried !== undefined && carried.price === r.price;
     return {
       price: r.price,
-      allocationPct: budgeted[i],
+      allocationPct: r.allocationPct,
       source: r.source,
       timeframe: r.timeframe,
       placedOn: carried?.placedOn ?? today,
@@ -247,21 +196,35 @@ export function expireStaleRungs(
 }
 
 export interface CostBasis {
+  /** Fills across the whole life of the ladder, not just this week's */
   filledCount: number;
-  totalCount: number;
-  /** Weighted average of what actually filled */
+  /** Rungs bid right now — this week's ladder */
+  restingCount: number;
+  /** Weighted average of everything bought */
   averageFill: number | null;
-  /** Share of the symbol's whole budget bought so far */
-  deployedPct: number;
-  /** Weighted average if every rung of the current plan fills */
+  /**
+   * Contributions accumulated, where 1.0 is one week's money. An ongoing
+   * ladder has no lifetime total to be a percentage of, so this counts weeks
+   * of buying instead: 6.4 means about six and a half weekly contributions
+   * have gone in since the ladder started.
+   */
+  contributionsDeployed: number;
+  /** Weighted average if every rung of this week's ladder fills */
   plannedAverage: number | null;
 }
 
+/**
+ * Read the position, separating what has been bought over the ladder's life
+ * from what is bid right now.
+ *
+ * The two must not be mixed. Dividing lifetime fills by lifetime-plus-resting
+ * produced a percentage that only ever measured how long the ladder had been
+ * running — after a year of weekly buying it read "40 of 44 filled, 91%
+ * deployed", which says nothing about the position and sounds like it does.
+ */
 export function costBasis(position: SymbolPosition): CostBasis {
   const filled = position.rungs.filter((r) => r.filledOn !== null);
-  // Against the whole budget, not against whatever happens to be tracked right
-  // now. Dividing by the tracked total reads 100% deployed on a position that
-  // filled a third of its size and then found no structure left to bid.
+  const resting = position.rungs.filter((r) => r.filledOn === null);
   const deployed = filled.reduce((sum, r) => sum + r.allocationPct, 0);
 
   const weighted = (rungs: TrackedRung[]): number | null => {
@@ -272,9 +235,9 @@ export function costBasis(position: SymbolPosition): CostBasis {
 
   return {
     filledCount: filled.length,
-    totalCount: position.rungs.length,
+    restingCount: resting.length,
     averageFill: weighted(filled),
-    deployedPct: Math.min(100, Math.round(deployed)),
-    plannedAverage: weighted(position.rungs),
+    contributionsDeployed: Number((deployed / ONE_CONTRIBUTION).toFixed(2)),
+    plannedAverage: weighted(resting),
   };
 }

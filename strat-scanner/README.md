@@ -287,22 +287,25 @@ resting limit orders, so a bar whose low reaches the level would have executed
 it. Fills push to ntfy at high priority and post to Discord.
 
 **Running cost basis.** Each ladder card in the weekly report carries a line
-like `3 of 4 filled, average $171 against $166 planned, 72% deployed`. The
-average is weighted by allocation, not by rung count, so a big deep fill moves
-it more than a small shallow one.
+like `12 fills, average $171 · 3.4 weeks in · 4 resting against $166 planned`.
+The average is weighted by allocation, not by rung count, so a big deep fill
+moves it more than a small shallow one.
 
-**One budget per symbol.** A ladder is a single accumulation campaign, not a
-fresh 100% every week. `buildDcaPlan` knows nothing about the position and
-always spreads 100% across the rungs it produces, so `reconcilePlan` scales
-each new plan down to the budget that is actually left — filled rungs are
-subtracted first, and the survivors keep their planned proportions between
-them. Once the budget is spent the symbol stops publishing bids, and
-`deployedPct` is measured against the whole budget rather than against
-whatever is tracked right now. Without this the ladder republishes its way to
-several times its own size while still reporting a comfortable percentage.
-Positions written before this may show more than 100% filled; they clamp to
-zero and bid no further, so reset a symbol's state if the over-spend was only
-on paper.
+**An ongoing accumulation, not a position with a finish line.** Each weekly
+plan allocates 100% of *that week's contribution*, and `reconcilePlan`
+**replaces** the resting rungs rather than stacking a new ladder on the old
+one — so however long the ladder has been running, only ever one contribution
+is bid at a time. There is no lifetime budget to run out of and the ladder
+never retires itself.
+
+Two things follow. Levels are re-bid: a pivot the plan still wants is bid
+again next week with next week's money, because retiring every level the
+ladder had ever filled progressively starved it of exactly the persistent
+pivots it most wanted. And history is reported separately from what is bid
+now — `contributionsDeployed` counts weeks of buying rather than a share of
+some total, since a ratio of lifetime fills to lifetime-plus-resting only ever
+measured how long the ladder had been running and read like it measured the
+position.
 
 **Stale rung expiry.** A rung that rests unfilled past `RUNG_TTL_DAYS`
 (default 90) is dropped and reported. A level only means something while the
@@ -688,12 +691,16 @@ deploys everything at no discount. Every table carries both.
   returns are the only way to check it. If defensive weeks were followed by the
   same returns as accumulate weeks, the stance is decoration.
 
-It also reports **over-commitment** — requested spend with no cash behind it.
-This is what caught the budgeting bug: the first run showed $2.5M of unfunded
-spend across nine assets, because each fresh plan re-normalised to 100% while
-filled rungs carried forward. `reconcilePlan` now budgets against what is left,
-so this number should stay at zero; anything else means the ladder is
-committing to size it does not have.
+It also reports **unfunded spend** — plan allocations that arrived after the
+lump sum ran out. This is a limit of the replay rather than a fault in the
+ladder: the live system allocates each week's contribution and replaces its
+resting rungs, so it cannot over-commit, while the replay hands over a single
+lump sum for the whole window. Once that is spent, every later plan reads as
+unfunded, which is why the first run showed $2.5M across nine assets. **Until
+the replay models weekly contributions, everything after the first drawdown is
+measured with no money left** — so the TTL, rung-source and tier tables are
+drawn from a much smaller and more period-biased sample than the window
+suggests.
 
 **This job sends nothing, ever.** Discord still carries only the weekly crypto
 report.

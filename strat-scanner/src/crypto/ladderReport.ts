@@ -491,11 +491,13 @@ export function renderLadderReport(report: LadderReport, meta: LadderReportMeta)
   lines.push('');
   lines.push(`- **${report.totalExpired}** rungs expired unfilled across the replay.`);
   lines.push(
-    `- **${money(report.totalUnfunded)}** of requested spend had no cash behind it. Allocations ` +
-      'are re-normalised to 100% across each fresh plan while filled rungs are carried forward, ' +
-      'so a ladder that fills and then republishes can commit to more than the budget. A large ' +
-      'number here means the live ladder is over-committing and the allocation percentages do not ' +
-      'mean what the report says they mean.',
+    `- **${money(report.totalUnfunded)}** of requested spend arrived after the lump sum ran out. ` +
+      'This is a limit of the replay, not a fault in the ladder. Each weekly plan allocates 100% ' +
+      'of **that week\'s contribution**, and the resting rungs are replaced rather than stacked, ' +
+      'so the live ladder never commits more than one contribution at a time. The replay hands ' +
+      'over a single lump sum for the whole window instead, so once it is spent every later plan ' +
+      'reads as unfunded. Treat this as the cost of the lump-sum model — until the replay takes ' +
+      'weekly contributions, everything after the first drawdown is measured with no money left.',
   );
   lines.push('');
 

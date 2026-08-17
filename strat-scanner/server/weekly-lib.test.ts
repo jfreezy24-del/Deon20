@@ -74,25 +74,37 @@ const asset = (over: Partial<WeeklyAsset> = {}): WeeklyAsset => ({
 });
 
 describe('positionLine', () => {
-  it('reports fills against the plan', () => {
+  it('reports history and this week’s ladder as separate things', () => {
     expect(
       positionLine({
-        filledCount: 3,
-        totalCount: 4,
+        filledCount: 12,
+        restingCount: 4,
         averageFill: 171,
-        deployedPct: 72,
+        contributionsDeployed: 3.4,
         plannedAverage: 166,
       }),
-    ).toBe('3 of 4 filled, average $171 against $166 planned, 72% deployed');
+    ).toBe('12 fills, average $171 · 3.4 weeks in · 4 resting against $166 planned');
+  });
+
+  it('says plainly when nothing is bid, rather than implying a full position', () => {
+    expect(
+      positionLine({
+        filledCount: 1,
+        restingCount: 0,
+        averageFill: 171,
+        contributionsDeployed: 1,
+        plannedAverage: null,
+      }),
+    ).toBe('1 fill, average $171 · 1 weeks in · nothing resting');
   });
 
   it('says nothing at all before the first fill', () => {
     expect(
       positionLine({
         filledCount: 0,
-        totalCount: 4,
+        restingCount: 4,
         averageFill: null,
-        deployedPct: 0,
+        contributionsDeployed: 0,
         plannedAverage: 166,
       }),
     ).toBeNull();
