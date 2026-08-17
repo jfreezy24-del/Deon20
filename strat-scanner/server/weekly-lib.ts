@@ -395,23 +395,19 @@ export function parseSymbols(raw: string | undefined, fallback: string[]): strin
 /**
  * The full set of Discord messages for a weekly run, in send order.
  *
- * The written analyses lead. They are the part a person reads, and the role
- * ping rides the first message, so putting them first means the notification
- * lands on the reasoning rather than on a wall of numbers. The ladder cards
- * follow for anyone who wants the levels.
+ * One message per written analysis, in the order the coins were configured,
+ * so the first one leads and carries the role ping.
  *
- * With none available (their symbols failed to scan) the ladder leads instead
- * and still carries the ping, so a run always notifies exactly once.
+ * The ladders are not here. They go to ntfy, where they sit alongside the
+ * fill alerts that act on them.
  */
 export function composeWeeklyMessages(
-  report: WeeklyReport,
-  basisFor: (symbol: string) => CostBasis | undefined = () => undefined,
   writeups: { writeup: Writeup; dca: DcaPlan }[] = [],
 ): DiscordMessage[] {
-  const ladder = formatWeeklyDiscord(report, basisFor);
-  // Written analyses keep the order they were configured in, so the coin you
-  // care most about leads and takes the ping.
-  return [...writeups.map((w) => formatWriteupDiscord(w.writeup, w.dca)), ...ladder];
+  // Discord carries the written analyses only. The ladders are a table of
+  // numbers to act on, which belongs on the phone with the fill alerts, not
+  // in a channel people read.
+  return writeups.map((w) => formatWriteupDiscord(w.writeup, w.dca));
 }
 
 /**
@@ -443,9 +439,15 @@ export function describeDiscord(message: DiscordMessage): string {
  * to filling, so the bids that could actually get hit this week are readable
  * on a lock screen without opening anything.
  */
-export function formatWeeklyNtfy(report: WeeklyReport, maxAssets = 4): PushMessage[] {
+export function formatWeeklyNtfy(
+  report: WeeklyReport,
+  maxAssets?: number,
+  basisFor: (symbol: string) => CostBasis | undefined = () => undefined,
+): PushMessage[] {
   const b = report.breadth;
-  const featured = report.assets.slice(0, maxAssets);
+  // ntfy is the only channel carrying ladders now, so every scanned asset gets
+  // one unless a cap is set deliberately.
+  const featured = report.assets.slice(0, maxAssets ?? report.assets.length);
 
   const digestBody = [
     `${b.scanned} ladders · accumulate ${b.accumulate} · defensive ${b.defensive}`,
@@ -468,9 +470,15 @@ export function formatWeeklyNtfy(report: WeeklyReport, maxAssets = 4): PushMessa
   ];
 
   for (const a of featured) {
+    const basis = basisFor(a.symbol);
+    const position = basis ? positionLine(basis) : null;
     messages.push({
       title: `${a.symbol} ladder — ${STANCE_LABEL[a.dca.stance]} · $${fmtPrice(a.lastPrice)}`,
-      body: [`FTFC ${continuityStrip(a.continuity)}`, ...dcaLines(a.dca)].join('\n'),
+      body: [
+        `FTFC ${continuityStrip(a.continuity)}`,
+        ...dcaLines(a.dca),
+        ...(position ? [position] : []),
+      ].join('\n'),
       // A rung within touching distance is the one worth surfacing loudly.
       priority: firstRungDistance(a) <= 5 ? 'high' : 'default',
       tags: 'coin',

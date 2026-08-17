@@ -441,10 +441,12 @@ describe('composeWeeklyMessages', () => {
     dca: plan(),
   };
 
-  it('leads with the write-up, ladder cards after', () => {
-    const messages = composeWeeklyMessages(report, () => undefined, [writeup]);
+  it('sends the write-up and no ladder cards', () => {
+    const messages = composeWeeklyMessages([writeup]);
+    expect(messages).toHaveLength(1);
     expect(messages[0].content).toContain('📝 Solana, the week ahead');
-    expect(messages[1].content).toContain('🪙 Crypto Weekly');
+    // Ladders live on ntfy now.
+    expect(JSON.stringify(messages)).not.toContain('Crypto Weekly');
   });
 
   it('gives every configured coin its own message, in order', () => {
@@ -452,23 +454,22 @@ describe('composeWeeklyMessages', () => {
       writeup: { ...writeup.writeup, symbol: 'BTC-USD', name: 'Bitcoin' },
       dca: plan(),
     };
-    const messages = composeWeeklyMessages(report, () => undefined, [writeup, second]);
+    const messages = composeWeeklyMessages([writeup, second]);
+    expect(messages.map((m) => m.content)).toHaveLength(2);
     expect(messages[0].content).toContain('Solana');
     expect(messages[1].content).toContain('Bitcoin');
-    expect(messages[2].content).toContain('🪙 Crypto Weekly');
   });
 
   it('puts the role ping on the write-up, since the first message pings', () => {
-    const messages = composeWeeklyMessages(report, () => undefined, [writeup]);
+    const messages = composeWeeklyMessages([writeup]);
     const pinged = withRoleMention(messages[0], '111111111');
     expect(pinged.content).toContain('<@&111111111>');
     expect(pinged.content).toContain('Solana');
   });
 
-  it('falls back to the ladder leading when there is no write-up', () => {
-    // A run still notifies exactly once when the write-up symbol failed.
-    const messages = composeWeeklyMessages(report, () => undefined, []);
-    expect(messages[0].content).toContain('🪙 Crypto Weekly');
+  it('sends nothing to Discord when no write-up resolved', () => {
+    // The ladders are on ntfy, so there is nothing left to post.
+    expect(composeWeeklyMessages([])).toEqual([]);
   });
 });
 
@@ -501,6 +502,22 @@ describe('formatWeeklyNtfy', () => {
     [asset(), asset({ symbol: 'ETH-USD', name: 'Ethereum' }), asset({ symbol: 'SOL-USD' })],
     [],
   );
+
+  it('carries every asset by default, since ntfy owns the ladders now', () => {
+    const all = formatWeeklyNtfy(report);
+    expect(all).toHaveLength(1 + report.assets.length);
+  });
+
+  it('carries the cost basis the Discord card used to show', () => {
+    const withBasis = formatWeeklyNtfy(report, 1, () => ({
+      filledCount: 2,
+      totalCount: 4,
+      averageFill: 171,
+      deployedPct: 44,
+      plannedAverage: 166,
+    }));
+    expect(withBasis[1].body).toContain('2 of 4 filled');
+  });
 
   it('leads with a digest and then one ladder push per featured asset', () => {
     const messages = formatWeeklyNtfy(report, 2);
