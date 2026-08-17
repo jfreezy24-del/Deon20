@@ -186,10 +186,11 @@ async function main() {
     return [
       {
         writeup: buildWriteup({
-          // Coin, week and position: the same coin reads the same all week,
-          // next week is fresh, and two coins in one report cannot collide on
-          // the same phrasing.
-          seed: `${subject.symbol}:${report.weekOf}#${index}`,
+          // Week plus position, deliberately without the symbol. The offset
+          // only guarantees two coins take different variants when the hashed
+          // part matches, so the coin must stay out of it: hashing the symbol
+          // as well lets two coins land on the same phrasing anyway.
+          seed: `${report.weekOf}#${index}`,
           symbol: subject.symbol,
           name: subject.name,
           lastPrice: subject.lastPrice,

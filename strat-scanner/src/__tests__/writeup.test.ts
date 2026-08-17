@@ -127,7 +127,8 @@ describe('buildWriteup', () => {
   it('reads differently for different coins in the same state', () => {
     // Four coins in one report used to produce four identical paragraphs.
     const texts = ['SOL-USD', 'BTC-USD', 'ETH-USD', 'HYPE-USD'].map((symbol, i) =>
-      all(buildWriteup(input({ symbol, seed: `${symbol}:2026-08-17#${i}` }))),
+      // The real seed format: week and position, no symbol.
+      all(buildWriteup(input({ symbol, seed: `2026-08-17#${i}` }))),
     );
     expect(new Set(texts).size).toBe(texts.length);
   });
@@ -135,28 +136,35 @@ describe('buildWriteup', () => {
   it('separates consecutive coins section by section, not just overall', () => {
     // Hashing alone let coins collide on a section by chance; the position
     // offset makes consecutive coins take different variants by construction.
-    const openings = [0, 1, 2].map((i) =>
-      buildWriteup(input({ seed: `COIN:2026-08-17#${i}` })).standing.split('.')[0],
-    );
-    expect(new Set(openings).size).toBe(3);
+    // Four alternates per phrase means a four-coin report cannot repeat.
+    const seeds = [0, 1, 2, 3].map((i) => `2026-08-17#${i}`);
+    const section = (pickSection: (w: ReturnType<typeof buildWriteup>) => string) =>
+      new Set(seeds.map((seed) => pickSection(buildWriteup(input({ seed }))))).size;
+
+    expect(section((w) => w.standing)).toBe(4);
+    expect(section((w) => w.higher)).toBe(4);
+    expect(section((w) => w.lower)).toBe(4);
+    expect(section((w) => w.picture)).toBe(4);
+    expect(section((w) => w.approach)).toBe(4);
+    expect(section((w) => w.watch)).toBe(4);
   });
 
   it('is stable for the same coin and week, so a rerun reads the same', () => {
-    const once = all(buildWriteup(input({ seed: 'SOL-USD:2026-08-17' })));
-    const twice = all(buildWriteup(input({ seed: 'SOL-USD:2026-08-17' })));
+    const once = all(buildWriteup(input({ seed: '2026-08-17#0' })));
+    const twice = all(buildWriteup(input({ seed: '2026-08-17#0' })));
     expect(once).toBe(twice);
   });
 
   it('refreshes the wording next week', () => {
-    const thisWeek = all(buildWriteup(input({ seed: 'SOL-USD:2026-08-17' })));
-    const nextWeek = all(buildWriteup(input({ seed: 'SOL-USD:2026-08-24' })));
+    const thisWeek = all(buildWriteup(input({ seed: '2026-08-17#0' })));
+    const nextWeek = all(buildWriteup(input({ seed: '2026-08-24#0' })));
     expect(thisWeek).not.toBe(nextWeek);
   });
 
   it('still carries the principles, in plain words', () => {
     const text = all(buildWriteup(input()));
-    expect(text).toMatch(/inside the month before it|within the prior month's range|never left the previous one's range/i);
-    expect(text).toMatch(/tighter the range|ranges like this coil|a tight range means/i);
+    expect(text).toMatch(/inside the month before it|within the prior month's range|never left the previous one's range|boxed inside the prior range/i);
+    expect(text).toMatch(/tighter the range|ranges like this coil|a tight range means|quiet stretches like this end in a move/i);
     expect(text).toMatch(/trapped|underwater|offside/i);
   });
 
@@ -171,8 +179,8 @@ describe('buildWriteup', () => {
     const w = buildWriteup(
       input({ structure: buildStructure(lowerLows, lowerLows, 120), lastPrice: 120 }),
     );
-    expect(w.standing).toMatch(/in a row of lower lows|straight (weeks|months) of lower lows|lower low \d+ (weeks|months) running/);
-    expect(w.standing).toMatch(/weakest thing a chart can do|cannot look much weaker|no sign of buyers/);
+    expect(w.standing).toMatch(/lower lows|lower low \d+ (weeks|months) running/);
+    expect(w.standing).toMatch(/weakest thing a chart can do|cannot look much weaker|no sign of buyers|prices to watch, not prices to buy/);
   });
 
   it('calls out a failed drop when price recovered the same week', () => {
@@ -188,14 +196,14 @@ describe('buildWriteup', () => {
     const down = buildWriteup(
       input({ continuity: { '4H': 'down', D: 'down', W: 'down', M: 'down' } }),
     );
-    expect(down.picture).toMatch(/fighting every clock|every timeframe is red|all four clocks point down/i);
+    expect(down.picture).toMatch(/fighting every clock|every timeframe is red|all four clocks point down|not one timeframe is offering support/i);
 
     expect(buildWriteup(input()).picture).toMatch(/Mixed|clocks disagree|half the picture/i);
   });
 
   it('explains the ladder shape from the stance', () => {
     expect(buildWriteup(input({ dca: plan({ stance: 'defensive' }) })).approach).toMatch(
-      /being early into a fall this clean is expensive|buying it twice/,
+      /being early into a fall this clean is expensive|buying it twice|rarely stop where you first want|better price behind this one/,
     );
     expect(buildWriteup(input({ dca: plan({ stance: 'accumulate' }) })).approach).toMatch(
       /whole ladder is live|every rung is worth funding/,
@@ -210,6 +218,6 @@ describe('buildWriteup', () => {
       lastPrice: 225,
       structure: buildStructure(newHighs, newHighs, 225),
     });
-    expect(w.higher).toMatch(/never traded before|never been tested/);
+    expect(w.higher).toMatch(/never traded before|never been tested|no history above this price|Above here is unmapped/i);
   });
 });
