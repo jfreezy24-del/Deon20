@@ -17,6 +17,15 @@ export interface ConfidenceResult {
 }
 
 /**
+ * Points the model awards for reward/risk to the first target.
+ *
+ * Exported because the target-quality diagnostic needs to know exactly how much
+ * a changed target would move the score. Two copies of this banding would
+ * silently disagree the moment either is tuned.
+ */
+export const rewardRiskPoints = (rr1: number): number => (rr1 >= 2 ? 10 : rr1 >= 1 ? 5 : -5);
+
+/**
  * Transparent additive confidence model. Every factor that moves the score is
  * reported so the user can see exactly why a signal is rated the way it is.
  */
@@ -47,9 +56,9 @@ export function scoreConfidence(input: ConfidenceInput): ConfidenceResult {
   }
 
   // Reward-to-risk to the first magnitude target
-  if (levels.rr1 >= 2) add('rr-strong', `Strong reward/risk to first target (${levels.rr1}R)`, 10);
-  else if (levels.rr1 >= 1) add('rr-ok', `Acceptable reward/risk to first target (${levels.rr1}R)`, 5);
-  else add('rr-poor', `First target closer than the risk (${levels.rr1}R)`, -5);
+  if (levels.rr1 >= 2) add('rr-strong', `Strong reward/risk to first target (${levels.rr1}R)`, rewardRiskPoints(levels.rr1));
+  else if (levels.rr1 >= 1) add('rr-ok', `Acceptable reward/risk to first target (${levels.rr1}R)`, rewardRiskPoints(levels.rr1));
+  else add('rr-poor', `First target closer than the risk (${levels.rr1}R)`, rewardRiskPoints(levels.rr1));
 
   // Trigger bar close location: closing near the favorable end of its range
   // (hammer for bullish, shooter for bearish) shows participation.

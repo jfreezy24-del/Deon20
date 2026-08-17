@@ -29,7 +29,16 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fetchDailyHistory } from '../src/data/history';
-import { backtestSymbol, DEFAULT_BACKTEST_OPTIONS } from '../src/strat/backtest';
+import {
+  DEFAULT_BACKTEST_OPTIONS,
+  gradeReplay,
+  replaySymbol,
+} from '../src/strat/backtest';
+import {
+  buildTargetQuality,
+  renderTargetQuality,
+  TargetSample,
+} from '../src/strat/targetQuality';
 import { buildEdgeReport, GradedSignal, renderEdgeReport } from '../src/strat/edgeReport';
 import { DEFAULT_RESOLVE_OPTIONS } from '../src/strat/outcomes';
 import { ALGO_UNIVERSE } from '../src/strat/universe';
@@ -85,6 +94,7 @@ async function main() {
   );
 
   const graded: GradedSignal[] = [];
+  const targets: TargetSample[] = [];
   const failures: string[] = [];
 
   // Sequential rather than pooled: this is a rare, long job, and hammering a
@@ -97,12 +107,16 @@ async function main() {
         failures.push(`${symbol}: only ${history.candles.length} daily bars`);
         continue;
       }
-      const signals = backtestSymbol(symbol, history.candles, {
+      // Replay and grade separately so the target samples ride along: they are
+      // collected during detection, where the scoring window still exists.
+      const replay = replaySymbol(symbol, history.candles, {
         timeframes,
         resolve,
         minConfidence: 0,
       });
+      const signals = gradeReplay(replay, resolve);
       graded.push(...signals);
+      for (const s of replay.signals) if (s.target) targets.push(s.target);
       const first = new Date(history.candles[0].time * 1000).toISOString().slice(0, 10);
       console.log(
         `  ${symbol}: ${history.candles.length} bars via ${history.provider} from ${first}` +
@@ -138,15 +152,20 @@ async function main() {
     generatedAt: new Date(),
   });
 
+  // The target-quality diagnostic answers a question the calibration tables
+  // cannot: whether `rr1` — which feeds the confidence model and caps realised
+  // R under the default exit — is measuring structure or an artefact.
+  const withDiagnostic = `${markdown}\n\n${renderTargetQuality(buildTargetQuality(targets))}`;
+
   console.log('');
-  console.log(markdown);
+  console.log(withDiagnostic);
 
   if (dryRun) {
     console.log('\nDRY_RUN — nothing written.');
     return;
   }
   mkdirSync(path.dirname(CALIBRATION_FILE), { recursive: true });
-  writeFileSync(CALIBRATION_FILE, `${markdown}\n`);
+  writeFileSync(CALIBRATION_FILE, `${withDiagnostic}\n`);
   console.log(`\nWritten to ${path.relative(process.cwd(), CALIBRATION_FILE)}.`);
 }
 

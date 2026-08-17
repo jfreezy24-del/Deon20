@@ -5,6 +5,7 @@ import { buildContinuity, scoreContinuity } from './continuity';
 import { scoreConfidence } from './confidence';
 import { GradedSignal } from './edgeReport';
 import { DEFAULT_RESOLVE_OPTIONS, ResolveOptions, resolveRange, TradePlan } from './outcomes';
+import { sampleTarget, TargetSample } from './targetQuality';
 import { TF_SECONDS } from '../data/series';
 
 /**
@@ -114,6 +115,13 @@ export interface ReplayedSignal {
   plan: TradePlan;
   /** Index into the replay's bars where the "?" bar begins. */
   fromIndex: number;
+  /**
+   * Where this signal's first target came from, sampled here because this is
+   * the only place the exact window the engine scored from is still in hand.
+   * For weekly and monthly signals that window is an aggregate that cannot be
+   * recovered from `fromIndex` afterwards.
+   */
+  target: TargetSample | null;
 }
 
 export interface Replay {
@@ -227,6 +235,7 @@ export function replaySymbol(
             triggerBarEnd,
           },
           fromIndex: i + 1,
+          target: sampleTarget(window, match.direction, tf, levels, conf.score),
           identity: {
             key: `${symbol}|${tf}|${match.direction}|${match.name}|${match.triggerBar.time}`,
             symbol,

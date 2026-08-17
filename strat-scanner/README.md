@@ -119,6 +119,7 @@ src/strat/signalRecord.ts   — the forward record of published signals
 src/strat/backtest.ts       — historical replay of the engine, no look-ahead
 src/strat/policySweep.ts    — exit-policy grid + walk-forward validation
 src/strat/regime.ts         — trend / volatility regime labels from a benchmark
+src/strat/targetQuality.ts  — is T1 real structure? (calibration diagnostic)
 src/strat/entryRefinement.ts— 60m entry timing (stop only, never selection)
 src/data/intraday.ts        — hourly bars, for entry timing only
 src/crypto/ladderBacktest.ts— weekly ladder replay + control/benchmarks
@@ -432,6 +433,28 @@ buried: **4H is not modelled** (daily history cannot reconstruct it), so
 continuity scores over D/W/M and `ftfc-full` faces a slightly easier test than
 live; and the `in-force` term never fires, because a replay evaluates at a bar
 close, before the "?" has printed.
+
+### Are the magnitude targets real?
+
+The report ends with a diagnostic on `computeLevels` itself. Its comment says
+"Pivots", but the code takes the nearest of **every** bar high above entry in a
+20-bar window — and an ordinary bar high partway down a decline is not a place
+price turned.
+
+That is not cosmetic, because `rr1` feeds two things: the `rr-strong` /
+`rr-ok` / `rr-poor` terms in the confidence model, and the outcome record's
+default exit, which **closes trades at target 1**. A target sitting a fraction
+of a risk unit away caps realised R at that fraction while losses still pay a
+full −1.00R.
+
+The section classifies every published target (swing pivot / ordinary bar high
+/ measured fallback), reports the `rr1` distribution, and shows what
+restricting targets to genuine swing pivots would change — including how many
+signals would cross the 50 and 60 alert floors. It is deliberately a
+**diagnostic, not a recommendation**: pushing targets further out trades more,
+smaller wins for fewer, larger ones, which is the same trade-off the policy
+sweep already measures as `Exit at T1` against `Hold for T2` and `Fixed 2R`.
+Read that leaderboard first.
 
 **This job sends nothing, ever** — no ntfy, no anything. It is a slow report to
 read deliberately. It also publishes to the Actions run summary.
