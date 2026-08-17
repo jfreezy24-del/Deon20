@@ -1,8 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { buildDcaPlan, findPivotLows } from '../strat/dca';
+import { buildDcaPlan, findPivotLows, monthlyPivotBreak } from '../strat/dca';
 import { Candle } from '../strat/types';
 
 const WEEK = 7 * 86400;
+
+/** Monthly bars written as [low, close], so a break can be aimed precisely. */
+const monthlyBars = (bars: [low: number, close: number][]): Candle[] =>
+  bars.map(([low, close], i) => ({
+    time: 1_700_000_000 + i * 30 * 86400,
+    open: close,
+    high: Math.max(low, close) + 5,
+    low,
+    close,
+    volume: 1000,
+  }));
+
+/** A confirmed monthly pivot low at 80, never closed below. */
+const INTACT: [number, number][] = [
+  [100, 106],
+  [90, 96],
+  [80, 86],
+  [90, 96],
+  [100, 106],
+  [110, 116],
+  [120, 126],
+];
 
 /** Series where each bar's low drives structure; highs sit 10 above the low. */
 const series = (lows: number[], step = WEEK): Candle[] =>
@@ -94,10 +116,83 @@ describe('buildDcaPlan', () => {
     expect(plan.averageFill).toBeLessThan(plan.rungs[0].price);
   });
 
-  it('turns defensive once price loses the last monthly pivot low', () => {
-    const plan = buildDcaPlan(weeklyInput(95));
+  it('is not defensive merely because price sits below a monthly pivot', () => {
+    // Being below the level is a downtrend, and buying weakness in a downtrend
+    // is what this ladder is for. The old rule fired here, and so fired every
+    // week of every decline.
+    expect(buildDcaPlan(weeklyInput(95)).stance).not.toBe('defensive');
+  });
+
+  it('no longer turns defensive on two half-formed candles being red', () => {
+    const down = (low: number): Candle => ({
+      time: 1_800_000_000,
+      open: low + 12,
+      high: low + 14,
+      low,
+      close: low + 1,
+      volume: 1000,
+    });
+    const base = weeklyInput(150);
+    const plan = buildDcaPlan({
+      ...base,
+      weekly: { ...base.weekly, forming: down(142) },
+      monthly: { ...base.monthly, forming: down(138) },
+    });
+    // A month that is fractionally red on day three is not a broken sequence.
+    expect(plan.stance).toBe('neutral');
+  });
+
+  it('turns defensive on the month the pivot actually gives way', () => {
+    const base = weeklyInput(95);
+    const plan = buildDcaPlan({
+      ...base,
+      monthly: { completed: monthlyBars([...INTACT, [70, 76]]), forming: null },
+    });
     expect(plan.stance).toBe('defensive');
-    expect(plan.stanceReason).toMatch(/monthly/i);
+    expect(plan.stanceReason).toMatch(/monthly pivot at 80/i);
+  });
+
+  it('clears once the break is old news', () => {
+    const base = weeklyInput(95);
+    const plan = buildDcaPlan({
+      ...base,
+      monthly: {
+        completed: monthlyBars([...INTACT, [70, 76], [68, 74], [66, 72], [64, 70]]),
+        forming: null,
+      },
+    });
+    // Three months below the level: this is a downtrend, not a break.
+    expect(plan.stance).not.toBe('defensive');
+  });
+});
+
+describe('monthlyPivotBreak', () => {
+  it('says nothing while the sequence holds', () => {
+    expect(monthlyPivotBreak(monthlyBars(INTACT))).toBeNull();
+  });
+
+  it('needs a monthly close below the pivot, not a wick through it', () => {
+    // Low of 70 pierces the 80 pivot; the close of 86 does not.
+    expect(monthlyPivotBreak(monthlyBars([...INTACT, [70, 86]]))).toBeNull();
+  });
+
+  it('dates the break from the month it happened', () => {
+    expect(monthlyPivotBreak(monthlyBars([...INTACT, [70, 76]]))).toEqual({
+      monthsSince: 0,
+      pivotLow: 80,
+    });
+    expect(monthlyPivotBreak(monthlyBars([...INTACT, [70, 76], [68, 74]]))?.monthsSince).toBe(1);
+  });
+
+  it('counts only the crossing, not every month spent below', () => {
+    const broken = monthlyBars([...INTACT, [70, 76], [68, 74], [66, 72], [64, 70]]);
+    // Four months below the pivot, but one break — three months ago.
+    expect(monthlyPivotBreak(broken)?.monthsSince).toBe(3);
+  });
+
+  it('reports the fresh break when a level is lost, reclaimed and lost again', () => {
+    const twice = monthlyBars([...INTACT, [75, 76], [74, 79], [110, 116], [64, 70]]);
+    expect(monthlyPivotBreak(twice)?.monthsSince).toBe(0);
   });
 
   it('accumulates when the weekly and monthly candles are both trading up', () => {

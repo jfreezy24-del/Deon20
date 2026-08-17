@@ -229,10 +229,26 @@ if the whole thing fills.
 
 Assets are ordered **closest-to-filling first**, so the ladders that could
 actually take size this week lead the report and the ones needing a deep flush
-trail it. Stance per asset comes from the weekly/monthly candle direction and
-whether the last monthly pivot low is intact: `ACCUMULATE` (higher-timeframe
-continuity up), `NEUTRAL` (timeframes disagree), or `DEFENSIVE` (monthly
-sequence broken — deep rungs only).
+trail it. Stance per asset is `ACCUMULATE` (higher-timeframe continuity up),
+`NEUTRAL`, or `DEFENSIVE` (the monthly sequence has just given way).
+
+**`DEFENSIVE` marks an event, not a condition.** It fires only when a completed
+monthly bar closes below a pivot low the month before it still held, and only
+for `DEFENSIVE_BREAK_WINDOW_MONTHS` after — roughly four to eight weeks. Past
+that the sequence is not breaking, it is broken, and buying weakness in a
+downtrend is the entire point of the ladder.
+
+It used to read "price is below the last monthly pivot low", which is where
+price *is* rather than something that *happened*: in a decline you are below
+that level for months, so the warning fired every week. A second rule turned
+the stance defensive whenever the forming weekly and monthly candles were both
+below their opens — a month fractionally red on day three counted. Between
+them the backtest showed `DEFENSIVE` in **912 of 1,986 weeks**, the most common
+state of the three, which is another way of carrying no information. The second
+rule is gone and the first is now a break event.
+
+Note that the stance is advisory. It labels the report and explains itself; it
+does not resize the rungs, which come from the tier profile.
 
 This is the **only** thing that posts to Discord — the two intraday alerters
 are ntfy-only, so the channel carries one message set a week instead of a

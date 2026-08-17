@@ -125,6 +125,48 @@ export function findPivotHighs(candles: Candle[], width = 2): Candle[] {
   return out;
 }
 
+/**
+ * How long ago the monthly sequence gave way.
+ *
+ * A break is an **event, not a location**. Price sitting below a pivot is a
+ * downtrend, and a downtrend is the situation this ladder exists for — reading
+ * "below the last monthly pivot low" as a warning fired every week of every
+ * decline, which is the same as saying nothing. What is worth reacting to is
+ * the month the level actually gave way: a completed monthly bar closing below
+ * a pivot the month before it still held.
+ *
+ * Returns the most recent such transition, or null while the sequence is
+ * intact. `monthsSince` is 0 for a break in the last completed month.
+ */
+export function monthlyPivotBreak(
+  monthlyCompleted: Candle[],
+): { monthsSince: number; pivotLow: number } | null {
+  const pivots = findPivotLows(monthlyCompleted);
+  const pivot = pivots[pivots.length - 1];
+  if (!pivot) return null;
+  const pivotIndex = monthlyCompleted.indexOf(pivot);
+  if (pivotIndex < 0) return null;
+
+  // Scan forward for the LAST crossing, so a level lost, reclaimed and lost
+  // again reports the fresh break rather than the stale one.
+  let breakIndex = -1;
+  for (let i = pivotIndex + 1; i < monthlyCompleted.length; i++) {
+    const brokeNow = monthlyCompleted[i].close < pivot.low;
+    const heldBefore = monthlyCompleted[i - 1].close >= pivot.low;
+    if (brokeNow && heldBefore) breakIndex = i;
+  }
+  if (breakIndex < 0) return null;
+
+  return { monthsSince: monthlyCompleted.length - 1 - breakIndex, pivotLow: pivot.low };
+}
+
+/**
+ * How long a break stays newsworthy. One means the month it happened and the
+ * month after — roughly four to eight weeks. Past that the sequence is not
+ * breaking, it is broken, and the ladder should be buying the weakness.
+ */
+export const DEFENSIVE_BREAK_WINDOW_MONTHS = 1;
+
 /** Average bar range over the last `n` bars, as a fraction of the last close. */
 function averageRangePct(candles: Candle[], n = 12): number {
   const window = candles.slice(-n).filter((c) => c.close > 0);
@@ -251,28 +293,25 @@ function allocations(count: number, profile: LadderProfile): number[] {
 
 function readStance(
   input: DcaInput,
-  monthlyPivotLow: number | null,
+  pivotBreak: { monthsSince: number; pivotLow: number } | null,
 ): { stance: DcaStance; reason: string; weeklyTrend: TFTrend | null; monthlyTrend: TFTrend | null } {
-  const { weekly, monthly, lastPrice } = input;
+  const { weekly, monthly } = input;
   const weeklyCurrent = weekly.forming ?? weekly.completed[weekly.completed.length - 1];
   const monthlyCurrent = monthly.forming ?? monthly.completed[monthly.completed.length - 1];
   const weeklyTrend = weeklyCurrent ? candleTrend(weeklyCurrent) : null;
   const monthlyTrend = monthlyCurrent ? candleTrend(monthlyCurrent) : null;
 
-  if (monthlyPivotLow !== null && lastPrice < monthlyPivotLow) {
+  if (pivotBreak !== null && pivotBreak.monthsSince <= DEFENSIVE_BREAK_WINDOW_MONTHS) {
+    const when =
+      pivotBreak.monthsSince === 0 ? 'The month just ended' : 'The month before last';
     return {
       stance: 'defensive',
       reason:
-        'Price is trading below the last monthly pivot low, so the monthly sequence is broken and magnitude points lower. Ladder in reduced size and only from the deeper rungs until a monthly bar reclaims that pivot.',
-      weeklyTrend,
-      monthlyTrend,
-    };
-  }
-  if (monthlyTrend === 'down' && weeklyTrend === 'down') {
-    return {
-      stance: 'defensive',
-      reason:
-        'The current weekly and monthly candles are both trading below their opens — higher-timeframe continuity is down. Bids still belong at the rungs, but the flush is more likely to reach the deep ones, so hold size back.',
+        `${when} closed below the monthly pivot at ${pivotBreak.pivotLow} — a level that held the ` +
+        'month before. This is the break itself, not the decline that follows it: the higher-timeframe ' +
+        'sequence has just given way, magnitude points lower, and the flush is more likely to reach the ' +
+        'deep rungs than usual. It clears once the break is a couple of months old, because by then it ' +
+        'is a downtrend, and buying weakness in a downtrend is what this ladder is for.',
       weeklyTrend,
       monthlyTrend,
     };
@@ -311,10 +350,6 @@ export function buildDcaPlan(input: DcaInput): DcaPlan {
   const weeklyType = lastWeekly && prevWeekly ? classifyCandle(prevWeekly, lastWeekly) : null;
   const monthlyType = lastMonthly && prevMonthly ? classifyCandle(prevMonthly, lastMonthly) : null;
 
-  const monthlyPivotLows = findPivotLows(monthlyCompleted).map((c) => c.low);
-  const lastMonthlyPivotLow =
-    monthlyPivotLows.length > 0 ? monthlyPivotLows[monthlyPivotLows.length - 1] : null;
-
   const candidates = candidateLevels(input);
   let selected = selectRungs(candidates, lastPrice, profile);
   if (selected.length < 2 && lastPrice > 0) {
@@ -337,7 +372,10 @@ export function buildDcaPlan(input: DcaInput): DcaPlan {
       ? round(rungs.reduce((sum, r) => sum + r.price * r.allocationPct, 0) / 100)
       : null;
 
-  const { stance, reason, weeklyTrend, monthlyTrend } = readStance(input, lastMonthlyPivotLow);
+  const { stance, reason, weeklyTrend, monthlyTrend } = readStance(
+    input,
+    monthlyPivotBreak(monthlyCompleted),
+  );
 
   return {
     symbol,
