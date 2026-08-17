@@ -80,6 +80,9 @@ function describeBar(s: TimeframeStructure, unit: 'week' | 'month', seed: string
         `The last ${p.one} never left the previous one's range, so the argument is unresolved. ` +
           `That is worth more than it sounds. A tight range means the level that settles it is ` +
           `close by, so you find out quickly and cheaply which way this goes.`,
+        `Neither side could take the ${p.one} anywhere. Price stayed boxed inside the prior range ` +
+          `for the whole of it, which is a pause rather than a problem: quiet stretches like this ` +
+          `end in a move, and the boundary that ends it is not far away.`,
       ]);
     case '2u':
       return s.run >= 2
@@ -88,11 +91,14 @@ function describeBar(s: TimeframeStructure, unit: 'week' | 'month', seed: string
             `Buyers have now taken out the prior high ${s.run} ${p.many} running. Streaks like that ` +
               `are trend, not noise.`,
             `${s.run} consecutive ${p.many} of higher highs. Nothing has interrupted the buyers yet.`,
+            `${s.run} ${p.many} running without a single lower high. That is what a trend looks ` +
+              `like before anyone calls it one.`,
           ])
         : pick(seed, slot, [
             `Last ${p.one} pushed above ${p.prior} high, putting buyers in control of the recent range.`,
             `Buyers took out ${p.prior} high last ${p.one}, which hands them the recent range.`,
             `The last ${p.one} cleared the high before it. That is the buyers' first real claim on this range.`,
+            `Price took out the prior ${p.one}'s high, which is the first thing buyers have proved in a while.`,
           ]);
     case '2d':
       return s.run >= 2
@@ -105,11 +111,14 @@ function describeBar(s: TimeframeStructure, unit: 'week' | 'month', seed: string
               `case for buying.`,
             `Sellers have set a lower low ${s.run} ${p.many} running, with nothing interrupting them. ` +
               `A chart cannot look much weaker, and nothing here argues for stepping in yet.`,
+            `${s.run} ${p.many} of lower lows and not one attempt to reclaim anything. Until that ` +
+              `changes these are prices to watch, not prices to buy.`,
           ])
         : pick(seed, slot, [
             `Last ${p.one} broke below ${p.prior} low, handing control to sellers.`,
             `Sellers took out ${p.prior} low last ${p.one}, so the recent range belongs to them.`,
             `The last ${p.one} lost the low before it, which puts sellers in charge of this range.`,
+            `Price gave up the prior ${p.one}'s low, and that hands the range to the sellers.`,
           ]);
     case '3':
       return pick(seed, slot, [
@@ -119,6 +128,8 @@ function describeBar(s: TimeframeStructure, unit: 'week' | 'month', seed: string
           `question still open. All it achieved was a wider range for the next ${p.one} to break.`,
         `Both sides of ${p.prior} range gave way last ${p.one} and neither stuck. That is churn, not ` +
           `direction, and it leaves a bigger range for whatever comes next.`,
+        `The ${p.one} broke both ways and held neither, which tells you the argument is still live ` +
+          `and the range that frames it just got wider.`,
       ]);
     default:
       return `There is not enough history yet to read the ${p.one}ly picture.`;
@@ -143,6 +154,8 @@ function describeDisagreement(
         `their buying to get out is the fuel a recovery runs on.`,
       `Price fell through and came straight back. Failed breaks matter more than clean ones, ` +
         `because the people caught on the wrong side have to trade against themselves to escape.`,
+      `The low broke and did not stick. That failure is the useful part: sellers were caught, and ` +
+        `getting out means buying it back.`,
     ]);
   }
   if (weekly.type === '2u' && (weekChangePct ?? 0) < 0) {
@@ -153,6 +166,8 @@ function describeDisagreement(
         `selling is what the next rally has to chew through.`,
       `The breakout gave itself back inside a week. Anyone who chased it is offside, and that ` +
         `overhead supply is why the next attempt tends to stall.`,
+      `The move above failed within the week. Buyers who paid the high are underwater, and they are ` +
+        `the sellers waiting at the next try.`,
     ]);
   }
   if (monthly.type === '1' && weekly.type === '2u') {
@@ -160,6 +175,7 @@ function describeDisagreement(
       `The week moved; the month has not. That is the first crack in a stalemate rather than a confirmed direction.`,
       `One clock has turned and the other has not. Treat this as the opening move in the standoff, not the result.`,
       `The week is leading the month here, which is a hint rather than a decision.`,
+      `A green week inside an undecided month is a start, not a signal.`,
     ]);
   }
   if (monthly.type === '1' && weekly.type === '2d') {
@@ -167,6 +183,7 @@ function describeDisagreement(
       `The week broke lower while the month is still undecided, a warning rather than a verdict.`,
       `The week has cracked lower with the month still stuck. Worth noting, not yet worth acting on.`,
       `Sellers took the week while the month sits unresolved, which is a caution flag and no more.`,
+      `The week went to the sellers with the month yet to commit. Note it, do not act on it.`,
     ]);
   }
   return '';
@@ -193,17 +210,22 @@ const travelSentence = (targets: number[], direction: 'up' | 'down', seed: strin
       return pick(seed, 'travel:none-up', [
         `There is no prior high left above, which means it would be trading where it has never traded before, with no level to aim at.`,
         `Nothing above has ever been tested, so there is no obvious place for a move to stop.`,
+        `There is no history above this price, so nothing marks where a rally would run out.`,
+        `Above here is unmapped, with no prior level to slow anything down.`,
       ]);
     }
     return second === undefined
       ? pick(seed, 'travel:up1', [
           `The last place it ran out of buyers was ${money(first)}.`,
           `${money(first)} is where the last rally died, so that is the first thing in the way.`,
+          `Sellers last appeared at ${money(first)}, which is the first thing above.`,
+          `${money(first)} stopped it before, so that is the level to measure to.`,
         ])
       : pick(seed, 'travel:up2', [
           `The last two places it ran out of buyers were ${money(first)} and ${money(second)}.`,
           `Above there, sellers previously showed up at ${money(first)}, then again at ${money(second)}.`,
           `Two prices have stopped it before: ${money(first)} first, then ${money(second)}.`,
+          `${money(first)} turned it away once, and ${money(second)} above that.`,
         ]);
   }
 
@@ -211,17 +233,22 @@ const travelSentence = (targets: number[], direction: 'up' | 'down', seed: strin
     return pick(seed, 'travel:none-down', [
       `There is no prior low left below, which means nothing obvious to catch it.`,
       `Below here the chart is empty, so there is no level with a history of holding.`,
+      `Nothing below has held before, so there is no floor with a track record.`,
+      `There is no prior low underneath to lean on.`,
     ]);
   }
   return second === undefined
     ? pick(seed, 'travel:down1', [
         `The last place buyers stepped in was ${money(first)}.`,
         `${money(first)} is the one price below that buyers have defended before.`,
+        `Buyers have turned it at ${money(first)} before, and that is the only level below with a record.`,
+        `${money(first)} held once, which makes it the level worth bidding into.`,
       ])
     : pick(seed, 'travel:down2', [
         `The last two places buyers stepped in were ${money(first)} and ${money(second)}.`,
         `Buyers previously turned it at ${money(first)}, and below that at ${money(second)}.`,
         `Two levels below have held before: ${money(first)}, then ${money(second)}.`,
+        `${money(first)} caught it once, and ${money(second)} beneath that.`,
       ]);
 };
 
@@ -252,6 +279,8 @@ function describeContinuity(map: ContinuityMap, seed: string): string {
         `against their opens. That alignment is rare and it is the easiest condition to buy into.`,
       `All four clocks are pointing up at once. Nothing is fighting a move higher right now, which ` +
         `is as clean as this setup gets.`,
+      `Short and long timeframes are green together. That agreement does not last long, and while ` +
+        `it holds, upside is the path of least resistance.`,
     ]);
   }
   if (down.length === TIMEFRAMES.length) {
@@ -262,6 +291,7 @@ function describeContinuity(map: ContinuityMap, seed: string): string {
         `in that picture at all.`,
       `All four clocks point down together, so anything bought here is bought against the whole ` +
         `board rather than with part of it.`,
+      `Not one timeframe is offering support. Buying into that means every clock is against you at once.`,
     ]);
   }
   if (up.length === 0 && down.length === 0) return `The timeframes are flat, with nothing to read either way.`;
@@ -275,6 +305,8 @@ function describeContinuity(map: ContinuityMap, seed: string): string {
       `${plural(down)} below, and that split is usually what produces a week of moves that go nowhere.`,
     `Half the picture is constructive and half is not: ${list(up)} above the open, ${list(down)} ` +
       `below it. Until that resolves, expect the chop rather than the trend.`,
+    `The timeframes are split: ${list(up)} above the open, ${list(down)} below. Disagreement like ` +
+      `that usually shows up as a week that ends roughly where it started.`,
   ]);
 }
 
@@ -287,17 +319,25 @@ function describeApproach(dca: DcaPlan, symbol: string, seed: string): string {
       ? pick(seed, 'shape:major', [
           `The bigger orders sit closest to the current price, because assets this size tend to hold their levels.`,
           `Size is weighted toward the shallow end here: ${coin} rarely travels as far as the smaller coins do.`,
+          `Most of the money sits near spot, because ${coin} tends to hold its levels rather than ` +
+            `slice through them.`,
+          `The near rungs carry the weight. An asset this size does not usually hand you the deep prices.`,
         ])
       : tier === 'large'
         ? pick(seed, 'shape:large', [
             `The orders get larger as they get cheaper, so a deeper drop buys more rather than less.`,
             `Each rung down carries more size than the one above it, which turns a bigger fall into a better average.`,
+            `Size increases with every step down, so the worse it gets the better the average becomes.`,
+            `The deeper the rung, the larger the order, which is what makes a fall useful rather than painful.`,
           ])
         : pick(seed, 'shape:beta', [
             `${coin} moves harder than the majors in both directions, so the small orders sit near the ` +
               `current price and the big ones sit where a genuine washout would take it.`,
             `Because ${coin} swings further than the majors, the shallow rungs stay small and the real ` +
               `size waits at prices only a proper flush reaches.`,
+            `${coin} overshoots in both directions, so the top of the ladder is deliberately light and ` +
+              `the weight sits where panic takes it.`,
+            `Expect ${coin} to travel. The near orders are token; the ones that matter are far below.`,
           ]);
 
   const stance =
@@ -305,6 +345,8 @@ function describeApproach(dca: DcaPlan, symbol: string, seed: string): string {
       ? pick(seed, 'stance:acc', [
           `The bigger picture supports buying dips here, so the whole ladder is live.`,
           `With the higher timeframes onside, every rung is worth funding.`,
+          `The bigger picture is supportive, so there is no reason to hold any of the ladder back.`,
+          `Conditions favour buying weakness here, and the full plan is worth committing.`,
         ])
       : dca.stance === 'defensive'
         ? pick(seed, 'stance:def', [
@@ -312,16 +354,24 @@ function describeApproach(dca: DcaPlan, symbol: string, seed: string): string {
               `early into a fall this clean is expensive.`,
             `Structure is broken here. Keep the first order small and the rest in reserve: buying a ` +
               `decline this orderly usually just means buying it twice.`,
+            `The higher timeframes have failed, so this is a small first order and patience. Falls ` +
+              `this tidy rarely stop where you first want them to.`,
+            `With structure gone, size belongs in reserve rather than in the market. There is usually ` +
+              `a better price behind this one.`,
           ])
         : pick(seed, 'stance:neu', [
             `The bigger picture has not committed, so take the shallow orders slowly and keep the deeper ones funded.`,
             `Nothing is settled up top, so work the near rungs patiently and hold the deep money back.`,
+            `The higher timeframes have not chosen, so buy slowly near here and keep the deep orders funded.`,
+            `Undecided above means unhurried here: take the shallow fills, save the rest.`,
           ]);
 
   const caveat = pick(seed, 'caveat', [
     `The tradeoff is that you buy less at good prices and more at great ones, at the cost of never ` +
       `fully filling if it simply goes straight up.`,
     `The cost of this shape is obvious: if price never comes back, most of the plan never gets used.`,
+    `The catch is the same as always: a straight run higher leaves most of this plan unspent.`,
+    `It buys least where you want most, and most where nobody wants to. That is the deal.`,
   ]);
 
   return `${stance} ${shape} ${caveat}`;
@@ -336,10 +386,11 @@ export interface WriteupInput {
   structure: AssetStructure;
   dca: DcaPlan;
   /**
-   * Varies the wording. Pass the coin and the week so the same coin reads the
-   * same all week and next week is fresh, with `#n` appended where n is the
-   * coin's position in the report, so coins in one report cannot land on the
-   * same phrasing by chance. Defaults to the symbol alone.
+   * Varies the wording. Pass `<week>#<position>`: the week fixes the phrasing
+   * for the whole week and rotates it next week, and the position guarantees
+   * that coins in one report take different variants. The hashed part must not
+   * include the symbol, or the guarantee is lost and two coins can collide.
+   * Defaults to the symbol alone, which is fine for a single write-up.
    */
   seed?: string;
 }
@@ -367,6 +418,7 @@ export function buildWriteup(input: WriteupInput): Writeup {
           `Trading above ${money(up)}, the top of last month's range.`,
           `It takes a move through ${money(up)}, the ceiling of last month's range.`,
           `${money(up)} is the number. That is the top of last month's range.`,
+          `Above ${money(up)} and it changes. That price is the roof of last month's range.`,
         ]),
     up === null
       ? ''
@@ -377,6 +429,8 @@ export function buildWriteup(input: WriteupInput): Writeup {
             `breaks accelerate.`,
           `Getting through traps the sellers underneath it, and their buying is usually what carries ` +
             `the move further than it looks like it should.`,
+          `Everyone who sold beneath that price is wrong the moment it clears, and their exit is ` +
+            `what fuels the next leg.`,
         ]),
     travelSentence(structure.targetsUp, 'up', seed),
   ]
@@ -390,6 +444,7 @@ export function buildWriteup(input: WriteupInput): Writeup {
           `Losing ${money(down)}, the floor of the same range.`,
           `It breaks down through ${money(down)}, the bottom of that same range.`,
           `${money(down)} is the level that matters underneath, the floor of the range.`,
+          `Under ${money(down)} the picture changes. That is the floor of the same range.`,
         ]),
     down === null
       ? ''
@@ -400,6 +455,8 @@ export function buildWriteup(input: WriteupInput): Writeup {
             `on the way down.`,
           `Losing it turns the recent strength into a failed move, which tends to fall faster than ` +
             `it rose because buyers are cutting rather than choosing.`,
+          `Below it the bounce was bait. Forced selling moves quicker than willing selling, which is ` +
+            `why these give back more than they built.`,
         ]),
     travelSentence(structure.targetsDown, 'down', seed),
   ]
@@ -415,6 +472,8 @@ export function buildWriteup(input: WriteupInput): Writeup {
             `wait for one of them rather than reading the wiggles.`,
           `Watch ${money(up)}. Until it goes, or ${money(down)} fails, this is the same chart it ` +
             `was last week no matter what price does day to day.`,
+          `${money(up)} is the one to watch. Short of that, or of ${money(down)} breaking, nothing ` +
+            `this week actually changes the picture.`,
         ])
       : `There is no decisive level yet, so wait for a full week to close and set one.`;
 
