@@ -1,0 +1,70 @@
+name: Options Plan
+
+# On demand only. This is a desk tool — you run it while looking at a signal,
+# not on a schedule, and its output goes stale as soon as the underlying moves
+# off these levels.
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: 'Comma-separated symbols (blank = the algo universe)'
+        type: string
+        default: ''
+      risk:
+        description: 'Dollars to risk per trade'
+        type: string
+        default: '500'
+      min_confidence:
+        description: 'Confidence floor for signals worth expressing'
+        type: string
+        default: '60'
+      iv_premium:
+        description: 'Realised-to-implied markup (implied is normally higher)'
+        type: string
+        default: '1.25'
+      expiry_buffer:
+        description: "Multiple of the plan's hold window to buy"
+        type: string
+        default: '2'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: options-plan
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: strat-scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: strat-scanner/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No NTFY_TOPIC and no webhook of any kind: this job sends nothing and
+      # commits nothing. The plan lands in the run summary.
+      - name: Express today's signals as options
+        env:
+          OPTIONS_SYMBOLS: ${{ inputs.symbols }}
+          OPTIONS_RISK: ${{ inputs.risk || '500' }}
+          OPTIONS_MIN_CONFIDENCE: ${{ inputs.min_confidence || '60' }}
+          OPTIONS_TIMEFRAMES: ${{ vars.OPTIONS_TIMEFRAMES || 'D,W,M' }}
+          IV_PREMIUM: ${{ inputs.iv_premium || '1.25' }}
+          EXPIRY_BUFFER: ${{ inputs.expiry_buffer || '2' }}
+          MAX_HOLD_BARS: ${{ vars.MAX_HOLD_BARS || '6' }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          CRYPTO_PROVIDER: ${{ vars.CRYPTO_PROVIDER }}
+        run: npm run options-plan
