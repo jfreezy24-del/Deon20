@@ -335,7 +335,7 @@ nothing else; nothing here posts to it.
 | Entry refinement | Monthly / on demand | Nothing, ever | `data/entry-refinement.md` |
 | Ladder validation | Quarterly / on demand | Nothing, ever | `data/ladder-backtest.md` |
 | Universe discovery | Monthly / on demand | Nothing, ever | `data/universe-discovery.md` |
-| Options expression | On demand | Nothing, ever | stdout |
+| Options expression | On demand | Nothing, ever | Actions run summary |
 | Prep sheet | Weekday mornings | One push | Actions run summary |
 
 The three report tools divide the question up. Calibration asks **"does the
@@ -793,7 +793,11 @@ cannot be earned back. That last one fires on exactly the pathology the
 | `IV_PREMIUM` | `1.25` | Realised-to-implied markup |
 | `EXPIRY_BUFFER` | `2` | Multiple of the hold window to buy |
 
-`OPTIONS_SYMBOLS=NVDA,SPY npm run options-plan` prints the plan for today.
+`OPTIONS_SYMBOLS=NVDA,SPY npm run options-plan` prints the plan for today, or
+run **Options Plan** from the Actions tab — it takes the same settings as
+inputs and writes the plan to the run summary. Manual only, with no schedule:
+an options plan is worth acting on today and misleading a week later, once the
+underlying has moved off these levels. It commits nothing.
 
 ## 📋 Daily prep sheet
 

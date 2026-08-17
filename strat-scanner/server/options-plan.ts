@@ -27,6 +27,7 @@
  *   EXPIRY_BUFFER        multiple of the hold window to buy        (default 2)
  *   MAX_HOLD_BARS        bars the plan is held for                 (default 6)
  */
+import { appendFileSync } from 'node:fs';
 import { scanMarket } from '../src/scanner';
 import { fetchTimeframe } from '../src/data/market';
 import { realisedVolatility } from '../src/options/blackScholes';
@@ -118,16 +119,27 @@ async function main() {
     if (expression) sections.push(renderExpression(expression));
   }
 
-  console.log('');
-  console.log('# Options expression');
-  console.log('');
-  console.log(
+  const markdown = [
+    '# Options expression',
+    '',
     `_Estimated at ${ivPremium}× realised volatility, ${expiryBuffer}× the plan's hold window, ` +
       `$${riskBudget} of risk per trade. **These are not quotes** — no chain was consulted, and ` +
       `real premiums will be higher._`,
-  );
+    '',
+    sections.join('\n\n'),
+  ].join('\n');
+
   console.log('');
-  console.log(sections.join('\n\n'));
+  console.log(markdown);
+
+  // Readable in the Actions UI rather than buried in the run log. Nothing is
+  // committed: an options plan is worth acting on today and misleading in a
+  // week, once the underlying has moved off these levels.
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  if (summaryFile) {
+    appendFileSync(summaryFile, `${markdown}\n`);
+    console.log('\nPlan written to the run summary.');
+  }
 }
 
 main().catch((e) => {
