@@ -442,13 +442,24 @@ describe('composeWeeklyMessages', () => {
   };
 
   it('leads with the write-up, ladder cards after', () => {
-    const messages = composeWeeklyMessages(report, () => undefined, writeup);
+    const messages = composeWeeklyMessages(report, () => undefined, [writeup]);
     expect(messages[0].content).toContain('📝 Solana, the week ahead');
     expect(messages[1].content).toContain('🪙 Crypto Weekly');
   });
 
+  it('gives every configured coin its own message, in order', () => {
+    const second = {
+      writeup: { ...writeup.writeup, symbol: 'BTC-USD', name: 'Bitcoin' },
+      dca: plan(),
+    };
+    const messages = composeWeeklyMessages(report, () => undefined, [writeup, second]);
+    expect(messages[0].content).toContain('Solana');
+    expect(messages[1].content).toContain('Bitcoin');
+    expect(messages[2].content).toContain('🪙 Crypto Weekly');
+  });
+
   it('puts the role ping on the write-up, since the first message pings', () => {
-    const messages = composeWeeklyMessages(report, () => undefined, writeup);
+    const messages = composeWeeklyMessages(report, () => undefined, [writeup]);
     const pinged = withRoleMention(messages[0], '111111111');
     expect(pinged.content).toContain('<@&111111111>');
     expect(pinged.content).toContain('Solana');
@@ -456,7 +467,7 @@ describe('composeWeeklyMessages', () => {
 
   it('falls back to the ladder leading when there is no write-up', () => {
     // A run still notifies exactly once when the write-up symbol failed.
-    const messages = composeWeeklyMessages(report, () => undefined, undefined);
+    const messages = composeWeeklyMessages(report, () => undefined, []);
     expect(messages[0].content).toContain('🪙 Crypto Weekly');
   });
 });

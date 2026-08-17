@@ -19,7 +19,9 @@
  *   APCA_API_SECRET_KEY   Alpaca secret     (optional, paired with the above)
  *   CRYPTO_PROVIDER       'yahoo' to pin crypto back to the old source
  *   WEEKLY_NTFY_ASSETS    per-asset pushes after the digest           (default 4)
- *   WRITEUP_SYMBOL        symbol for the written analysis      (default SOL-USD)
+ *   WRITEUP_SYMBOL        symbols for the written analyses, comma separated.
+ *                         Each gets its own message ahead of the ladder, in
+ *                         the order given.  (default SOL-USD,BTC-USD,ETH-USD)
  *   DISCORD_ROLE_ID       role to @mention, numeric id. One id pings every
  *                         channel; give one per webhook, in the same order,
  *                         when the channels are in different servers.
@@ -35,6 +37,7 @@ import {
   DiscordMessage,
   composeWeeklyMessages,
   formatWeeklyNtfy,
+  parseSymbols,
   parseRoleIds,
   parseWebhooks,
   roleForWebhook,
@@ -46,6 +49,12 @@ import { loadState, saveState } from './state-file';
 import { costBasis, isoDate, reconcilePlan } from '../src/crypto/ladderState';
 
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
+
+/**
+ * Coins that get a written analysis. Each one is a separate Discord message,
+ * so this is a deliberate trade of channel volume for depth.
+ */
+const DEFAULT_WRITEUP_SYMBOLS = ['SOL-USD', 'BTC-USD', 'ETH-USD'];
 
 const loadUniverse = (): string[] => loadSymbolList(WATCHLIST_FILE, CRYPTO_UNIVERSE);
 
@@ -166,30 +175,34 @@ async function main() {
 
   // The ladder report covers the whole universe; the written analysis covers
   // one symbol in depth and rides along as its own message.
-  const writeupSymbol = (process.env.WRITEUP_SYMBOL ?? 'SOL-USD').trim().toUpperCase();
-  const subject = report.assets.find((a) => a.symbol === writeupSymbol);
-  if (!subject && writeupSymbol) {
-    console.warn(`  WARN write-up symbol ${writeupSymbol} was not scanned — skipping the analysis.`);
-  }
-
-  const discordMessages = composeWeeklyMessages(
-    report,
-    basisFor,
-    subject
-      ? {
-          writeup: buildWriteup({
-            symbol: subject.symbol,
-            name: subject.name,
-            lastPrice: subject.lastPrice,
-            weekChangePct: subject.weekChangePct,
-            continuity: subject.continuity,
-            structure: subject.structure,
-            dca: subject.dca,
-          }),
+  const writeupSymbols = parseSymbols(process.env.WRITEUP_SYMBOL, DEFAULT_WRITEUP_SYMBOLS);
+  const writeups = writeupSymbols.flatMap((symbol) => {
+    const subject = report.assets.find((a) => a.symbol === symbol);
+    if (!subject) {
+      console.warn(`  WARN write-up symbol ${symbol} was not scanned — skipping its analysis.`);
+      return [];
+    }
+    return [
+      {
+        writeup: buildWriteup({
+          symbol: subject.symbol,
+          name: subject.name,
+          lastPrice: subject.lastPrice,
+          weekChangePct: subject.weekChangePct,
+          continuity: subject.continuity,
+          structure: subject.structure,
           dca: subject.dca,
-        }
-      : undefined,
+        }),
+        dca: subject.dca,
+      },
+    ];
+  });
+  console.log(
+    `Written analyses: ${writeups.map((w) => w.writeup.symbol).join(', ') || 'none'} ` +
+      `(${writeups.length} message(s) ahead of the ladder).`,
   );
+
+  const discordMessages = composeWeeklyMessages(report, basisFor, writeups);
   const ntfyMessages = formatWeeklyNtfy(
     report,
     num(process.env.WEEKLY_NTFY_ASSETS, DEFAULT_WEEKLY_OPTIONS.maxFeatured),
