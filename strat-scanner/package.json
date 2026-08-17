@@ -18,6 +18,8 @@
     "sweep": "tsx server/sweep.ts",
     "entry-refinement": "tsx server/entry-refinement.ts",
     "ladder-backtest": "tsx server/ladder-backtest.ts",
+    "discover": "tsx server/discover-universe.ts",
+    "options-plan": "tsx server/options-plan.ts",
     "prep-sheet": "tsx server/prep-sheet.ts"
   },
   "dependencies": {

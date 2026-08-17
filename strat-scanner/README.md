@@ -124,6 +124,9 @@ src/strat/entryRefinement.ts— 60m entry timing (stop only, never selection)
 src/data/intraday.ts        — hourly bars, for entry timing only
 src/crypto/ladderBacktest.ts— weekly ladder replay + control/benchmarks
 src/crypto/ladderReport.ts  — ladder validation statistics + markdown
+src/strat/discovery.ts      — universe screening (what to watch)
+src/options/blackScholes.ts — indicative pricing, for sizing only
+src/options/expression.ts   — signal → options structure
 src/strat/prepSheet.ts      — daily top-down prep sheet
 src/data/history.ts         — deep daily history (backtest only)
 ```
@@ -331,6 +334,8 @@ nothing else; nothing here posts to it.
 | Policy sweep | Quarterly / on demand | Nothing, ever | `data/policy-sweep.md` |
 | Entry refinement | Monthly / on demand | Nothing, ever | `data/entry-refinement.md` |
 | Ladder validation | Quarterly / on demand | Nothing, ever | `data/ladder-backtest.md` |
+| Universe discovery | Monthly / on demand | Nothing, ever | `data/universe-discovery.md` |
+| Options expression | On demand | Nothing, ever | stdout |
 | Prep sheet | Weekday mornings | One push | Actions run summary |
 
 The three report tools divide the question up. Calibration asks **"does the
@@ -698,6 +703,97 @@ the report without writing.
 > carry a separate `pricedOn` for fill eligibility while `placedOn` keeps the
 > expiry clock; records written before the field existed fall back to
 > `placedOn`, so committed state still loads.
+
+## 🔭 Universe discovery (is this the right watchlist?)
+
+Every watchlist here is hand-curated. The scanner is very good at answering
+*"is there a setup in these 35 names"* and has no way at all to answer *"are
+these the right 35 names."*
+
+`.github/workflows/universe-discovery.yml` screens a broad candidate pool
+(`server/candidates/equities.json`, ~258 names, and `crypto.json`, ~60) and
+proposes additions — and flags watched symbols that no longer qualify, because
+a watchlist that only ever grows becomes a scan of everything.
+
+**Candidates are scored on tradability, never on backtested profit.** That
+restriction is the most important thing in the tool. Ranking a broad pool by
+historical returns and keeping the winners finds the symbols that *happened* to
+work over the sample, which is the property least likely to repeat. What gets
+scored instead:
+
+| Criterion | Why it plausibly persists |
+|---|---|
+| Median daily dollar volume | You cannot trade what you cannot get filled in |
+| Volatility, as a **band** | Too quiet cannot pay for its own risk; too wild is a lottery ticket |
+| Structure density | How often the symbol actually prints actionable Strat bars |
+| Magnitude availability | How often a real prior level exists to measure to, rather than a projection |
+| Marginal diversification | A name 0.95 correlated to something you already watch adds a row and no information |
+
+Two stages, because the pool is large and the data source is free: cheap gates
+(liquidity, volatility, history) run off one daily fetch per candidate, and the
+Strat engine is replayed only over what survives.
+
+Correlation is scored against the **existing watchlist**, so it measures what a
+candidate *adds* rather than what it is — and incumbents are never evicted for
+being correlated, since you already own that decision.
+
+**Sends nothing. Proposes; never edits a watchlist.**
+
+| Variable / input | Default | Meaning |
+|---|---|---|
+| `DISCOVER_POOL` | `both` | `equities`, `crypto` or `both` |
+| `DISCOVER_YEARS` | `3` | Years of daily history |
+| `DISCOVER_MAX` | `15` | Maximum additions to propose |
+| `DISCOVER_MIN_VOLUME` | `25000000` | Median daily dollar volume floor |
+| `DISCOVER_MAX_CORR` | `0.9` | Correlation ceiling against the watchlist |
+
+`DRY_RUN=true DISCOVER_POOL=crypto npm run discover` prints the proposal
+without writing.
+
+> The candidate pools are committed snapshots — edit them freely. Being
+> snapshots of today's liquid names they are themselves survivorship-biased, so
+> treat them as a starting universe rather than an unbiased one.
+
+## 🎟️ Options expression
+
+The scanner produces a complete directional thesis and hands you four numbers
+in share terms. Expressing that with options means translating every one of
+them, and `npm run options-plan` does the arithmetic:
+
+| Plan | Option decision |
+|---|---|
+| Direction | Calls or puts |
+| **Hold window** | Expiry — a plan given six daily bars needs an option alive in six daily bars, with room to spare |
+| **Magnitude target** | The **short strike** — the thesis is "price travels from entry to T1", and a vertical long at entry / short at T1 expresses exactly that and nothing more |
+| **The R unit** | Contract count — a defined-risk structure has a known max loss, so size is arithmetic |
+
+Two structures per signal, because they answer different questions: the
+**vertical debit spread** states the thesis and caps both sides; the **long
+single** keeps the upside past T1 and pays for it in premium and theta.
+
+It also runs the reality checks the share-based plan cannot make for itself —
+whether the objective is a sane fraction of the expected move over the option's
+life, and whether the objective is so close to the trigger that the debit
+cannot be earned back. That last one fires on exactly the pathology the
+[target-quality diagnostic](#are-the-magnitude-targets-real) found: a target
+0.15R away is a small win in shares and usually negative expectancy in options.
+
+> ⚠️ **It does not price options.** Nothing here sees a chain, a bid/ask or a
+> real implied volatility. Premiums are Black-Scholes estimates from realised
+> volatility marked up by `IV_PREMIUM` (default 1.25×, because implied is
+> normally above realised and pricing off raw realised flatters every debit).
+> Contract counts are a starting point; the **structure** is the output. Open
+> the chain before trading any of it.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OPTIONS_SYMBOLS` | _(algo universe)_ | Comma list to plan |
+| `OPTIONS_RISK` | `500` | Dollars to risk per trade |
+| `OPTIONS_MIN_CONFIDENCE` | `60` | Confidence floor |
+| `IV_PREMIUM` | `1.25` | Realised-to-implied markup |
+| `EXPIRY_BUFFER` | `2` | Multiple of the hold window to buy |
+
+`OPTIONS_SYMBOLS=NVDA,SPY npm run options-plan` prints the plan for today.
 
 ## 📋 Daily prep sheet
 
