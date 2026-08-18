@@ -353,9 +353,6 @@ f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
     // Beyond ~6 half-lives a period carries under 2% weight, so trimming there
     // costs nothing statistically and keeps the weighted walk bounded.
     int effMax = recOn_ ? int(math.min(maxN, math.round(hl_ * 6.0))) : maxN
-    // Reach/hold rates converge long before 2000 samples; capping their
-    // history keeps 16 more arrays from scaling with the ratio window.
-    int ocMax = math.min(effMax, 1000)
 
     if bar_index > 1
         float o = open[1]
@@ -399,8 +396,8 @@ f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
                             bool hd = rd and (upSide ? c < ld : c > ld)
                             bool rp = upSide ? h >= lp : l <= lp
                             bool hp = rp and (upSide ? c < lp : c > lp)
-                            f_push(array.get(ocs, r), rd, hd, ocMax)
-                            f_push(array.get(ocs, 4 + r), rp, hp, ocMax)
+                            f_push(array.get(ocs, r), rd, hd, effMax)
+                            f_push(array.get(ocs, 4 + r), rp, hp, effMax)
 
                 // ---- whipsaw: how often BOTH manipulation sides get tagged ----
                 if array.get(cN, base) >= minN and array.get(cN, base + 1) >= minN
