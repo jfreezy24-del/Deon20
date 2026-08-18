@@ -314,7 +314,7 @@ f_holdRate(Outcome oc) =>
 // Role indices: 0 = +M (upper manipulation), 1 = -M (lower manipulation),
 //               2 = +D (upper distribution), 3 = -D (lower distribution).
 f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
-         int nb, bool uncond, float pM, float pD, int minN) =>
+         int nb, bool uncond, float pM, float pD, int minN, bool full) =>
     var array<float> upA = array.new<float>()
     var array<float> dnA = array.new<float>()
     var array<float> blA = array.new<float>()
@@ -326,6 +326,13 @@ f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
     var array<float> cS  = array.new<float>(4 * nb, na)
     var array<float> cN  = array.new<float>(4 * nb, 0)
     var array<Outcome> ocs = array.new<Outcome>()
+    // Scratch buffers for the recompute. Allocating these fresh on every
+    // recompute churned thousands of 2000-element arrays per feed, which is
+    // what exhausted memory; they are reused and cleared instead.
+    var array<float> f0 = array.new<float>()
+    var array<float> f1 = array.new<float>()
+    var array<float> f2 = array.new<float>()
+    var array<float> f3 = array.new<float>()
     var float terc1 = na
     var float terc2 = na
     var int sinceRe = 999
@@ -346,6 +353,9 @@ f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
     // Beyond ~6 half-lives a period carries under 2% weight, so trimming there
     // costs nothing statistically and keeps the weighted walk bounded.
     int effMax = recOn_ ? int(math.min(maxN, math.round(hl_ * 6.0))) : maxN
+    // Reach/hold rates converge long before 2000 samples; capping their
+    // history keeps 16 more arrays from scaling with the ratio window.
+    int ocMax = math.min(effMax, 1000)
 
     if bar_index > 1
         float o = open[1]
@@ -374,20 +384,23 @@ f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
                 int base = 4 * bk
 
                 // ---- walk-forward scoring: judge this period against estimates
-                // built only from periods that preceded it ----
-                for r = 0 to 3
-                    bool upSide = r == 0 or r == 2
-                    if array.get(cN, base + r) >= minN
-                        float vd = array.get(cD, base + r)
-                        float vp = array.get(cP, base + r)
-                        float ld = f_lvl(tfm, vd, o, atrPrev, upSide)
-                        float lp = f_lvl(tfm, vp, o, atrPrev, upSide)
-                        bool rd = upSide ? h >= ld : l <= ld
-                        bool hd = rd and (upSide ? c < ld : c > ld)
-                        bool rp = upSide ? h >= lp : l <= lp
-                        bool hp = rp and (upSide ? c < lp : c > lp)
-                        f_push(array.get(ocs, r), rd, hd, effMax)
-                        f_push(array.get(ocs, 4 + r), rp, hp, effMax)
+                // built only from periods that preceded it. Only the primary
+                // feed needs this; pooled feeds contribute ratios alone, so
+                // they skip it and keep their outcome buffers empty. ----
+                if full
+                    for r = 0 to 3
+                        bool upSide = r == 0 or r == 2
+                        if array.get(cN, base + r) >= minN
+                            float vd = array.get(cD, base + r)
+                            float vp = array.get(cP, base + r)
+                            float ld = f_lvl(tfm, vd, o, atrPrev, upSide)
+                            float lp = f_lvl(tfm, vp, o, atrPrev, upSide)
+                            bool rd = upSide ? h >= ld : l <= ld
+                            bool hd = rd and (upSide ? c < ld : c > ld)
+                            bool rp = upSide ? h >= lp : l <= lp
+                            bool hp = rp and (upSide ? c < lp : c > lp)
+                            f_push(array.get(ocs, r), rd, hd, ocMax)
+                            f_push(array.get(ocs, 4 + r), rp, hp, ocMax)
 
                 // ---- whipsaw: how often BOTH manipulation sides get tagged ----
                 if array.get(cN, base) >= minN and array.get(cN, base + 1) >= minN
@@ -424,10 +437,10 @@ f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
                         terc1 := array.percentile_linear_interpolation(rgA, 33.3333)
                         terc2 := array.percentile_linear_interpolation(rgA, 66.6667)
                     for b = 0 to nb - 1
-                        array<float> f0 = array.new<float>()
-                        array<float> f1 = array.new<float>()
-                        array<float> f2 = array.new<float>()
-                        array<float> f3 = array.new<float>()
+                        array.clear(f0)
+                        array.clear(f1)
+                        array.clear(f2)
+                        array.clear(f3)
                         // n is at least 1 here: the current period was just pushed
                         for i = 0 to n - 1
                             if nb == 1 or int(array.get(bkA, i)) == b
@@ -501,17 +514,17 @@ f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
 // ============================== Feed requests =================================
 statSym1 = useCustomFeed ? sym1 : syminfo.tickerid
 
-s1 = request.security(statSym1, tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
-s2 = request.security(sym2,     tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
-s3 = request.security(sym3,     tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
+s1 = request.security(statSym1, tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, true))
+s2 = request.security(sym2,     tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
+s3 = request.security(sym3,     tf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
 
 // Volatility scale is always taken from the CHART symbol, so ATR-normalized
 // ratios borrowed from another provider land on the right absolute size here.
 chartAtrP = request.security(syminfo.tickerid, tf, ta.atr(atrLen)[1] / close[1])
 
 // Extra timeframes for confluence use the primary feed only.
-sB = request.security(statSym1, tfB, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
-sC = request.security(statSym1, tfC, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample))
+sB = request.security(statSym1, tfB, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
+sC = request.security(statSym1, tfC, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
 chartAtrB = request.security(syminfo.tickerid, tfB, ta.atr(atrLen)[1] / close[1])
 chartAtrC = request.security(syminfo.tickerid, tfC, ta.atr(atrLen)[1] / close[1])
 
