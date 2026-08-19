@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": "2026-08-18",
+  "lastCheckedOn": "2026-08-19",
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
@@ -224,7 +224,7 @@
           "source": "Prior week low",
           "timeframe": "W",
           "placedOn": "2026-08-17",
-          "filledOn": null
+          "filledOn": "2026-08-18"
         },
         {
           "price": 0.663038,
