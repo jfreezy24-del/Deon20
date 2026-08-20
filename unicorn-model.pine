@@ -1,0 +1,2145 @@
+// Unicorn Model
+// Liquidity sweep -> breaker (and "unicorn": a breaker overlapped by an FVG)
+// with R projections, break-even protection, session filters and HTF context.
+
+//@version=6
+// dynamic_requests is explicitly disabled: it defaults to true in v6, and
+// detectStandaloneFVG() carries var state across the requested HTF series, so
+// the one-evaluation-per-bar model is the behaviour this module is built on.
+indicator("Unicorn Model", shorttitle="Unicorn", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=500, dynamic_requests=false)
+
+type UnicornSetup
+    bool    isBull
+    bool    isUnicorn
+    string  sweepLabel
+    float   zoneTop
+    float   zoneBot
+    int     sweepBar
+    int     activationBar
+    int     activationYear
+    int     activationMonth
+    float   invalidLevel
+    float   entryPrice
+    float   riskSize
+    float   mainTarget
+    int     state
+    bool    alertedTarget
+    bool    alertedInvalWarn
+    bool    alertedInvalHit
+    bool    alertedBE
+    bool    isBEActive
+    box     zoneBox
+    array<box>   fvgBoxes
+    line    sweepLine
+    label   sweepLbl
+    array<line>  targetLines
+    array<label> targetLabels
+    line    bb50Line
+    array<line>  fvgCeLines
+    line    beTriggerLine
+    label   beTriggerLabel
+
+type HtfFVG
+    box     fvgBox
+    line    midline
+    label   fvgLabel
+    float   top
+    float   bottom
+    bool    isBullish
+
+type SMT
+    string  smtType
+    string  smtPair
+    float   prevChartHigh
+    float   currChartHigh
+    int     prevChartHighTime
+    int     currChartHighTime
+    float   prevChartLow
+    float   currChartLow
+    int     prevChartLowTime
+    int     currChartLowTime
+    int     creationBar
+    line    smtLine
+
+type Candle
+    float           o
+    float           c
+    float           h
+    float           l
+    int             o_idx
+    int             c_idx
+    int             h_idx
+    int             l_idx
+    box             body
+    line            wick_up
+    line            wick_down
+    line            line_o
+    line            line_h
+    line            line_l
+    line            line_c
+    label           lbl_o
+    label           lbl_h
+    label           lbl_l
+    label           lbl_c
+
+type CandleSettings
+    bool            show
+    int             max_display
+
+type SettingsCandle
+    color           bull_body
+    color           bull_border
+    color           bull_wick
+    color           bear_body
+    color           bear_border
+    color           bear_wick
+    int             offset
+    int             buffer
+    int             width
+    color           line_color
+
+type CandleSet
+    array<Candle>   candles
+    CandleSettings  settings
+    label           infoLabel
+    int             htf_start_bar
+    float           htf_open_price
+    float           htf_high_trace
+    float           htf_low_trace
+
+GRP_GEN = "General Settings"
+i_history        = input.int (50,   "Max History",              minval=1, maxval=50,  group=GRP_GEN, tooltip="Max number of setups displayed simultaneously. Each setup can draw up to ~6 lines/labels and TradingView caps every drawing type at 500 per script, so lower this if older drawings start disappearing.")
+i_biasMode       = input.string("Neutral", "Bias Mode",        options=["Neutral","Bullish","Bearish","Auto"], group=GRP_GEN)
+i_modelMode      = input.string("Unicorn", "Model Mode",       options=["Breaker", "Unicorn", "Breaker + Unicorn"], group=GRP_GEN)
+i_showPotential  = input.bool (true,  "Show Potential Model",   group=GRP_GEN)
+i_swingInval     = input.bool (false, "Use Swing for Invalidation", group=GRP_GEN, tooltip="Stop loss placed at manipulation extreme.")
+i_discardInval   = input.bool (false,  "Discard Invalidated",    group=GRP_GEN)
+
+G_TF = "HTF Candles Settings"
+show_htf_candles       = input.bool(true, "Show HTF Candles", group=G_TF)
+htf_mode_candle        = input.string("Auto", "Mode", options=["Auto", "Custom"], inline="htf1", group=G_TF)
+custom_htf_candle      = input.string("1 week", "Custom TF", options=["30 minutes", "45 minutes", "90 minutes", "1 hour", "2 hours", "3 hours", "4 hours", "6 hours", "7 hours", "9 hours", "1 day", "1 week", "1 month", "3 months", "6 months", "12 months"], inline="htf1", group=G_TF)
+max_display_inp_candle = input.int(4, "Max Displayed", minval=1, maxval=50, group=G_TF)
+
+show_htf_info   = input.bool(true, "Show Info & Timer", inline="info1", group=G_TF)
+info_size       = input.string(size.normal, "Size", options=[size.tiny, size.small, size.normal, size.large], inline="info1", group=G_TF)
+info_col        = input.color(color.rgb(8, 8, 8), "Color", inline="info1", group=G_TF)
+
+show_sweeps        = input.bool(true, "Show Sweep Lines", inline="swp1", group=G_TF)
+line_color_candle  = input.color(color.rgb(0, 0, 0), "Color", inline="swp1", group=G_TF)
+
+G_APP_CANDLE = "HTF Candle Appearance & Projections"
+bull_body_col_candle   = input.color(color.new(#83b785, 0), "Bull Body / Border", inline="b1", group=G_APP_CANDLE)
+bull_bord_col_candle   = input.color(color.new(#5f5f5f, 0), "", inline="b1", group=G_APP_CANDLE)
+bear_body_col_candle   = input.color(color.new(#5f5f5f, 0), "Bear Body / Border", inline="b2", group=G_APP_CANDLE)
+bear_bord_col_candle   = input.color(color.new(#5f5f5f, 0), "", inline="b2", group=G_APP_CANDLE)
+bull_wick_col_candle   = input.color(color.new(#5f5f5f, 0), "Wick Bull / Bear", inline="w1", group=G_APP_CANDLE)
+bear_wick_col_candle   = input.color(color.new(#5f5f5f, 0), "", inline="w1", group=G_APP_CANDLE)
+
+chart_offset_candle    = input.int(10, "Padding Offset", minval = 1, inline="dim1", group=G_APP_CANDLE)
+candle_buffer_candle   = input.int(1, "Spacing", minval = 1, maxval = 4, inline="dim1", group=G_APP_CANDLE)
+candle_width_candle    = input.int(1, "Width", minval = 1, maxval = 4, inline="dim1", group=G_APP_CANDLE) * 2
+
+proj_o_enabled   = input.bool(false, "Open Line", inline="po", group=G_APP_CANDLE)
+proj_o_col       = input.color(color.new(#000000, 10), "", inline="po", group=G_APP_CANDLE)
+proj_o_style     = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], inline="po", group=G_APP_CANDLE)
+proj_o_width     = input.int(1, "", minval=1, inline="po", group=G_APP_CANDLE)
+
+proj_hl_enabled  = input.bool(false, "High/Low Lines", inline="phl", group=G_APP_CANDLE)
+proj_hl_col      = input.color(color.new(#000000, 10), "", inline="phl", group=G_APP_CANDLE)
+proj_hl_style    = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], inline="phl", group=G_APP_CANDLE)
+proj_hl_width    = input.int(1, "", minval=1, inline="phl", group=G_APP_CANDLE)
+
+proj_c_enabled   = input.bool(false, "Close Line", inline="pc", group=G_APP_CANDLE)
+proj_c_col       = input.color(color.new(#000000, 10), "", inline="pc", group=G_APP_CANDLE)
+proj_c_style     = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], inline="pc", group=G_APP_CANDLE)
+proj_c_width     = input.int(1, "", minval=1, inline="pc", group=G_APP_CANDLE)
+
+proj_lbl_enabled = input.bool(false, "Price Labels", inline="plbl", group=G_APP_CANDLE)
+proj_lbl_col     = input.color(color.rgb(0, 0, 0), "", inline="plbl", group=G_APP_CANDLE)
+proj_lbl_size    = input.string(size.small, "", options=[size.tiny, size.small, size.normal, size.large], inline="plbl", group=G_APP_CANDLE)
+
+GRP_SRC  = "Liquidity Sources"
+i_srcMode        = input.string("Multiple", "Source Mode",   options=["Single","Multiple"],   inline="sm1", group=GRP_SRC)
+i_srcAuto        = input.string("Automatic","Mapping",      options=["Automatic","Manual"],  inline="sm1", group=GRP_SRC)
+i_srcAType       = input.string("OHLC + Swing","Auto Type", options=["OHLC + Swing","OHLC Only","Swing Only"], group=GRP_SRC)
+
+i_srcAEnable     = input.bool  (true, "Source A",  inline="srcA", group=GRP_SRC)
+i_srcATF         = input.timeframe("60",  "TF",    inline="srcA", group=GRP_SRC)
+i_srcALiq        = input.string("OHLC + Swing","Liq", inline="srcA", options=["OHLC + Swing","OHLC Only","Swing Only"], group=GRP_SRC)
+
+i_srcBEnable     = input.bool  (true, "Source B",  inline="srcB", group=GRP_SRC)
+i_srcBTF         = input.timeframe("240","TF",     inline="srcB", group=GRP_SRC)
+i_srcBLiq        = input.string("OHLC + Swing","Liq", inline="srcB", options=["OHLC + Swing","OHLC Only","Swing Only"], group=GRP_SRC)
+
+i_srcCEnable     = input.bool  (true, "Source C",  inline="srcC", group=GRP_SRC)
+i_srcCTF         = input.timeframe("D",  "TF",     inline="srcC", group=GRP_SRC)
+i_srcCLiq        = input.string("OHLC + Swing","Liq", inline="srcC", options=["OHLC + Swing","OHLC Only","Swing Only"], group=GRP_SRC)
+
+GRP_SESS_LIQ = "Session Liquidity Levels"
+i_useSessLiq     = input.bool(true, "Enable Session Liquidity", group=GRP_SESS_LIQ)
+i_sessL1Name     = input.string("Asia", "Session 1", inline="sl1", group=GRP_SESS_LIQ)
+i_sessL1Time     = input.session("2000-0000", "",    inline="sl1", group=GRP_SESS_LIQ)
+i_sessL2Name     = input.string("London", "Session 2", inline="sl2", group=GRP_SESS_LIQ)
+i_sessL2Time     = input.session("0200-0500", "",    inline="sl2", group=GRP_SESS_LIQ)
+i_sessL3Name     = input.string("New York AM", "Session 3", inline="sl3", group=GRP_SESS_LIQ)
+i_sessL3Time     = input.session("0930-1200", "",    inline="sl3", group=GRP_SESS_LIQ)
+i_sessL4Name     = input.string("New York PM", "Session 4", inline="sl4", group=GRP_SESS_LIQ)
+i_sessL4Time     = input.session("1330-1600", "",    inline="sl4", group=GRP_SESS_LIQ)
+
+GRP_PROJ = "Target Projections & R:R"
+i_showRR         = input.bool  (true,  "Show Main R:R Target",    inline="r1", group=GRP_PROJ)
+i_rrMain         = input.float (2.0,   "Multiplier", minval=0.1, step=0.5, inline="r1", group=GRP_PROJ)
+i_projCalc       = input.string("Confirmation Close", "Calculation Anchor", options=["Breaker Range", "Confirmation Close"], group=GRP_PROJ, tooltip="Anchor for entry, risk and every R projection. 'Confirmation Close' measures from the close of the confirmation candle, 'Breaker Range' from the breaker edge.")
+i_showExtra      = input.bool  (false, "Show Extra Targets",     inline="r2", group=GRP_PROJ)
+i_extraStr       = input.string("1,3.5","Multipliers",           inline="r2", group=GRP_PROJ, tooltip="Comma-separated R multiples, e.g. 1,1.5,3")
+
+GRP_BE   = "Break-Even Protection (50%)"
+i_useBE          = input.bool  (true,  "Enable Auto Break-Even",    group=GRP_BE)
+i_showBELine     = input.bool  (true,  "Show BE Trigger Line",      inline="bel1", group=GRP_BE)
+i_beLineWidth    = input.int  (1,      "Width", minval=1, maxval=4, inline="bel1", group=GRP_BE)
+i_beLineStyle    = input.string("dotted", "Style", options=["solid","dashed","dotted"], inline="bel2", group=GRP_BE)
+i_beLineColor    = input.color (color.new(#2962ff, 0), "Color",   inline="bel2", group=GRP_BE)
+
+GRP_LIMIT = "Daily Risk Limiter"
+i_useDailyLimit  = input.bool(true, "Enable Daily Trade Limits", group=GRP_LIMIT, tooltip="Break-even stops are scratches: they count as neither a win nor a loss here, and are tracked separately in the BE column of the stats table.")
+i_maxDailyWins   = input.int(1, "Max Wins", minval=1,   inline="dl1", group=GRP_LIMIT)
+i_maxDailyLosses = input.int(2, "Max Losses", minval=1, inline="dl1", group=GRP_LIMIT)
+
+var array<int> dailyStats = array.new<int>(3, 0)
+
+var array<int> stat_years    = array.new<int>(0)
+var array<int> stat_months   = array.new<int>(0)
+var array<int> stat_outcomes = array.new<int>(0)
+
+GRP_STY  = "Visuals & Zone Styling"
+i_lblSize        = input.string("small", "Label Size",   options=["tiny","small","normal","large","huge"], group=GRP_STY)
+
+i_bullColor      = input.color(color.new(#2962ff, 89), "Bull Breaker / Retested", inline="bc1", group=GRP_STY)
+i_bullRetColor   = input.color(color.new(#2962ff, 85), "",                        inline="bc1", group=GRP_STY)
+i_bullFvgColor   = input.color(color.new(#ff9800, 70), "Bull FVG Color",          group=GRP_STY)
+
+i_bearColor      = input.color(color.new(#2962ff, 89), "Bear Breaker / Retested", inline="br1", group=GRP_STY)
+i_bearRetColor   = input.color(color.new(#2962ff, 85), "",                        inline="br1", group=GRP_STY)
+i_bearFvgColor   = input.color(color.new(#ff9800, 70), "Bear FVG Color",          group=GRP_STY)
+
+i_invalColor     = input.color(color.new(#b0bec5, 92), "Invalidated Ghost Color", group=GRP_STY)
+
+i_showCEBull     = input.bool(false,  "Show CE (Bull FVG)",    inline="ceb", group=GRP_STY)
+i_extendFVGBull  = input.bool(false,  "Extend",                inline="ceb", group=GRP_STY)
+i_showCEBear     = input.bool(false,  "Show CE (Bear FVG)",    inline="cebe", group=GRP_STY)
+i_extendFVGBear  = input.bool(false,  "Extend",                inline="cebe", group=GRP_STY)
+
+i_showBB50Bull   = input.bool(false,  "Show Bull BB 50%",      inline="bb5b", group=GRP_STY)
+i_extendBB50Bull = input.bool(false,  "Extend",                inline="bb5b", group=GRP_STY)
+i_showBB50Bear   = input.bool(false,  "Show Bear BB 50%",      inline="bb5be", group=GRP_STY)
+i_extendBB50Bear = input.bool(false,  "Extend",                inline="bb5be", group=GRP_STY)
+i_bb50Color      = input.color(color.new(#000000, 30), "BB 50% Color", group=GRP_STY)
+
+i_sweepLineColor = input.color(color.new(#000000, 0), "Sweep Line Color/Style/Width", inline="swl1", group=GRP_STY)
+i_sweepLineStyle = input.string("solid","", options=["solid","dashed","dotted"],      inline="swl1", group=GRP_STY)
+i_sweepLineWidth = input.int  (1, "", minval=1, maxval=4,                           inline="swl1", group=GRP_STY)
+
+i_sweepLblColor  = input.color(color.new(#000000, 20), "Sweep Label Color & Size",  inline="swlb1", group=GRP_STY)
+i_sweepLblSize   = input.string("small", "", options=["tiny","small","normal","large","huge"], inline="swlb1", group=GRP_STY)
+
+i_projLineColor  = input.color(color.new(#000000, 0), "Projection Line Color/Style/Width", inline="prl1", group=GRP_STY)
+i_projLineStyle  = input.string("dotted","", options=["solid","dashed","dotted"],         inline="prl1", group=GRP_STY)
+i_projLineWidth  = input.int  (1, "", minval=1, maxval=4,                                 inline="prl1", group=GRP_STY)
+
+GRP_SZF  = "Breaker Size Filter"
+i_sizeFilter     = input.string("All",    "Filter Mode", options=["All","Small+Med+Large","Med+Large","Large","Custom"], group=GRP_SZF)
+i_customSizeMode = input.string("Points", "Custom Unit", options=["Points","Pips"], inline="cs1", group=GRP_SZF)
+i_customMin      = input.float (0.0,  "Min", minval=0, step=1,             inline="cs2", group=GRP_SZF)
+i_customMax      = input.float (0.0,  "Max", minval=0, step=1,             inline="cs2", group=GRP_SZF)
+
+GRP_TF   = "Time & Session Filter"
+i_useTimeFilter  = input.bool  (true, "Enable Time Filter", inline="tf0", group=GRP_TF)
+i_tz             = input.string("exchange", "Timezone",     inline="tf0", group=GRP_TF, tooltip="'exchange' uses the symbol's own timezone. Otherwise enter an IANA name such as America/New_York.")
+effectiveTz = i_tz == "exchange" ? syminfo.timezone : i_tz
+
+i_sess1Enable    = input.bool  (true,  "Session 1",  inline="s1", group=GRP_TF)
+i_sess1Name      = input.string("London","Name",      inline="s1", group=GRP_TF)
+i_sess1          = input.session("0300-0500","",      inline="s1", group=GRP_TF)
+
+i_sess2Enable    = input.bool  (true,  "Session 2",   inline="s2", group=GRP_TF)
+i_sess2Name      = input.string("New York","Name",    inline="s2", group=GRP_TF)
+i_sess2          = input.session("0830-1130","",      inline="s2", group=GRP_TF)
+
+i_sess3Enable    = input.bool  (false, "Session 3",   inline="s3", group=GRP_TF)
+i_sess3Name      = input.string("NY PM","Name",       inline="s3", group=GRP_TF)
+i_sess3          = input.session("1300-1600","",      inline="s3", group=GRP_TF)
+
+G_FVG_TF = "Standalone FVG Settings"
+fvg_autoMode     = input.bool(true, 'Auto HTF Mode', inline="fvga", group = G_FVG_TF)
+fvg_manualHTF    = input.timeframe('D', 'Manual HTF', inline="fvga", group = G_FVG_TF)
+fvg_showBullish  = input.bool(true, 'Bullish FVGs', inline="fvgb", group = G_FVG_TF)
+fvg_showBearish  = input.bool(true, 'Bearish FVGs', inline="fvgb", group = G_FVG_TF)
+fvg_showBoxes    = input.bool(true, 'Show Boxes',   inline="fvgc", group = G_FVG_TF)
+fvg_showLabels   = input.bool(true, 'Show Labels',  inline="fvgc", group = G_FVG_TF)
+fvg_showMidlines = input.bool(false, 'Show Midlines', inline="fvgc", group = G_FVG_TF)
+fvg_bullishColor = input.color(color.new(#4a4a4a, 90), 'Colors (Bull / Bear)', inline="fvgd", group = G_FVG_TF)
+fvg_bearishColor = input.color(color.new(#4a4a4a, 90), '', inline="fvgd", group = G_FVG_TF)
+fvg_midlineColor = input.color(color.new(color.gray, 50), 'Midline Color', group = G_FVG_TF)
+fvg_labelTextColor = input.color(color.gray, 'Label Color', group = G_FVG_TF)
+fvg_maxFVGs      = input.int(4, 'Max Active FVGs to Keep', minval = 1, maxval = 100, group = G_FVG_TF)
+
+G_SMT_TF = "SMT Divergence Settings"
+smt_autoMode     = input.bool(true, 'Auto HTF Mode', inline="smta", group = G_SMT_TF)
+smt_manualHTF    = input.timeframe('D', 'Manual HTF', inline="smta", group = G_SMT_TF)
+smt_AutoMode_Pair = input.bool(true, 'Auto Pair Mapping', inline="smtp", group = G_SMT_TF)
+smt_ManualPair   = input.symbol('', 'Manual Pair', inline="smtp", group = G_SMT_TF)
+smt_KeepOnlyLatest = input.bool(true, 'Keep Only Latest SMTs', group = G_SMT_TF)
+smt_ShowLabels   = input.bool(true, 'Show Labels', inline="smtl", group = G_SMT_TF)
+smt_LineWidth    = input.int(1, 'Line Width', minval = 1, inline="smtl", group = G_SMT_TF)
+smt_BullColor    = input.color(color.rgb(0, 0, 0), "Colors (Bull / Bear)", inline="smtc", group = G_SMT_TF)
+smt_BearColor    = input.color(color.rgb(0, 0, 0), "", inline="smtc", group = G_SMT_TF)
+
+GRP_ALT  = "Alert Notifications"
+i_alertEnable    = input.bool  (false, "Enable All Alerts",     group=GRP_ALT)
+i_alertPotential = input.bool  (true,  "Potential Breaker",     inline="al1", group=GRP_ALT)
+i_alertActiv     = input.bool  (true,  "Activation",            inline="al1", group=GRP_ALT)
+i_alertTarget    = input.bool  (true,  "Target Reached",        inline="al2", group=GRP_ALT)
+i_alertWarn      = input.bool  (true,  "Invalidation Warning",  inline="al2", group=GRP_ALT)
+i_alertHit       = input.bool  (true,  "Invalidation Hit",      group=GRP_ALT)
+
+GRP_TBL  = "HUD Dashboard Tables"
+i_showTable      = input.bool  (true,   "Show Info Table",      inline="tb1", group=GRP_TBL)
+i_tableMode      = input.string("Simple","Mode", options=["Simple","Detailed"], inline="tb1", group=GRP_TBL)
+i_tablePos       = input.string("Bottom Right","Position", options=["Top Left","Top Right","Bottom Left","Bottom Right"], inline="tb1", group=GRP_TBL)
+
+i_showStats      = input.bool(true, "Show Stats Table",     inline="st1", group=GRP_TBL)
+i_statsPos       = input.string("Top Right", "Position",    options=["Top Left","Top Right","Bottom Left","Bottom Right"], inline="st1", group=GRP_TBL)
+
+// ---------------------------------------------------------------------------
+// Generic helpers
+// ---------------------------------------------------------------------------
+
+// Single source of truth for timeframe names (replaces the old getHTFName /
+// formatTimeframe / f_tfLabel trio, which disagreed with each other).
+f_tfName(string tf) =>
+    int s = timeframe.in_seconds(tf)
+    s >= 2592000 and s % 2592000 == 0 ? str.tostring(int(s / 2592000)) + "M" :
+     s >= 604800 and s % 604800 == 0  ? str.tostring(int(s / 604800))  + "W" :
+     s >= 86400  and s % 86400  == 0  ? str.tostring(int(s / 86400))   + "D" :
+     s >= 3600   and s % 3600   == 0  ? str.tostring(int(s / 3600))    + "H" :
+     s >= 60                          ? str.tostring(int(s / 60))      + "m" :
+     str.tostring(s) + "s"
+
+getRemainingTimeHTF(string htf) =>
+    var string r = ""
+    if barstate.isrealtime
+        timeRemaining = (time_close(htf) - timenow) / 1000
+        if timeRemaining > 0
+            hours   = math.floor(timeRemaining / 3600)
+            minutes = math.floor((timeRemaining % 3600) / 60)
+            seconds = math.floor(timeRemaining % 60)
+            r := (hours > 0 ? str.tostring(hours, "00") + ":" : "") +
+                 str.tostring(minutes, "00") + ":" +
+                 str.tostring(seconds, "00")
+        else
+            r := "00:00:00"
+    else
+        r := "N/A"
+    r
+
+get_tf_string(string text_val) =>
+    switch text_val
+        "30 minutes" => "30"
+        "45 minutes" => "45"
+        "90 minutes" => "90"
+        "1 hour"     => "60"
+        "2 hours"    => "120"
+        "3 hours"    => "180"
+        "4 hours"    => "240"
+        "6 hours"    => "360"
+        "7 hours"    => "420"
+        "9 hours"    => "540"
+        "1 day"      => "1D"
+        "1 week"     => "1W"
+        "1 month"    => "1M"
+        "3 months"   => "3M"
+        "6 months"   => "6M"
+        "12 months"  => "12M"
+        => text_val
+
+getProjLineStyle(string style) =>
+    switch style
+        'Solid'  => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+        => line.style_dotted
+
+f_lineStyle(string s) =>
+    s == "dashed" ? line.style_dashed : s == "dotted" ? line.style_dotted : line.style_solid
+
+f_lblSize(string s) =>
+    s == "tiny" ? size.tiny : s == "small" ? size.small : s == "large" ? size.large : s == "huge" ? size.huge : size.normal
+
+f_tblPos(string s) =>
+    s == "Bottom Right" ? position.bottom_right :
+     s == "Bottom Left" ? position.bottom_left  :
+     s == "Top Right"   ? position.top_right    : position.top_left
+
+// NOTE: the parameter is deliberately not called `str` — that would shadow the
+// `str.*` namespace used inside the body.
+f_parseExtras(string csv) =>
+    parts = str.split(csv, ",")
+    arr   = array.new_float(0)
+    for p in parts
+        v = str.tonumber(str.trim(p))
+        if not na(v)
+            array.push(arr, v)
+    arr
+
+isValidTimeframe(string HTF) =>
+    n1 = timeframe.in_seconds(), n2 = timeframe.in_seconds(HTF)
+    (n2 >= timeframe.in_seconds("1D") and n2 > n1) or (n1 < n2 and math.round(n2/n1) == n2/n1)
+
+method deleteProjections(Candle candle) =>
+    if not na(candle.line_o)
+        line.delete(candle.line_o)
+        candle.line_o := na
+    if not na(candle.line_h)
+        line.delete(candle.line_h)
+        candle.line_h := na
+    if not na(candle.line_l)
+        line.delete(candle.line_l)
+        candle.line_l := na
+    if not na(candle.line_c)
+        line.delete(candle.line_c)
+        candle.line_c := na
+    if not na(candle.lbl_o)
+        label.delete(candle.lbl_o)
+        candle.lbl_o := na
+    if not na(candle.lbl_h)
+        label.delete(candle.lbl_h)
+        candle.lbl_h := na
+    if not na(candle.lbl_l)
+        label.delete(candle.lbl_l)
+        candle.lbl_l := na
+    if not na(candle.lbl_c)
+        label.delete(candle.lbl_c)
+        candle.lbl_c := na
+
+var SettingsCandle settingsCandle = SettingsCandle.new(
+     bull_body_col_candle, bull_bord_col_candle, bull_wick_col_candle,
+     bear_body_col_candle, bear_bord_col_candle, bear_wick_col_candle,
+     chart_offset_candle, candle_buffer_candle, candle_width_candle, line_color_candle
+ )
+
+var CandleSet htf1 = CandleSet.new(array.new<Candle>(0), CandleSettings.new(show_htf_candles, max_display_inp_candle), na, bar_index, open, high, low)
+
+var array<line> sweep_lines = array.new<line>(0)
+
+tf_secs_candle = timeframe.in_seconds(timeframe.period)
+auto_tf_candle = tf_secs_candle <= timeframe.in_seconds("1")    ? "15"  :
+          tf_secs_candle <= timeframe.in_seconds("3")    ? "30"  :
+          tf_secs_candle <= timeframe.in_seconds("5")    ? "60"  :
+          tf_secs_candle <= timeframe.in_seconds("15")   ? "240" :
+          tf_secs_candle <= timeframe.in_seconds("60")   ? "1D"  :
+          tf_secs_candle <= timeframe.in_seconds("480")  ? "1W"  :
+          tf_secs_candle <= timeframe.in_seconds("1440") ? "1M"  : "1W"
+
+// Kept as a plain (simple) string rather than a UDT field: time() and
+// timeframe.in_seconds() both require a simple string, and UDT fields are series.
+htfCandleTF = htf_mode_candle == "Auto" ? auto_tf_candle : get_tf_string(custom_htf_candle)
+
+method Reorder(CandleSet candleSet, int offset, string infoTxt) =>
+    for l in sweep_lines
+        line.delete(l)
+    array.clear(sweep_lines)
+
+    size = candleSet.candles.size()
+    float highest_point = 0.0
+
+    if size > 0
+        for i = size-1 to 0
+            Candle candle = candleSet.candles.get(i)
+            t_buffer = offset + ((settingsCandle.width + settingsCandle.buffer) * (size - i - 1))
+            posX = bar_index + t_buffer
+            midX = posX + int(settingsCandle.width / 2)
+            r_pos = posX + settingsCandle.width
+
+            highest_point := math.max(highest_point, candle.h)
+
+            box.set_left(candle.body, posX)
+            box.set_right(candle.body, posX + settingsCandle.width)
+            line.set_x1(candle.wick_up, midX), line.set_x2(candle.wick_up, midX)
+            line.set_x1(candle.wick_down, midX), line.set_x2(candle.wick_down, midX)
+
+            if i == 0
+                candle.deleteProjections()
+
+                if proj_o_enabled
+                    candle.line_o := line.new(candle.o_idx, candle.o, midX, candle.o, style=getProjLineStyle(proj_o_style), color=proj_o_col, width=proj_o_width)
+                    if proj_lbl_enabled
+                        candle.lbl_o := label.new(r_pos, candle.o, str.tostring(candle.o, format.mintick), style=label.style_label_left, color=color.new(color.black, 100), textcolor=proj_lbl_col, size=proj_lbl_size)
+
+                if proj_hl_enabled
+                    candle.line_h := line.new(candle.h_idx, candle.h, midX, candle.h, style=getProjLineStyle(proj_hl_style), color=proj_hl_col, width=proj_hl_width)
+                    candle.line_l := line.new(candle.l_idx, candle.l, midX, candle.l, style=getProjLineStyle(proj_hl_style), color=proj_hl_col, width=proj_hl_width)
+                    if proj_lbl_enabled
+                        candle.lbl_h := label.new(r_pos, candle.h, str.tostring(candle.h, format.mintick), style=label.style_label_left, color=color.new(color.black, 100), textcolor=proj_lbl_col, size=proj_lbl_size)
+                        candle.lbl_l := label.new(r_pos, candle.l, str.tostring(candle.l, format.mintick), style=label.style_label_left, color=color.new(color.black, 100), textcolor=proj_lbl_col, size=proj_lbl_size)
+
+                if proj_c_enabled
+                    candle.line_c := line.new(bar_index, candle.c, midX, candle.c, style=getProjLineStyle(proj_c_style), color=proj_c_col, width=proj_c_width)
+                    if proj_lbl_enabled
+                        candle.lbl_c := label.new(r_pos, candle.c, str.tostring(candle.c, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=proj_lbl_col, size=proj_lbl_size)
+            else
+                candle.deleteProjections()
+
+            if i < size - 1
+                Candle prev = candleSet.candles.get(i+1)
+                prevPosX = offset + ((settingsCandle.width + settingsCandle.buffer) * (size - (i+1) - 1))
+                prevMidX = bar_index + prevPosX + int(settingsCandle.width / 2)
+
+                if show_sweeps
+                    if candle.h > prev.h and candle.c < prev.h
+                        sweep_lines.push(line.new(prevMidX, prev.h, posX + settingsCandle.width, prev.h, color=settingsCandle.line_color))
+                    if candle.l < prev.l and candle.c > prev.l
+                        sweep_lines.push(line.new(prevMidX, prev.l, posX + settingsCandle.width, prev.l, color=settingsCandle.line_color))
+
+        if show_htf_info
+            label.delete(candleSet.infoLabel)
+            labelX = bar_index + offset + int(((settingsCandle.width + settingsCandle.buffer) * (size - 1)) / 2)
+
+            candleSet.infoLabel := label.new(labelX, highest_point, infoTxt,
+                                 color=color.new(color.white, 100),
+                                 textcolor=info_col,
+                                 style=label.style_label_down,
+                                 size=info_size,
+                                 text_font_family=font.family_monospace)
+
+method Monitor(CandleSet candleSet, bool isNew) =>
+    if not isNew
+        candleSet.htf_high_trace := math.max(high, candleSet.htf_high_trace)
+        candleSet.htf_low_trace  := math.min(low, candleSet.htf_low_trace)
+
+    if isNew
+        candleSet.htf_start_bar  := bar_index
+        candleSet.htf_open_price := open
+        candleSet.htf_high_trace := high
+        candleSet.htf_low_trace  := low
+
+        Candle candle = Candle.new(open, close, high, low, bar_index, bar_index, bar_index, bar_index)
+        bull = candle.c > candle.o
+        candle.body := box.new(bar_index, math.max(candle.o, candle.c), bar_index + 2, math.min(candle.o, candle.c),
+             bull ? settingsCandle.bull_border : settingsCandle.bear_border, 1, bgcolor = bull ? settingsCandle.bull_body : settingsCandle.bear_body)
+        candle.wick_up := line.new(bar_index, candle.h, bar_index, math.max(candle.o, candle.c), color=bull ? settingsCandle.bull_wick : settingsCandle.bear_wick)
+        candle.wick_down := line.new(bar_index, math.min(candle.o, candle.c), bar_index, candle.l, color=bull ? settingsCandle.bull_wick : settingsCandle.bear_wick)
+        candleSet.candles.unshift(candle)
+        if candleSet.candles.size() > candleSet.settings.max_display
+            Candle del = candleSet.candles.pop()
+            box.delete(del.body), line.delete(del.wick_up), line.delete(del.wick_down)
+            del.deleteProjections()
+    candleSet
+
+method Update(CandleSet candleSet, int offset, string infoTxt) =>
+    if candleSet.candles.size() > 0
+        Candle candle = candleSet.candles.get(0)
+
+        if high > candle.h
+            candle.h := high
+            candle.h_idx := bar_index
+        if low < candle.l
+            candle.l := low
+            candle.l_idx := bar_index
+
+        candle.c := close
+        candle.c_idx := bar_index
+
+        bull = candle.c > candle.o
+        box.set_top(candle.body, math.max(candle.o, candle.c)), box.set_bottom(candle.body, math.min(candle.o, candle.c))
+        box.set_bgcolor(candle.body, bull ? settingsCandle.bull_body : settingsCandle.bear_body)
+        line.set_y1(candle.wick_up, candle.h), line.set_y2(candle.wick_up, math.max(candle.o, candle.c))
+        line.set_y1(candle.wick_down, candle.l), line.set_y2(candle.wick_down, math.min(candle.o, candle.c))
+
+        candleSet.Reorder(offset, infoTxt)
+    candleSet
+
+// ---------------------------------------------------------------------------
+// Level / sweep helpers
+//
+// None of these call ta.* — every stateful call was hoisted to global scope so
+// the helpers can safely be invoked inside conditional branches.
+// ---------------------------------------------------------------------------
+
+// How many bars back the given level was printed (0 = not found).
+f_findLevelOrigin(bool isBull, float lvl) =>
+    int offset = 0
+    if not na(lvl)
+        for j = 1 to 400
+            match = isBull ? (math.abs(low[j] - lvl) < syminfo.mintick) : (math.abs(high[j] - lvl) < syminfo.mintick)
+            if match
+                offset := j
+                break
+    offset
+
+// Same, restricted to the bars belonging to the previous HTF candle.
+f_findOHLCOrigin(bool isBull, float lvl, int htfCurrStart, int htfPrevStart) =>
+    int offset = 0
+    if not na(lvl) and not na(htfCurrStart) and not na(htfPrevStart)
+        htfPrevEnd = htfCurrStart - 1
+        lo = math.max(1, bar_index - htfPrevEnd)
+        hi = math.min(400, bar_index - htfPrevStart)
+        if lo <= hi
+            for j = lo to hi
+                match = isBull ? (math.abs(low[j] - lvl) < syminfo.mintick) : (math.abs(high[j] - lvl) < syminfo.mintick)
+                if match
+                    offset := j
+                    break
+    offset
+
+// Did an earlier bar of the *current* HTF candle already trade through the level?
+f_alreadyTouched(bool isLowLevel, float lvl, int barsSinceStart) =>
+    bool touched = false
+    if not na(lvl) and not na(barsSinceStart) and barsSinceStart > 0
+        int limit = math.min(barsSinceStart, 300)
+        for i = 1 to limit
+            if isLowLevel
+                if low[i] <= lvl
+                    touched := true
+                    break
+            else
+                if high[i] >= lvl
+                    touched := true
+                    break
+    touched
+
+// Was the swing level already taken out between its origin bar and now?
+f_swingAlreadySwept(bool isBull, float lvl) =>
+    bool swept = false
+    off = f_findLevelOrigin(isBull, lvl)
+    if off > 1
+        for i = 1 to off - 1
+            hit = isBull ? low[i] <= lvl : high[i] >= lvl
+            if hit
+                swept := true
+                break
+    swept
+
+f_autoTFPair() =>
+    int s = timeframe.in_seconds()
+    aTF = s <= 60 ? "15" : s <= 300 ? "60"  : s <= 900 ? "240" : s <= 3600 ? "D" : "W"
+    bTF = s <= 60 ? "60" : s <= 300 ? "240" : s <= 900 ? "D"   : s <= 3600 ? "W" : "M"
+    cTF = s <= 60 ? "240": s <= 300 ? "D"   : s <= 900 ? "W"   : s <= 3600 ? "M" : "3M"
+    [aTF, bTF, cTF]
+
+f_inSession() =>
+    if not i_useTimeFilter
+        true
+    else
+        inS1 = i_sess1Enable and not na(time(timeframe.period, i_sess1, effectiveTz))
+        inS2 = i_sess2Enable and not na(time(timeframe.period, i_sess2, effectiveTz))
+        inS3 = i_sess3Enable and not na(time(timeframe.period, i_sess3, effectiveTz))
+        inS1 or inS2 or inS3
+
+f_sessString() =>
+    s = ""
+    if i_useTimeFilter
+        if i_sess1Enable
+            s += i_sess1Name + ": " + i_sess1 + "  "
+        if i_sess2Enable
+            s += i_sess2Name + ": " + i_sess2 + "  "
+        if i_sess3Enable
+            s += i_sess3Name + ": " + i_sess3
+    s
+
+var array<float> _bkSizeHistory = array.new<float>(0)
+
+f_sizeOk(float bkSize) =>
+    pip = syminfo.mintick * (syminfo.type == "forex" ? 10.0 : 1.0)
+    sz  = i_customSizeMode == "Pips" ? bkSize / pip : bkSize
+
+    if i_sizeFilter == "All"
+        true
+    else if i_sizeFilter == "Custom"
+        minOk = i_customMin == 0.0 or sz >= i_customMin
+        maxOk = i_customMax == 0.0 or sz <= i_customMax
+        minOk and maxOk
+    else
+        array.push(_bkSizeHistory, sz)
+        if array.size(_bkSizeHistory) > 100
+            array.shift(_bkSizeHistory)
+        n = array.size(_bkSizeHistory)
+        if n < 3
+            true
+        else
+            sorted = array.copy(_bkSizeHistory)
+            array.sort(sorted)
+            p33 = array.get(sorted, math.round(n * 0.33))
+            p66 = array.get(sorted, math.round(n * 0.66))
+            isSmall  = sz < p33
+            isMed    = sz >= p33 and sz < p66
+            isLarge  = sz >= p66
+            i_sizeFilter == "Small+Med+Large" ? true :
+             i_sizeFilter == "Med+Large"      ? (isMed or isLarge) :
+             i_sizeFilter == "Large"          ? isLarge : true
+
+emaFast  = ta.ema(close, 50)
+emaSlow  = ta.ema(close, 200)
+autoBull = emaFast > emaSlow
+
+f_biasOk(bool isBull) =>
+    if i_biasMode == "Neutral"
+        true
+    else if i_biasMode == "Bullish"
+        isBull
+    else if i_biasMode == "Bearish"
+        not isBull
+    else
+        isBull == autoBull
+
+// Shared auto-HTF ladder for the standalone FVG and SMT modules.
+getAutoHTFPeriod() =>
+    int tfSeconds = timeframe.in_seconds()
+    string result = "D"
+    if tfSeconds <= 15
+        result := "5"
+    else if tfSeconds <= 60
+        result := "15"
+    else if tfSeconds <= 180
+        result := "30"
+    else if tfSeconds <= 300
+        result := "60"
+    else if tfSeconds <= 600
+        result := "150"
+    else if tfSeconds <= 900
+        result := "240"
+    else if tfSeconds <= 1800
+        result := "1D"
+    else if tfSeconds <= 2700
+        result := "720"
+    else if tfSeconds <= 3600
+        result := "1D"
+    else if tfSeconds <= 7200
+        result := "2D"
+    else if tfSeconds <= 14400
+        result := "1W"
+    else if tfSeconds <= 21600
+        result := "4D"
+    else if tfSeconds <= 43200
+        result := "1W"
+    else if tfSeconds <= 86400
+        result := "15D"
+    else if tfSeconds <= 259200
+        result := "45D"
+    else if tfSeconds <= 604800
+        result := "15W"
+    else if tfSeconds <= 2592000
+        result := "15M"
+    else
+        result := "45M"
+    result
+
+detectStandaloneFVG() =>
+    var bool  hasBearishFVG = false
+    var bool  hasBullishFVG = false
+    var float bearishBottom = na
+    var float bearishTop    = na
+    var float bullishBottom = na
+    var float bullishTop    = na
+    var int   fvgStartTime  = na
+
+    if barstate.isconfirmed
+        float htfHigh0 = high[0]
+        float htfLow0  = low[0]
+        float htfHigh2 = high[2]
+        float htfLow2  = low[2]
+
+        if not na(htfLow2) and htfHigh0 < htfLow2
+            hasBearishFVG := true
+            bearishBottom := htfHigh0
+            bearishTop    := htfLow2
+            fvgStartTime  := time[2]
+        else
+            hasBearishFVG := false
+
+        if not na(htfHigh2) and htfLow0 > htfHigh2
+            hasBullishFVG := true
+            bullishBottom := htfHigh2
+            bullishTop    := htfLow0
+            fvgStartTime  := time[2]
+        else
+            hasBullishFVG := false
+
+    [hasBearishFVG, hasBullishFVG, bearishBottom, bearishTop, bullishBottom, bullishTop, fvgStartTime]
+
+getSmtPair() =>
+    string ticker = syminfo.ticker
+    string res = ""
+    if str.contains(ticker, "MNQ1!")
+        res := "CME_MINI:MES1!"
+    else if str.contains(ticker, "MES1!")
+        res := "CME_MINI:MNQ1!"
+    else if str.contains(ticker, "MYM1!")
+        res := "CME_MINI:MNQ1!"
+    else if str.contains(ticker, "NQ1!") or str.contains(ticker, "NDX") or str.contains(ticker, "QQQ") or ticker == "NQ"
+        res := "CME_MINI:ES1!"
+    else if str.contains(ticker, "ES1!") or str.contains(ticker, "SPX") or str.contains(ticker, "SPY") or ticker == "ES"
+        res := "CME_MINI:NQ1!"
+    else if str.contains(ticker, "YM1!")
+        res := "CME_MINI:NQ1!"
+    else if str.contains(ticker, "RTY1!")
+        res := "CBOT:YM1!"
+    else if str.contains(ticker, "NAS100")
+        res := "SPX500"
+    else if str.contains(ticker, "SPX500")
+        res := "NAS100"
+    else if str.contains(ticker, "US30")
+        res := "NAS100"
+    else if str.contains(ticker, "EURUSD")
+        res := "GBPUSD"
+    else if str.contains(ticker, "GBPUSD")
+        res := "EURUSD"
+    else if str.contains(ticker, "EURCAD")
+        res := "GBPCAD"
+    else if str.contains(ticker, "GBPCAD")
+        res := "EURCAD"
+    else if str.contains(ticker, "AUDUSD")
+        res := "NZDUSD"
+    else if str.contains(ticker, "NZDUSD")
+        res := "AUDUSD"
+    else if str.contains(ticker, "EURAUD")
+        res := "GBPAUD"
+    else if str.contains(ticker, "GBPAUD")
+        res := "EURAUD"
+    else if str.contains(ticker, "AUDCAD")
+        res := "NZDCAD"
+    else if str.contains(ticker, "NZDCAD")
+        res := "AUDCAD"
+    else if str.contains(ticker, "EURJPY")
+        res := "GBPJPY"
+    else if str.contains(ticker, "GBPJPY")
+        res := "EURJPY"
+    else if str.contains(ticker, "AUDJPY")
+        res := "NZDJPY"
+    else if str.contains(ticker, "NZDJPY")
+        res := "AUDJPY"
+    else if str.contains(ticker, "EURNZD")
+        res := "GBPNZD"
+    else if str.contains(ticker, "GBPNZD")
+        res := "EURNZD"
+    else if str.contains(ticker, "CADJPY")
+        res := "CHFJPY"
+    else if str.contains(ticker, "CHFJPY")
+        res := "CADJPY"
+    else if str.contains(ticker, "USDJPY")
+        res := "EURJPY"
+    else if str.contains(ticker, "USDCAD")
+        res := "EURCAD"
+    else if str.contains(ticker, "USDCHF")
+        res := "EURCHF"
+    else if str.contains(ticker, "XAUUSD")
+        res := "XAGUSD"
+    else if str.contains(ticker, "XAGUSD")
+        res := "XAUUSD"
+    else if str.contains(ticker, "XAUEUR")
+        res := "XAUUSD"
+    else if str.contains(ticker, "XAUGBP")
+        res := "COMEX:GC1!"
+    else if str.contains(ticker, "GC1!")
+        res := "XAGUSD"
+    else if str.contains(ticker, "XAGEUR")
+        res := "COMEX:SI1!"
+    else if str.contains(ticker, "XAGGBP")
+        res := "COMEX:SI1!"
+    else if str.contains(ticker, "SIL1!") or str.contains(ticker, "SI1!")
+        res := "XAGEUR"
+    else if str.contains(ticker, "BTCUSDT") or str.contains(ticker, "BTC")
+        res := "ETHUSDT"
+    else if str.contains(ticker, "ETHUSDT") or str.contains(ticker, "ETH")
+        res := "BTCUSDT"
+    else
+        res := "CME_MINI:ES1!"
+    res
+
+// ---------------------------------------------------------------------------
+// HTF requests
+// ---------------------------------------------------------------------------
+
+fvg_selectedHTF = fvg_autoMode ? getAutoHTFPeriod() : fvg_manualHTF
+fvg_newPeriod   = ta.change(time(fvg_selectedHTF)) != 0
+
+var array<HtfFVG> activeHtfFVGs = array.new<HtfFVG>()
+
+[fvg_htfHasBear, fvg_htfHasBull, fvg_htfBearBot, fvg_htfBearTop, fvg_htfBullBot, fvg_htfBullTop, fvg_htfT2] = request.security(syminfo.tickerid, fvg_selectedHTF, detectStandaloneFVG(), lookahead = barmerge.lookahead_off)
+// close[1] so that on the bar where the HTF period rolls we test the close of
+// the candle that just *completed*, not the first tick of the new one.
+fvg_htfPrevClose = request.security(syminfo.tickerid, fvg_selectedHTF, close[1], lookahead = barmerge.lookahead_off)
+
+smt_selectedHTF = smt_autoMode ? getAutoHTFPeriod() : smt_manualHTF
+smt_newPeriod   = ta.change(time(smt_selectedHTF)) != 0
+
+var smtArray  = array.new<SMT>()
+var smtLabels = array.new<label>()
+
+var float smt_currCH = na, var int smt_currCHT = na
+var float smt_currCL = na, var int smt_currCLT = na
+var float smt_prevCH = na, var int smt_prevCHT = na
+var float smt_prevCL = na, var int smt_prevCLT = na
+
+var float smt_chartPivotHigh = na, var int smt_chartPivotHighTime = na
+var float smt_prevChartPivotHigh = na, var int smt_prevChartPivotHighTime = na
+var float smt_smtPivotHigh = na, var float smt_prevSmtPivotHigh = na
+
+var float smt_chartPivotLow = na, var int smt_chartPivotLowTime = na
+var float smt_prevChartPivotLow = na, var int smt_prevChartPivotLowTime = na
+var float smt_smtPivotLow = na, var float smt_prevSmtPivotLow = na
+
+smt_sPair = smt_AutoMode_Pair ? getSmtPair() : str.tostring(smt_ManualPair)
+
+[smt_htfHigh, smt_htfLow, smt_htfHigh1, smt_htfLow1] = request.security(syminfo.tickerid, smt_selectedHTF, [high, low, high[1], low[1]], lookahead = barmerge.lookahead_off)
+[smt_htfOpen, smt_htfClose] = request.security(syminfo.tickerid, smt_selectedHTF, [open, close], lookahead = barmerge.lookahead_off)
+
+[smt_sH_htf, smt_sL_htf, smt_sH1_htf, smt_sL1_htf] = request.security(smt_sPair != "" ? smt_sPair : syminfo.tickerid, smt_selectedHTF, [high, low, high[1], low[1]], lookahead = barmerge.lookahead_off)
+[smt_sH_piv, smt_sL_piv] = request.security(smt_sPair != "" ? smt_sPair : syminfo.tickerid, timeframe.period, [high[3], low[3]], lookahead = barmerge.lookahead_off)
+
+// ta.* for the SMT module lives here, at global scope: evaluating pivots or
+// history references inside the conditional render block made them unreliable.
+smt_pivHi       = ta.pivothigh(3, 3)
+smt_pivLo       = ta.pivotlow(3, 3)
+smt_chartPivDir = not na(smt_pivHi) ? 1 : not na(smt_pivLo) ? -1 : 0
+smt_bearD_htf   = (not na(smt_htfClose) and smt_htfClose < smt_htfOpen) and smt_htfHigh < smt_htfHigh1 and smt_sH_htf > smt_sH1_htf
+smt_bullD_htf   = (not na(smt_htfClose) and smt_htfClose > smt_htfOpen) and smt_htfLow > smt_htfLow1 and smt_sL_htf < smt_sL1_htf
+smt_bearD_prev  = smt_bearD_htf[1]
+smt_bullD_prev  = smt_bullD_htf[1]
+
+[autoA, autoB, autoC] = f_autoTFPair()
+effTFA = i_srcAuto == "Automatic" ? autoA : i_srcATF
+effTFB = i_srcAuto == "Automatic" ? autoB : i_srcBTF
+effTFC = i_srcAuto == "Automatic" ? autoC : i_srcCTF
+
+// Previous completed HTF candle high/low — these, not the running high/low of
+// the candle in progress, are the levels a sweep has to take out.
+[htfA_ph, htfA_pl] = request.security(syminfo.tickerid, effTFA, [high[1], low[1]], lookahead=barmerge.lookahead_off)
+[htfB_ph, htfB_pl] = request.security(syminfo.tickerid, effTFB, [high[1], low[1]], lookahead=barmerge.lookahead_off)
+[htfC_ph, htfC_pl] = request.security(syminfo.tickerid, effTFC, [high[1], low[1]], lookahead=barmerge.lookahead_off)
+
+[htfA_swH, htfA_swL] = request.security(syminfo.tickerid, effTFA,
+     [ta.pivothigh(high, 1, 1), ta.pivotlow(low, 1, 1)], lookahead=barmerge.lookahead_off)
+[htfB_swH, htfB_swL] = request.security(syminfo.tickerid, effTFB,
+     [ta.pivothigh(high, 1, 1), ta.pivotlow(low, 1, 1)], lookahead=barmerge.lookahead_off)
+[htfC_swH, htfC_swL] = request.security(syminfo.tickerid, effTFC,
+     [ta.pivothigh(high, 1, 1), ta.pivotlow(low, 1, 1)], lookahead=barmerge.lookahead_off)
+
+// Bar bookkeeping per source timeframe, hoisted out of the helpers.
+isNewBarA = ta.change(time(effTFA)) != 0
+isNewBarB = ta.change(time(effTFB)) != 0
+isNewBarC = ta.change(time(effTFC)) != 0
+
+barsSinceA = ta.barssince(isNewBarA)
+barsSinceB = ta.barssince(isNewBarB)
+barsSinceC = ta.barssince(isNewBarC)
+
+htfA_currStart = ta.valuewhen(isNewBarA, bar_index, 0)
+htfA_prevStart = ta.valuewhen(isNewBarA, bar_index, 1)
+htfB_currStart = ta.valuewhen(isNewBarB, bar_index, 0)
+htfB_prevStart = ta.valuewhen(isNewBarB, bar_index, 1)
+htfC_currStart = ta.valuewhen(isNewBarC, bar_index, 0)
+htfC_prevStart = ta.valuewhen(isNewBarC, bar_index, 1)
+
+var float swHigh_A = na, var int swHigh_A_age = 0
+var float swLow_A  = na, var int swLow_A_age  = 0
+var float swHigh_B = na, var int swHigh_B_age = 0
+var float swLow_B  = na, var int swLow_B_age  = 0
+var float swHigh_C = na, var int swHigh_C_age = 0
+var float swLow_C  = na, var int swLow_C_age  = 0
+
+inSessL1 = not na(time(timeframe.period, i_sessL1Time, "America/New_York"))
+inSessL2 = not na(time(timeframe.period, i_sessL2Time, "America/New_York"))
+inSessL3 = not na(time(timeframe.period, i_sessL3Time, "America/New_York"))
+inSessL4 = not na(time(timeframe.period, i_sessL4Time, "America/New_York"))
+
+var float sess1H = na, var float sess1L = na
+var float sess2H = na, var float sess2L = na
+var float sess3H = na, var float sess3L = na
+var float sess4H = na, var float sess4L = na
+
+if inSessL1
+    sess1H := not inSessL1[1] ? high : math.max(sess1H, high)
+    sess1L := not inSessL1[1] ? low : math.min(sess1L, low)
+if inSessL2
+    sess2H := not inSessL2[1] ? high : math.max(sess2H, high)
+    sess2L := not inSessL2[1] ? low : math.min(sess2L, low)
+if inSessL3
+    sess3H := not inSessL3[1] ? high : math.max(sess3H, high)
+    sess3L := not inSessL3[1] ? low : math.min(sess3L, low)
+if inSessL4
+    sess4H := not inSessL4[1] ? high : math.max(sess4H, high)
+    sess4L := not inSessL4[1] ? low : math.min(sess4L, low)
+
+sess1_sweptBull = i_useSessLiq and not inSessL1 and not na(sess1L) and low <= sess1L and low[1] > sess1L
+sess1_sweptBear = i_useSessLiq and not inSessL1 and not na(sess1H) and high >= sess1H and high[1] < sess1H
+
+sess2_sweptBull = i_useSessLiq and not inSessL2 and not na(sess2L) and low <= sess2L and low[1] > sess2L
+sess2_sweptBear = i_useSessLiq and not inSessL2 and not na(sess2H) and high >= sess2H and high[1] < sess2H
+
+sess3_sweptBull = i_useSessLiq and not inSessL3 and not na(sess3L) and low <= sess3L and low[1] > sess3L
+sess3_sweptBear = i_useSessLiq and not inSessL3 and not na(sess3H) and high >= sess3H and high[1] < sess3H
+
+sess4_sweptBull = i_useSessLiq and not inSessL4 and not na(sess4L) and low <= sess4L and low[1] > sess4L
+sess4_sweptBear = i_useSessLiq and not inSessL4 and not na(sess4H) and high >= sess4H and high[1] < sess4H
+
+sess_bull = sess1_sweptBull or sess2_sweptBull or sess3_sweptBull or sess4_sweptBull
+sess_bear = sess1_sweptBear or sess2_sweptBear or sess3_sweptBear or sess4_sweptBear
+
+sess_bullLvl = sess1_sweptBull ? sess1L : sess2_sweptBull ? sess2L :
+               sess3_sweptBull ? sess3L : sess4_sweptBull ? sess4L : float(na)
+sess_bearLvl = sess1_sweptBear ? sess1H : sess2_sweptBear ? sess2H :
+               sess3_sweptBear ? sess3H : sess4_sweptBear ? sess4H : float(na)
+
+sess_bullLbl = sess1_sweptBull ? i_sessL1Name + " Low" : sess2_sweptBull ? i_sessL2Name + " Low" :
+               sess3_sweptBull ? i_sessL3Name + " Low" : sess4_sweptBull ? i_sessL4Name + " Low" : ""
+sess_bearLbl = sess1_sweptBear ? i_sessL1Name + " High" : sess2_sweptBear ? i_sessL2Name + " High" :
+               sess3_sweptBear ? i_sessL3Name + " High" : sess4_sweptBear ? i_sessL4Name + " High" : ""
+
+if sess1_sweptBull
+    sess1L := na
+if sess1_sweptBear
+    sess1H := na
+
+if sess2_sweptBull
+    sess2L := na
+if sess2_sweptBear
+    sess2H := na
+
+if sess3_sweptBull
+    sess3L := na
+if sess3_sweptBear
+    sess3H := na
+
+if sess4_sweptBull
+    sess4L := na
+if sess4_sweptBear
+    sess4H := na
+
+if not na(htfA_swH)
+    swHigh_A := htfA_swH
+    swHigh_A_age := 0
+else if isNewBarA and not na(swHigh_A)
+    swHigh_A_age := swHigh_A_age + 1
+    if swHigh_A_age > 5
+        swHigh_A := na
+
+if not na(htfA_swL)
+    swLow_A := htfA_swL
+    swLow_A_age := 0
+else if isNewBarA and not na(swLow_A)
+    swLow_A_age := swLow_A_age + 1
+    if swLow_A_age > 5
+        swLow_A := na
+
+if not na(htfB_swH)
+    swHigh_B := htfB_swH
+    swHigh_B_age := 0
+else if isNewBarB and not na(swHigh_B)
+    swHigh_B_age := swHigh_B_age + 1
+    if swHigh_B_age > 5
+        swHigh_B := na
+
+if not na(htfB_swL)
+    swLow_B := htfB_swL
+    swLow_B_age := 0
+else if isNewBarB and not na(swLow_B)
+    swLow_B_age := swLow_B_age + 1
+    if swLow_B_age > 5
+        swLow_B := na
+
+if not na(htfC_swH)
+    swHigh_C := htfC_swH
+    swHigh_C_age := 0
+else if isNewBarC and not na(swHigh_C)
+    swHigh_C_age := swHigh_C_age + 1
+    if swHigh_C_age > 5
+        swHigh_C := na
+
+if not na(htfC_swL)
+    swLow_C := htfC_swL
+    swLow_C_age := 0
+else if isNewBarC and not na(swLow_C)
+    swLow_C_age := swLow_C_age + 1
+    if swLow_C_age > 5
+        swLow_C := na
+
+PIVOT_LEN = 3
+swHi = ta.pivothigh(high, PIVOT_LEN, PIVOT_LEN)
+swLo = ta.pivotlow (low,  PIVOT_LEN, PIVOT_LEN)
+
+var float lastSwHi = na, var int lastSwHiBar = na
+var float lastSwLo = na, var int lastSwLoBar = na
+if not na(swHi)
+    lastSwHi    := swHi
+    lastSwHiBar := bar_index - PIVOT_LEN
+if not na(swLo)
+    lastSwLo    := swLo
+    lastSwLoBar := bar_index - PIVOT_LEN
+
+var float  bld_bull_sweepLevel  = na
+var int    bld_bull_sweepBar    = na
+var int    bld_bull_sweepOffset = na
+var float  bld_bull_bbTop       = na
+var float  bld_bull_bbBot       = na
+var int    bld_bull_pivotBar    = na
+var string bld_bull_liqLabel    = ""
+var float  bld_bull_manipLow    = na
+
+var float  bld_bear_sweepLevel  = na
+var int    bld_bear_sweepBar    = na
+var int    bld_bear_sweepOffset = na
+var float  bld_bear_bbTop       = na
+var float  bld_bear_bbBot       = na
+var int    bld_bear_pivotBar    = na
+var string bld_bear_liqLabel    = ""
+var float  bld_bear_manipHigh   = na
+
+var array<UnicornSetup> setups = array.new<UnicornSetup>(0)
+
+srcAactive = i_srcMode == "Multiple" ? i_srcAEnable : true
+srcBactive = i_srcMode == "Multiple" ? i_srcBEnable : false
+srcCactive = i_srcMode == "Multiple" ? i_srcCEnable : false
+
+liqTypeA = i_srcAuto == "Automatic" ? i_srcAType : i_srcALiq
+liqTypeB = i_srcAuto == "Automatic" ? i_srcAType : i_srcBLiq
+liqTypeC = i_srcAuto == "Automatic" ? i_srcAType : i_srcCLiq
+
+// Returns bull/bear results separately so a bar that sweeps both sides does not
+// overwrite one direction's level with the other's.
+f_checkSweep(bool srcEnable, float htfPrevH, float htfPrevL, float swH, float swL, string liqType, string tfLbl, int barsSinceStart) =>
+    bool   sweptBull = false
+    bool   sweptBear = false
+    float  bullLvl   = na
+    float  bearLvl   = na
+    string bullLbl   = ""
+    string bearLbl   = ""
+    if srcEnable
+        useOhlc  = liqType == "OHLC + Swing" or liqType == "OHLC Only"
+        useSwing = liqType == "OHLC + Swing" or liqType == "Swing Only"
+
+        if useOhlc and not na(htfPrevL) and low <= htfPrevL
+            if not f_alreadyTouched(true, htfPrevL, barsSinceStart)
+                sweptBull := true
+                bullLvl   := htfPrevL
+                bullLbl   := tfLbl + " OHLC"
+
+        if useSwing and not sweptBull and not na(swL) and low <= swL
+            if not f_alreadyTouched(true, swL, barsSinceStart) and not f_swingAlreadySwept(true, swL)
+                sweptBull := true
+                bullLvl   := swL
+                bullLbl   := tfLbl + " Swing"
+
+        if useOhlc and not na(htfPrevH) and high >= htfPrevH
+            if not f_alreadyTouched(false, htfPrevH, barsSinceStart)
+                sweptBear := true
+                bearLvl   := htfPrevH
+                bearLbl   := tfLbl + " OHLC"
+
+        if useSwing and not sweptBear and not na(swH) and high >= swH
+            if not f_alreadyTouched(false, swH, barsSinceStart) and not f_swingAlreadySwept(false, swH)
+                sweptBear := true
+                bearLvl   := swH
+                bearLbl   := tfLbl + " Swing"
+
+    [sweptBull, sweptBear, bullLvl, bullLbl, bearLvl, bearLbl]
+
+[swA_bull, swA_bear, swA_bullLvl, swA_bullLbl, swA_bearLvl, swA_bearLbl] = f_checkSweep(srcAactive, htfA_ph, htfA_pl, swHigh_A, swLow_A, liqTypeA, f_tfName(effTFA), barsSinceA)
+[swB_bull, swB_bear, swB_bullLvl, swB_bullLbl, swB_bearLvl, swB_bearLbl] = f_checkSweep(srcBactive, htfB_ph, htfB_pl, swHigh_B, swLow_B, liqTypeB, f_tfName(effTFB), barsSinceB)
+[swC_bull, swC_bear, swC_bullLvl, swC_bullLbl, swC_bearLvl, swC_bearLbl] = f_checkSweep(srcCactive, htfC_ph, htfC_pl, swHigh_C, swLow_C, liqTypeC, f_tfName(effTFC), barsSinceC)
+
+anyBullSweep = swA_bull or swB_bull or swC_bull or sess_bull
+anyBearSweep = swA_bear or swB_bear or swC_bear or sess_bear
+
+bullSweepLevel = swA_bull ? swA_bullLvl : swB_bull ? swB_bullLvl : swC_bull ? swC_bullLvl : sess_bull ? sess_bullLvl : float(na)
+bullSweepLabel = swA_bull ? swA_bullLbl : swB_bull ? swB_bullLbl : swC_bull ? swC_bullLbl : sess_bull ? sess_bullLbl : ""
+bullCurrStart  = swA_bull ? htfA_currStart : swB_bull ? htfB_currStart : swC_bull ? htfC_currStart : int(na)
+bullPrevStart  = swA_bull ? htfA_prevStart : swB_bull ? htfB_prevStart : swC_bull ? htfC_prevStart : int(na)
+
+bearSweepLevel = swA_bear ? swA_bearLvl : swB_bear ? swB_bearLvl : swC_bear ? swC_bearLvl : sess_bear ? sess_bearLvl : float(na)
+bearSweepLabel = swA_bear ? swA_bearLbl : swB_bear ? swB_bearLbl : swC_bear ? swC_bearLbl : sess_bear ? sess_bearLbl : ""
+bearCurrStart  = swA_bear ? htfA_currStart : swB_bear ? htfB_currStart : swC_bear ? htfC_currStart : int(na)
+bearPrevStart  = swA_bear ? htfA_prevStart : swB_bear ? htfB_prevStart : swC_bear ? htfC_prevStart : int(na)
+
+// ---------------------------------------------------------------------------
+// Breaker construction
+// ---------------------------------------------------------------------------
+
+// A bullish breaker is built from the up-close candles that formed the swing
+// high before price dropped to raid the low; the mirror applies for bears.
+// startIdx is clamped so a stale pivot can never index past the history buffer.
+f_findBullBB(int pivotOffset) =>
+    float bbTop = na
+    float bbBot = na
+    startIdx = na(pivotOffset) ? 1 : math.min(math.max(1, pivotOffset), 300)
+    for i = startIdx to startIdx + 8
+        if close[i] > open[i]
+            bbTop := na(bbTop) ? high[i] : math.max(bbTop, high[i])
+            bbBot := na(bbBot) ? low[i]  : math.min(bbBot, low[i])
+        else
+            if not na(bbTop)
+                break
+    if na(bbTop)
+        bbTop := high[startIdx]
+        bbBot := low[startIdx]
+    [bbTop, bbBot]
+
+f_findBearBB(int pivotOffset) =>
+    float bbTop = na
+    float bbBot = na
+    startIdx = na(pivotOffset) ? 1 : math.min(math.max(1, pivotOffset), 300)
+    for i = startIdx to startIdx + 8
+        if close[i] < open[i]
+            bbTop := na(bbTop) ? high[i] : math.max(bbTop, high[i])
+            bbBot := na(bbBot) ? low[i]  : math.min(bbBot, low[i])
+        else
+            if not na(bbTop)
+                break
+    if na(bbTop)
+        bbTop := high[startIdx]
+        bbBot := low[startIdx]
+    [bbTop, bbBot]
+
+f_findBullFvg(float bbTop, float bbBot, int sweepBarIndex) =>
+    tops = array.new_float(0)
+    bots = array.new_float(0)
+    idxs = array.new_int(0)
+    limit = math.min(25, bar_index - sweepBarIndex)
+    if limit >= 2
+        for i = 0 to limit - 2
+            if low[i] > high[i+2]
+                gt = low[i]
+                gb = high[i+2]
+                if gt >= bbBot and gb <= bbTop
+                    array.push(tops, gt)
+                    array.push(bots, gb)
+                    array.push(idxs, i)
+    [array.size(tops) > 0, tops, bots, idxs]
+
+f_findBearFvg(float bbTop, float bbBot, int sweepBarIndex) =>
+    tops = array.new_float(0)
+    bots = array.new_float(0)
+    idxs = array.new_int(0)
+    limit = math.min(25, bar_index - sweepBarIndex)
+    if limit >= 2
+        for i = 0 to limit - 2
+            if high[i] < low[i+2]
+                gt = low[i+2]
+                gb = high[i]
+                if gt >= bbBot and gb <= bbTop
+                    array.push(tops, gt)
+                    array.push(bots, gb)
+                    array.push(idxs, i)
+    [array.size(tops) > 0, tops, bots, idxs]
+
+if anyBullSweep and f_inSession() and (na(bld_bull_bbTop) or bullSweepLevel <= bld_bull_sweepLevel)
+    pivotOffset = na(lastSwHiBar) ? int(na) : bar_index - lastSwHiBar
+    [bbt, bbb] = f_findBullBB(pivotOffset)
+    if not na(bbt) and not na(bbb)
+        isOhlc = str.contains(bullSweepLabel, "OHLC")
+        sweepOffset = isOhlc ? f_findOHLCOrigin(true, bullSweepLevel, bullCurrStart, bullPrevStart) : f_findLevelOrigin(true, bullSweepLevel)
+
+        if sweepOffset > 0
+            bld_bull_sweepLevel   := bullSweepLevel
+            bld_bull_sweepBar     := bar_index
+            bld_bull_sweepOffset  := sweepOffset
+            bld_bull_pivotBar     := lastSwHiBar
+            bld_bull_bbTop        := bbt
+            bld_bull_bbBot        := bbb
+            bld_bull_liqLabel     := bullSweepLabel
+            bld_bull_manipLow     := low
+
+if anyBearSweep and f_inSession() and (na(bld_bear_bbBot) or bearSweepLevel >= bld_bear_sweepLevel)
+    pivotOffset = na(lastSwLoBar) ? int(na) : bar_index - lastSwLoBar
+    [bbt, bbb] = f_findBearBB(pivotOffset)
+    if not na(bbt) and not na(bbb)
+        isOhlc = str.contains(bearSweepLabel, "OHLC")
+        sweepOffset = isOhlc ? f_findOHLCOrigin(false, bearSweepLevel, bearCurrStart, bearPrevStart) : f_findLevelOrigin(false, bearSweepLevel)
+
+        if sweepOffset > 0
+            bld_bear_sweepLevel   := bearSweepLevel
+            bld_bear_sweepBar     := bar_index
+            bld_bear_sweepOffset  := sweepOffset
+            bld_bear_pivotBar     := lastSwLoBar
+            bld_bear_bbTop        := bbt
+            bld_bear_bbBot        := bbb
+            bld_bear_liqLabel     := bearSweepLabel
+            bld_bear_manipHigh    := high
+
+// Expire a pending breaker: clear the whole record, not just one edge.
+if not na(bld_bull_bbTop) and (bar_index - bld_bull_sweepBar) > 25
+    bld_bull_bbTop := na
+    bld_bull_bbBot := na
+if not na(bld_bear_bbBot) and (bar_index - bld_bear_sweepBar) > 25
+    bld_bear_bbTop := na
+    bld_bear_bbBot := na
+
+// time(tf, session, timezone): the timezone belongs in the *third* argument.
+currentDay = time("D", "0000-0000", effectiveTz)
+if not na(currentDay) and currentDay != array.get(dailyStats, 2)
+    array.set(dailyStats, 0, 0)
+    array.set(dailyStats, 1, 0)
+    array.set(dailyStats, 2, currentDay)
+
+dailyWinCount  = array.get(dailyStats, 0)
+dailyLossCount = array.get(dailyStats, 1)
+dailyLimitReached = i_useDailyLimit and (dailyWinCount >= i_maxDailyWins or dailyLossCount >= i_maxDailyLosses)
+
+statsEligible = timeframe.period == "1" or timeframe.period == "5" or timeframe.period == "15" or timeframe.period == "30" or timeframe.period == "60"
+
+bullActivate = not na(bld_bull_bbTop)
+              and close > bld_bull_bbTop
+              and close > open
+              and bar_index > bld_bull_sweepBar
+              and f_inSession()
+              and f_biasOk(true)
+              and barstate.isconfirmed
+              and not dailyLimitReached
+
+bearActivate = not na(bld_bear_bbBot)
+              and close < bld_bear_bbBot
+              and close < open
+              and bar_index > bld_bear_sweepBar
+              and f_inSession()
+              and f_biasOk(false)
+              and barstate.isconfirmed
+              and not dailyLimitReached
+
+var box potBullBox = na
+var box potBearBox = na
+
+bullPotActive = i_showPotential
+              and not na(bld_bull_bbTop)
+              and (close > bld_bull_bbTop)
+              and (low <= bld_bull_bbTop)
+              and not bullActivate
+              and f_biasOk(true)
+              and f_inSession()
+
+if bullPotActive
+    if na(potBullBox)
+        potBullBox := box.new(bld_bull_sweepBar, bld_bull_bbTop, bar_index + 6, bld_bull_bbBot,
+                             border_color=color.new(color.gray, 100), border_width=0,
+                             bgcolor=color.new(color.gray, 92),
+                             text="Potential +Breaker", text_color=color.gray,
+                             text_size=f_lblSize(i_lblSize), text_halign=text.align_right)
+    else
+        box.set_top(potBullBox, bld_bull_bbTop)
+        box.set_bottom(potBullBox, bld_bull_bbBot)
+        box.set_right(potBullBox, bar_index + 6)
+else
+    box.delete(potBullBox)
+    potBullBox := na
+
+bearPotActive = i_showPotential
+              and not na(bld_bear_bbBot)
+              and (close < bld_bear_bbBot)
+              and (high >= bld_bear_bbBot)
+              and not bearActivate
+              and f_biasOk(false)
+              and f_inSession()
+
+if bearPotActive
+    if na(potBearBox)
+        potBearBox := box.new(bld_bear_sweepBar, bld_bear_bbTop, bar_index + 6, bld_bear_bbBot,
+                             border_color=color.new(color.gray, 100), border_width=0,
+                             bgcolor=color.new(color.gray, 92),
+                             text="Potential -Breaker", text_color=color.gray,
+                             text_size=f_lblSize(i_lblSize), text_halign=text.align_right)
+    else
+        box.set_top(potBearBox, bld_bear_bbTop)
+        box.set_bottom(potBearBox, bld_bear_bbBot)
+        box.set_right(potBearBox, bar_index + 6)
+else
+    box.delete(potBearBox)
+    potBearBox := na
+
+f_registerSetup(isBull, bbTop, bbBot, sweepLevel, sweepBar, sweepOffset, bbLeft, manipExtreme, hasFvg, fvgTops, fvgBots, fvgLefts, fvgRights, sweepLbl) =>
+    // "Breaker" mode never promotes a setup to a unicorn, so the label and the
+    // FVG drawings agree with the selected mode.
+    isUni    = hasFvg and i_modelMode != "Breaker"
+    showThis = i_modelMode != "Unicorn" or hasFvg
+
+    if showThis
+        invalLvl = i_swingInval ? manipExtreme : (isBull ? bbBot : bbTop)
+        // One anchor for entry, risk, targets and break-even.
+        entry = i_projCalc == "Confirmation Close" ? close : (isBull ? bbTop : bbBot)
+        risk  = math.abs(entry - invalLvl)
+
+        if f_sizeOk(risk) and f_biasOk(isBull) and risk > 0
+            extras  = f_parseExtras(i_extraStr)
+            nExtras = array.size(extras)
+
+            mainTgt = isBull ? invalLvl + (i_rrMain + 1.0) * risk : invalLvl - (i_rrMain + 1.0) * risk
+
+            extraPrices = array.new_float(0)
+            for ei = 0 to nExtras - 1
+                mult = array.get(extras, ei)
+                t    = isBull ? invalLvl + (mult + 1.0) * risk : invalLvl - (mult + 1.0) * risk
+                array.push(extraPrices, t)
+
+            extRight = bar_index + 6
+
+            zCol = isBull ? i_bullColor : i_bearColor
+
+            lblTxt = isUni ? (isBull ? "+Unicorn" : "-Unicorn")
+                           : (isBull ? "+Breaker" : "-Breaker")
+
+            zBox = box.new(bbLeft, bbTop, extRight, bbBot,
+                           border_color=color.new(zCol, 100),
+                           border_width=0,
+                           bgcolor=zCol,
+                           extend=extend.none,
+                           text=lblTxt,
+                           text_size=f_lblSize(i_lblSize),
+                           text_color=color.black,
+                           text_halign=text.align_right,
+                           text_valign=text.align_center)
+
+            fBoxArr = array.new<box>(0)
+            ceLines = array.new<line>(0)
+            if isUni
+                fvgCol = isBull ? i_bullFvgColor : i_bearFvgColor
+                for i = 0 to array.size(fvgTops) - 1
+                    ft = array.get(fvgTops, i)
+                    fb = array.get(fvgBots, i)
+                    fl = array.get(fvgLefts, i)
+                    fr = array.get(fvgRights, i)
+
+                    extendFVG = isBull ? i_extendFVGBull : i_extendFVGBear
+                    fvgRightCol = extendFVG ? extRight : fr
+
+                    fBox = box.new(fl, ft, fvgRightCol, fb,
+                                     border_color=color.new(fvgCol, 100),
+                                     border_width=0,
+                                     bgcolor=fvgCol,
+                                     extend=extend.none)
+                    array.push(fBoxArr, fBox)
+
+                    fMid = (ft + fb) / 2.0
+                    if (isBull and i_showCEBull) or (not isBull and i_showCEBear)
+                        cel = line.new(fl, fMid, fr, fMid, color=fvgCol, width=1, style=line.style_dotted)
+                        array.push(ceLines, cel)
+
+            float bbMid = (bbTop + bbBot) / 2.0
+            line bb50L = na
+            if (isBull and i_showBB50Bull) or (not isBull and i_showBB50Bear)
+                extendLine = isBull ? i_extendBB50Bull : i_extendBB50Bear
+                endX = extendLine ? (extRight - 5) : math.max(bbLeft, bar_index - 5)
+                bb50L := line.new(bbLeft, bbMid, endX, bbMid, color=i_bb50Color, width=1, style=line.style_dotted)
+
+            originBar = sweepBar - sweepOffset
+            sLine = line.new(originBar, sweepLevel, sweepBar, sweepLevel,
+                             color=i_sweepLineColor, width=i_sweepLineWidth,
+                             style=f_lineStyle(i_sweepLineStyle), extend=extend.none)
+
+            sLabel = label.new(originBar, sweepLevel, sweepLbl,
+                               style     = isBull ? label.style_label_up : label.style_label_down,
+                               textcolor = i_sweepLblColor,
+                               color     = color.new(color.black, 100),
+                               size      = f_lblSize(i_sweepLblSize),
+                               yloc      = yloc.price)
+
+            tLines  = array.new<line>(0)
+            tLabels = array.new<label>(0)
+
+            // Projections are drawn forward from the confirmation bar, where the
+            // trade actually lives, rather than back at the left edge of the zone.
+            projLeft = bar_index
+
+            if i_showRR
+                tl = line.new(projLeft, mainTgt, projLeft + 10, mainTgt, color=i_projLineColor, width=i_projLineWidth, style=f_lineStyle(i_projLineStyle), extend=extend.none)
+                array.push(tLines, tl)
+                tl2 = label.new(projLeft + 12, mainTgt, str.tostring(i_rrMain, "#.#") + "R", style=label.style_none, textcolor=color.new(i_projLineColor, 10), size=size.tiny, yloc=yloc.price)
+                array.push(tLabels, tl2)
+
+            if i_showExtra
+                for ei = 0 to nExtras - 1
+                    ep = array.get(extraPrices, ei)
+                    em = array.get(extras, ei)
+                    etl = line.new(projLeft, ep, projLeft + 10, ep, color=i_projLineColor, width=i_projLineWidth, style=f_lineStyle(i_projLineStyle), extend=extend.none)
+                    array.push(tLines, etl)
+                    etl2 = label.new(projLeft + 12, ep, str.tostring(em, "#.#") + "R", style=label.style_none, textcolor=color.new(i_projLineColor, 10), size=size.tiny, yloc=yloc.price)
+                    array.push(tLabels, etl2)
+
+            line  beLine  = na
+            label beLabel = na
+            if i_useBE and i_showBELine
+                beTriggerPrice = entry + (mainTgt - entry) * 0.5
+                beLine := line.new(projLeft, beTriggerPrice, projLeft + 10, beTriggerPrice, color=i_beLineColor, width=i_beLineWidth, style=f_lineStyle(i_beLineStyle), extend=extend.none)
+                beLabel := label.new(projLeft + 12, beTriggerPrice, "BE Trigger (50%)", style=label.style_none, textcolor=color.new(i_beLineColor, 20), size=size.tiny, yloc=yloc.price)
+
+            newSetup = UnicornSetup.new(
+                 isBull           = isBull,
+                 isUnicorn        = isUni,
+                 sweepLabel       = sweepLbl,
+                 zoneTop          = bbTop,
+                 zoneBot          = bbBot,
+                 sweepBar         = sweepBar,
+                 activationBar    = bar_index,
+                 activationYear   = year,
+                 activationMonth  = month,
+                 invalidLevel     = invalLvl,
+                 entryPrice       = entry,
+                 riskSize         = risk,
+                 mainTarget       = mainTgt,
+                 state            = 1,
+                 alertedTarget    = false,
+                 alertedInvalWarn = false,
+                 alertedInvalHit  = false,
+                 alertedBE        = false,
+                 isBEActive       = false,
+                 zoneBox          = zBox,
+                 fvgBoxes         = fBoxArr,
+                 sweepLine        = sLine,
+                 sweepLbl         = sLabel,
+                 targetLines      = tLines,
+                 targetLabels     = tLabels,
+                 bb50Line         = bb50L,
+                 fvgCeLines       = ceLines,
+                 beTriggerLine    = beLine,
+                 beTriggerLabel   = beLabel)
+
+            array.push(setups, newSetup)
+
+if bullActivate
+    [fFound, fTops, fBots, fIdxs] = f_findBullFvg(bld_bull_bbTop, bld_bull_bbBot, bld_bull_sweepBar)
+
+    fvgTopsArr   = array.new_float(0)
+    fvgBotsArr   = array.new_float(0)
+    fvgLeftsArr  = array.new_int(0)
+    fvgRightsArr = array.new_int(0)
+
+    if fFound
+        for i = 0 to array.size(fTops) - 1
+            fIdx = array.get(fIdxs, i)
+            array.push(fvgTopsArr,   array.get(fTops, i))
+            array.push(fvgBotsArr,   array.get(fBots, i))
+            array.push(fvgLeftsArr,  bar_index - fIdx - 2)
+            array.push(fvgRightsArr, bar_index - fIdx)
+
+    bbLeft = na(bld_bull_pivotBar) ? bld_bull_sweepBar : bld_bull_pivotBar
+    f_registerSetup(true, bld_bull_bbTop, bld_bull_bbBot, bld_bull_sweepLevel, bld_bull_sweepBar, bld_bull_sweepOffset, bbLeft, bld_bull_manipLow, fFound, fvgTopsArr, fvgBotsArr, fvgLeftsArr, fvgRightsArr, bld_bull_liqLabel)
+    bld_bull_bbTop := na
+    bld_bull_bbBot := na
+
+if bearActivate
+    [fFound, fTops, fBots, fIdxs] = f_findBearFvg(bld_bear_bbTop, bld_bear_bbBot, bld_bear_sweepBar)
+
+    fvgTopsArr   = array.new_float(0)
+    fvgBotsArr   = array.new_float(0)
+    fvgLeftsArr  = array.new_int(0)
+    fvgRightsArr = array.new_int(0)
+
+    if fFound
+        for i = 0 to array.size(fTops) - 1
+            fIdx = array.get(fIdxs, i)
+            array.push(fvgTopsArr,   array.get(fTops, i))
+            array.push(fvgBotsArr,   array.get(fBots, i))
+            array.push(fvgLeftsArr,  bar_index - fIdx - 2)
+            array.push(fvgRightsArr, bar_index - fIdx)
+
+    bbLeft = na(bld_bear_pivotBar) ? bld_bear_sweepBar : bld_bear_pivotBar
+    f_registerSetup(false, bld_bear_bbTop, bld_bear_bbBot, bld_bear_sweepLevel, bld_bear_sweepBar, bld_bear_sweepOffset, bbLeft, bld_bear_manipHigh, fFound, fvgTopsArr, fvgBotsArr, fvgLeftsArr, fvgRightsArr, bld_bear_liqLabel)
+    bld_bear_bbTop := na
+    bld_bear_bbBot := na
+
+var string lastSweepLabel = "–"
+
+f_updateSetups(string prevLabel) =>
+    string retLabel = prevLabel
+    bool   labelSet = false
+    n = array.size(setups)
+    if n > 0
+        // Newest first, so the HUD reports the most recent live setup.
+        for i = n - 1 to 0
+            s = array.get(setups, i)
+            if s.state >= 3
+                continue
+
+            if not labelSet
+                retLabel := s.sweepLabel
+                labelSet := true
+
+            // Never grade a setup on the candle that created it: that candle
+            // routinely spans the whole zone, which used to mark a brand new
+            // setup as retested and then immediately invalidated.
+            if bar_index <= s.activationBar
+                continue
+
+            isBull = s.isBull
+            if s.state == 1
+                retested = isBull ? (low <= s.zoneTop and low >= s.zoneBot) : (high >= s.zoneBot and high <= s.zoneTop)
+                if retested
+                    s.state := 2
+                    newCol = isBull ? i_bullRetColor : i_bearRetColor
+                    box.set_bgcolor(s.zoneBox, newCol)
+                    box.set_border_color(s.zoneBox, color.new(newCol, 100))
+                    box.set_text_color(s.zoneBox, color.black)
+
+            if s.state == 1 or s.state == 2
+                box.set_right(s.zoneBox,  bar_index + 6)
+                if not na(s.bb50Line)
+                    extendLine = s.isBull ? i_extendBB50Bull : i_extendBB50Bear
+                    if extendLine
+                        boxLeft = box.get_left(s.zoneBox)
+                        line.set_x2(s.bb50Line, math.max(boxLeft, bar_index + 6))
+                if array.size(s.fvgBoxes) > 0
+                    for fi = 0 to array.size(s.fvgBoxes) - 1
+                        curFvgBox = array.get(s.fvgBoxes, fi)
+                        if (s.isBull and i_extendFVGBull) or (not s.isBull and i_extendFVGBear)
+                            box.set_right(curFvgBox, bar_index + 6)
+                            if array.size(s.fvgCeLines) > fi
+                                line.set_x2(array.get(s.fvgCeLines, fi), bar_index + 6)
+
+            if i_modelMode == "Breaker + Unicorn" and not s.isUnicorn
+                bool    fFound = false
+                array<float> fTops = na
+                array<float> fBots = na
+                array<int>   fIdxs = na
+
+                if s.isBull
+                    [found, tops, bots, idxs] = f_findBullFvg(s.zoneTop, s.zoneBot, s.sweepBar)
+                    fFound := found
+                    fTops  := tops
+                    fBots  := bots
+                    fIdxs  := idxs
+                else
+                    [found, tops, bots, idxs] = f_findBearFvg(s.zoneTop, s.zoneBot, s.sweepBar)
+                    fFound := found
+                    fTops  := tops
+                    fBots  := bots
+                    fIdxs  := idxs
+                if fFound
+                    s.isUnicorn := true
+                    box.set_text(s.zoneBox, s.isBull ? "+Unicorn" : "-Unicorn")
+                    fvgCol = s.isBull ? i_bullFvgColor : i_bearFvgColor
+                    for i2 = 0 to array.size(fTops) - 1
+                        ft = array.get(fTops, i2)
+                        fb = array.get(fBots, i2)
+                        fBox = box.new(bar_index - array.get(fIdxs, i2) - 2, ft, bar_index - array.get(fIdxs, i2), fb,
+                                         border_color=color.new(fvgCol, 100), border_width=0, bgcolor=fvgCol)
+                        array.push(s.fvgBoxes, fBox)
+                        fMid = (ft + fb) / 2.0
+                        if (s.isBull and i_showCEBull) or (not s.isBull and i_showCEBear)
+                            cel = line.new(bar_index - array.get(fIdxs, i2) - 2, fMid, bar_index - array.get(fIdxs, i2), fMid, color=fvgCol, width=1, style=line.style_dotted)
+                            array.push(s.fvgCeLines, cel)
+
+            if i_useBE and not s.isBEActive and (s.state == 1 or s.state == 2)
+                beTriggerPrice = s.entryPrice + (s.mainTarget - s.entryPrice) * 0.5
+                isTriggered = isBull ? (high >= beTriggerPrice) : (low <= beTriggerPrice)
+                if isTriggered
+                    s.isBEActive := true
+                    if not na(s.beTriggerLine)
+                        line.set_color(s.beTriggerLine, color.new(isBull ? i_bullColor : i_bearColor, 0))
+                        line.set_style(s.beTriggerLine, line.style_solid)
+                    if not na(s.beTriggerLabel)
+                        label.set_text(s.beTriggerLabel, "BE Triggered")
+                        label.set_textcolor(s.beTriggerLabel, isBull ? i_bullColor : i_bearColor)
+                    if i_alertEnable and not s.alertedBE
+                        alert("Unicorn Model Break-Even Activated | " + syminfo.ticker + " | " + (isBull ? "BULL" : "BEAR"), alert.freq_once_per_bar)
+                        s.alertedBE := true
+
+            bool beExitHit = false
+            if i_useBE and s.isBEActive and (s.state == 1 or s.state == 2)
+                beExitHit := isBull ? (low <= s.entryPrice) : (high >= s.entryPrice)
+                if beExitHit
+                    s.state := 5
+                    box.set_right(s.zoneBox, bar_index)
+                    box.set_bgcolor(s.zoneBox, i_invalColor)
+                    box.set_border_color(s.zoneBox, color.new(#9e9e9e, 100))
+                    box.set_text_color(s.zoneBox, color.new(#9e9e9e, 40))
+                    box.set_text(s.zoneBox, s.isUnicorn ? (isBull ? "BE +Unicorn" : "BE -Unicorn") : (isBull ? "BE +Breaker" : "BE -Breaker"))
+
+                    if not na(s.bb50Line)
+                        line.set_x2(s.bb50Line, bar_index)
+                    if array.size(s.fvgBoxes) > 0
+                        for fi = 0 to array.size(s.fvgBoxes) - 1
+                            curFvgBox = array.get(s.fvgBoxes, fi)
+                            box.set_right(curFvgBox, bar_index)
+                            box.set_bgcolor(curFvgBox, color.new(#9e9e9e, 94))
+                            box.set_border_color(curFvgBox, color.new(#9e9e9e, 100))
+                            if array.size(s.fvgCeLines) > fi
+                                line.set_x2(array.get(s.fvgCeLines, fi), bar_index)
+
+                    if statsEligible
+                        array.push(stat_years,    s.activationYear)
+                        array.push(stat_months,   s.activationMonth)
+                        array.push(stat_outcomes, 2)
+
+                    if i_alertEnable
+                        alert("Unicorn Model Break-Even Stopped Out | " + syminfo.ticker + " | " + (isBull ? "BULL" : "BEAR"), alert.freq_once_per_bar)
+
+            if not beExitHit and (s.state == 1 or s.state == 2)
+                hitTarget = isBull ? high >= s.mainTarget : low <= s.mainTarget
+                if hitTarget
+                    s.state := 3
+                    box.set_right(s.zoneBox,  bar_index)
+                    if not na(s.bb50Line)
+                        extendLine = s.isBull ? i_extendBB50Bull : i_extendBB50Bear
+                        if extendLine
+                            boxLeft = box.get_left(s.zoneBox)
+                            line.set_x2(s.bb50Line, math.max(boxLeft, bar_index - 5))
+                    if array.size(s.fvgBoxes) > 0
+                        for fi = 0 to array.size(s.fvgBoxes) - 1
+                            curFvgBox = array.get(s.fvgBoxes, fi)
+                            extendFVG = s.isBull ? i_extendFVGBull : i_extendFVGBear
+                            if extendFVG
+                                box.set_right(curFvgBox, bar_index)
+                                if array.size(s.fvgCeLines) > fi
+                                    line.set_x2(array.get(s.fvgCeLines, fi), bar_index)
+
+                    if statsEligible
+                        array.push(stat_years,    s.activationYear)
+                        array.push(stat_months,   s.activationMonth)
+                        array.push(stat_outcomes, 1)
+                    array.set(dailyStats, 0, array.get(dailyStats, 0) + 1)
+
+                    if i_alertEnable and i_alertTarget and not s.alertedTarget
+                        alert("Unicorn Model Target Reached | " + syminfo.ticker + " | " + (isBull ? "BULL" : "BEAR") + " | " + str.tostring(s.mainTarget, format.mintick), alert.freq_once_per_bar)
+                        s.alertedTarget := true
+
+            if not beExitHit and (s.state == 1 or s.state == 2)
+                invalWarn = isBull ? (low < s.invalidLevel + s.riskSize * 0.15) : (high > s.invalidLevel - s.riskSize * 0.15)
+                invalHit  = isBull ? (low < s.invalidLevel) : (high > s.invalidLevel)
+
+                if invalWarn and not s.alertedInvalWarn
+                    if i_alertEnable and i_alertWarn
+                        alert("Unicorn Model Invalidation Warning | " + syminfo.ticker + " | " + (isBull ? "BULL" : "BEAR"), alert.freq_once_per_bar)
+                    s.alertedInvalWarn := true
+
+                if invalHit
+                    s.state := 4
+                    box.set_bgcolor(s.zoneBox,       i_invalColor)
+                    box.set_border_color(s.zoneBox,  color.new(#9e9e9e, 100))
+                    box.set_right(s.zoneBox,         bar_index)
+
+                    box.set_text_color(s.zoneBox,    color.new(#9e9e9e, 40))
+                    box.set_text(s.zoneBox,          s.isUnicorn ? (isBull ? "✕ +Unicorn" : "✕ -Unicorn") : (isBull ? "✕ +Breaker" : "✕ -Breaker"))
+
+                    if not na(s.bb50Line)
+                        extendLine = s.isBull ? i_extendBB50Bull : i_extendBB50Bear
+                        if extendLine
+                            boxLeft = box.get_left(s.zoneBox)
+                            line.set_x2(s.bb50Line, math.max(boxLeft, bar_index - 5))
+
+                    if array.size(s.fvgBoxes) > 0
+                        for fi = 0 to array.size(s.fvgBoxes) - 1
+                            curFvgBox = array.get(s.fvgBoxes, fi)
+                            box.set_bgcolor(curFvgBox,     color.new(#9e9e9e, 94))
+                            box.set_border_color(curFvgBox, color.new(#9e9e9e, 100))
+                            extendFVG = s.isBull ? i_extendFVGBull : i_extendFVGBear
+                            if extendFVG
+                                box.set_right(curFvgBox, bar_index)
+                                if array.size(s.fvgCeLines) > fi
+                                    line.set_x2(array.get(s.fvgCeLines, fi), bar_index)
+
+                    if statsEligible
+                        array.push(stat_years,    s.activationYear)
+                        array.push(stat_months,   s.activationMonth)
+                        array.push(stat_outcomes, 0)
+                    array.set(dailyStats, 1, array.get(dailyStats, 1) + 1)
+
+                    if i_alertEnable and i_alertHit and not s.alertedInvalHit
+                        alert("Unicorn Model Invalidation Hit | " + syminfo.ticker + " | " + (isBull ? "BULL" : "BEAR"), alert.freq_once_per_bar)
+                        s.alertedInvalHit := true
+    retLabel
+
+lastSweepLabel := f_updateSetups(lastSweepLabel)
+
+bullPotential = not na(bld_bull_bbTop) and high >= bld_bull_bbBot and close < bld_bull_bbTop
+bearPotential = not na(bld_bear_bbBot) and low  <= bld_bear_bbTop and close > bld_bear_bbBot
+
+if i_alertEnable and i_alertPotential
+    if bullPotential
+        alert("Unicorn Model Potential Breaker | " + syminfo.ticker + " | BULL | Wick into BB zone", alert.freq_once_per_bar)
+    if bearPotential
+        alert("Unicorn Model Potential Breaker | " + syminfo.ticker + " | BEAR | Wick into BB zone", alert.freq_once_per_bar)
+
+if i_alertEnable and i_alertActiv
+    if bullActivate
+        alert("Unicorn Model Activation | " + syminfo.ticker + " | BULL | " + bld_bull_liqLabel, alert.freq_once_per_bar)
+    if bearActivate
+        alert("Unicorn Model Activation | " + syminfo.ticker + " | BEAR | " + bld_bear_liqLabel, alert.freq_once_per_bar)
+
+// Single owner of setup drawing cleanup.
+f_freeSetup(UnicornSetup s) =>
+    box.delete(s.zoneBox)
+    if array.size(s.fvgBoxes) > 0
+        for fi = 0 to array.size(s.fvgBoxes) - 1
+            box.delete(array.get(s.fvgBoxes, fi))
+    line.delete(s.sweepLine)
+    label.delete(s.sweepLbl)
+    line.delete(s.bb50Line)
+    if array.size(s.fvgCeLines) > 0
+        for cel in s.fvgCeLines
+            line.delete(cel)
+    if array.size(s.targetLines) > 0
+        for tl in s.targetLines
+            line.delete(tl)
+    if array.size(s.targetLabels) > 0
+        for tlb in s.targetLabels
+            label.delete(tlb)
+    line.delete(s.beTriggerLine)
+    label.delete(s.beTriggerLabel)
+
+f_gc() =>
+    while array.size(setups) > i_history
+        f_freeSetup(array.shift(setups))
+
+    if i_discardInval
+        n = array.size(setups)
+        if n > 0
+            i = n - 1
+            while i >= 0
+                s = array.get(setups, i)
+                if s.state == 4 or s.state == 5
+                    f_freeSetup(s)
+                    array.remove(setups, i)
+                i -= 1
+
+f_gc()
+
+// ---------------------------------------------------------------------------
+// Standalone HTF FVGs
+// ---------------------------------------------------------------------------
+
+f_addHtfFvg(bool isBull, float top, float bot, int leftTime, string tfStr) =>
+    bool exists = false
+    if array.size(activeHtfFVGs) > 0
+        for i = 0 to array.size(activeHtfFVGs) - 1
+            item = array.get(activeHtfFVGs, i)
+            if item.isBullish == isBull and item.top == top and item.bottom == bot
+                exists := true
+                break
+
+    if not exists
+        box   b   = na
+        line  l   = na
+        label lbl = na
+        mid = (top + bot) / 2
+
+        if fvg_showBoxes
+            b := box.new(leftTime, top, time, bot, bgcolor = isBull ? fvg_bullishColor : fvg_bearishColor, border_color = color.new(color.gray, 100), xloc = xloc.bar_time)
+            if fvg_showMidlines
+                l := line.new(leftTime, mid, time, mid, color = fvg_midlineColor, style = line.style_dotted, width = 1, xloc = xloc.bar_time)
+
+        if fvg_showLabels
+            lbl := label.new(time, mid, (isBull ? "FVG+" : "FVG-") + tfStr, color = color.new(color.white, 100), textcolor = fvg_labelTextColor, style = label.style_label_right, size = size.small, xloc = xloc.bar_time, text_font_family = font.family_monospace)
+
+        array.push(activeHtfFVGs, HtfFVG.new(b, l, lbl, top, bot, isBull))
+
+if fvg_newPeriod and not na(fvg_htfT2)
+    string fvg_tfStr = f_tfName(fvg_selectedHTF)
+
+    if fvg_showBearish and fvg_htfHasBear and not na(fvg_htfBearBot) and not na(fvg_htfBearTop)
+        f_addHtfFvg(false, fvg_htfBearTop, fvg_htfBearBot, fvg_htfT2, fvg_tfStr)
+
+    if fvg_showBullish and fvg_htfHasBull and not na(fvg_htfBullBot) and not na(fvg_htfBullTop)
+        f_addHtfFvg(true, fvg_htfBullTop, fvg_htfBullBot, fvg_htfT2, fvg_tfStr)
+
+if fvg_newPeriod and not na(fvg_htfPrevClose) and array.size(activeHtfFVGs) > 0
+    for i = array.size(activeHtfFVGs) - 1 to 0
+        HtfFVG f = array.get(activeHtfFVGs, i)
+
+        bool fvg_isInvalidated = f.isBullish ? (fvg_htfPrevClose < f.bottom) : (fvg_htfPrevClose > f.top)
+
+        if fvg_isInvalidated
+            if not na(f.fvgBox)
+                box.delete(f.fvgBox)
+            if not na(f.midline)
+                line.delete(f.midline)
+            if not na(f.fvgLabel)
+                label.delete(f.fvgLabel)
+            array.remove(activeHtfFVGs, i)
+
+if array.size(activeHtfFVGs) > 0
+    for i = 0 to array.size(activeHtfFVGs) - 1
+        HtfFVG f = array.get(activeHtfFVGs, i)
+        if not na(f.fvgBox)
+            box.set_right(f.fvgBox, time)
+        if not na(f.midline)
+            line.set_x2(f.midline, time)
+        if not na(f.fvgLabel)
+            label.set_x(f.fvgLabel, time)
+
+fvg_totalActive = array.size(activeHtfFVGs)
+if fvg_totalActive > fvg_maxFVGs
+    for i = 0 to (fvg_totalActive - fvg_maxFVGs) - 1
+        HtfFVG old = array.shift(activeHtfFVGs)
+        if not na(old.fvgBox)
+            box.delete(old.fvgBox)
+        if not na(old.midline)
+            line.delete(old.midline)
+        if not na(old.fvgLabel)
+            label.delete(old.fvgLabel)
+
+// ---------------------------------------------------------------------------
+// SMT divergences
+// ---------------------------------------------------------------------------
+
+smtInRange = smt_sPair != "" and bar_index > last_bar_index - 4500
+
+if smtInRange
+    if high >= smt_currCH or na(smt_currCH)
+        smt_currCH := high, smt_currCHT := time
+    if low <= smt_currCL or na(smt_currCL)
+        smt_currCL := low, smt_currCLT := time
+
+    if smt_newPeriod
+        if smt_bearD_prev
+            smtArray.push(SMT.new(smtType = "BEARISH", smtPair = smt_sPair, prevChartHigh = smt_prevCH, currChartHigh = smt_currCH, prevChartHighTime = smt_prevCHT, currChartHighTime = smt_currCHT, creationBar = bar_index))
+        if smt_bullD_prev
+            smtArray.push(SMT.new(smtType = "BULLISH", smtPair = smt_sPair, prevChartLow = smt_prevCL, currChartLow = smt_currCL, prevChartLowTime = smt_prevCLT, currChartLowTime = smt_currCLT, creationBar = bar_index))
+        smt_prevCH := smt_currCH, smt_prevCHT := smt_currCHT
+        smt_prevCL := smt_currCL, smt_prevCLT := smt_currCLT
+        smt_currCH := high, smt_currCHT := time
+        smt_currCL := low, smt_currCLT := time
+
+    if smt_chartPivDir == 1
+        if not na(smt_chartPivotHigh)
+            smt_prevChartPivotHigh := smt_chartPivotHigh
+            smt_prevChartPivotHighTime := smt_chartPivotHighTime
+        smt_chartPivotHigh := high[3], smt_chartPivotHighTime := time[3]
+
+        if not na(smt_smtPivotHigh)
+            smt_prevSmtPivotHigh := smt_smtPivotHigh
+        smt_smtPivotHigh := smt_sH_piv
+
+        if not na(smt_prevChartPivotHigh) and smt_chartPivotHigh > smt_prevChartPivotHigh and smt_smtPivotHigh < smt_prevSmtPivotHigh
+            smtArray.push(SMT.new(smtType = "BEARISH", smtPair = smt_sPair, prevChartHigh = smt_prevChartPivotHigh, currChartHigh = smt_chartPivotHigh, prevChartHighTime = smt_prevChartPivotHighTime, currChartHighTime = smt_chartPivotHighTime, creationBar = bar_index))
+
+    if smt_chartPivDir == -1
+        if not na(smt_chartPivotLow)
+            smt_prevChartPivotLow := smt_chartPivotLow
+            smt_prevChartPivotLowTime := smt_chartPivotLowTime
+        smt_chartPivotLow := low[3], smt_chartPivotLowTime := time[3]
+
+        if not na(smt_smtPivotLow)
+            smt_prevSmtPivotLow := smt_smtPivotLow
+        smt_smtPivotLow := smt_sL_piv
+
+        if not na(smt_prevChartPivotLow) and smt_chartPivotLow < smt_prevChartPivotLow and smt_smtPivotLow > smt_prevSmtPivotLow
+            smtArray.push(SMT.new(smtType = "BULLISH", smtPair = smt_sPair, prevChartLow = smt_prevChartPivotLow, currChartLow = smt_chartPivotLow, prevChartLowTime = smt_prevChartPivotLowTime, currChartLowTime = smt_chartPivotLowTime, creationBar = bar_index))
+
+if smtInRange
+    if smt_KeepOnlyLatest and array.size(smtArray) > 0
+        int latestBearIdx = -1
+        int latestBullIdx = -1
+        int maxBearBar = -1
+        int maxBullBar = -1
+
+        for i = 0 to array.size(smtArray) - 1
+            s_check = array.get(smtArray, i)
+            if s_check.smtType == "BEARISH" and s_check.creationBar > maxBearBar
+                maxBearBar := s_check.creationBar
+                latestBearIdx := i
+            if s_check.smtType == "BULLISH" and s_check.creationBar > maxBullBar
+                maxBullBar := s_check.creationBar
+                latestBullIdx := i
+
+        for i = array.size(smtArray) - 1 to 0
+            if (array.get(smtArray, i).smtType == "BEARISH" and i != latestBearIdx) or (array.get(smtArray, i).smtType == "BULLISH" and i != latestBullIdx)
+                s_del = array.remove(smtArray, i)
+                line.delete(s_del.smtLine)
+
+    int smt_szL = array.size(smtLabels)
+    if smt_szL > 0
+        for i = 0 to smt_szL - 1
+            label.delete(array.get(smtLabels, i))
+        array.clear(smtLabels)
+
+    int smt_szA = array.size(smtArray)
+    if smt_szA > 0
+        for i = smt_szA - 1 to 0
+            s = array.get(smtArray, i)
+            if bar_index - s.creationBar > 2500
+                line.delete(s.smtLine)
+                array.remove(smtArray, i)
+                continue
+
+            isB = s.smtType == "BEARISH"
+            c = isB ? smt_BearColor : smt_BullColor
+
+            p1T = isB ? s.prevChartHighTime : s.prevChartLowTime
+            p1P = isB ? s.prevChartHigh : s.prevChartLow
+            p2T = isB ? s.currChartHighTime : s.currChartLowTime
+            p2P = isB ? s.currChartHigh : s.currChartLow
+
+            if not na(p1T) and not na(p2T)
+                if na(s.smtLine)
+                    s.smtLine := line.new(p1T, p1P, p2T, p2P, xloc=xloc.bar_time, color=c, width=smt_LineWidth)
+                else
+                    line.set_xy1(s.smtLine, p1T, p1P)
+                    line.set_xy2(s.smtLine, p2T, p2P)
+                    line.set_color(s.smtLine, c)
+
+                if smt_ShowLabels
+                    string cleanName = s.smtPair
+                    if str.contains(cleanName, ":")
+                        cleanName := array.get(str.split(cleanName, ":"), array.size(str.split(cleanName, ":")) - 1)
+                    cleanName := str.replace_all(cleanName, ".P", ""), cleanName := str.replace_all(cleanName, "1!", "")
+
+                    labelStyle = isB ? label.style_label_down : label.style_label_up
+
+                    newL = label.new(int((p1T+p2T)/2), (p1P+p2P)/2, cleanName,
+                                     color=color.new(color.white, 100),
+                                     textcolor=c,
+                                     style=labelStyle,
+                                     size=size.small,
+                                     xloc=xloc.bar_time)
+                    array.push(smtLabels, newL)
+
+// ---------------------------------------------------------------------------
+// HTF candle projection
+// ---------------------------------------------------------------------------
+
+if htf1.settings.show and isValidTimeframe(htfCandleTF)
+    htfIsNew   = ta.change(time(htfCandleTF)) != 0
+    htfInfoTxt = f_tfName(htfCandleTF) + "\n(" + getRemainingTimeHTF(htfCandleTF) + ")"
+    htf1.Monitor(htfIsNew).Update(settingsCandle.offset, htfInfoTxt)
+
+// ---------------------------------------------------------------------------
+// HUD tables
+// ---------------------------------------------------------------------------
+
+var table infoTbl = table(na)
+
+f_cell(int r, int c, string txt) =>
+    table.cell(infoTbl, c, r, txt, text_color=chart.fg_color, bgcolor=color.new(color.black, 100), text_size=size.small, text_halign=text.align_left, text_font_family=font.family_monospace)
+
+if i_showTable and barstate.islast
+    isSimple  = i_tableMode == "Simple"
+    nRows     = isSimple ? 4 : 8
+    nCols     = 2
+
+    infoTbl := table.new(f_tblPos(i_tablePos), nCols, nRows,
+                         bgcolor       = color.new(color.black, 100),
+                         border_color  = color.new(color.black, 100),
+                         border_width  = 0,
+                         frame_color   = color.new(color.black, 100),
+                         frame_width   = 0)
+
+    modelName = i_modelMode + " Model (" + f_tfName(timeframe.period) + ")"
+    table.cell(infoTbl, 0, 0, modelName,
+               text_color       = chart.fg_color,
+               bgcolor          = color.new(color.black, 100),
+               text_size        = size.small,
+               text_halign      = text.align_left,
+               text_font_family = font.family_monospace)
+    table.merge_cells(infoTbl, 0, 0, 1, 0)
+
+    f_cell(1, 0, "Sweep:")
+    f_cell(1, 1, lastSweepLabel)
+
+    sessTxt = i_useTimeFilter ? f_sessString() : "All Hours"
+    f_cell(2, 0, "Sessions:")
+    f_cell(2, 1, sessTxt)
+
+    if isSimple
+        f_cell(3, 0, "Ticker:")
+        f_cell(3, 1, syminfo.ticker)
+    else
+        biasStr  = i_biasMode == "Auto" ? ("Auto (" + (autoBull ? "Bull" : "Bear") + ")") : i_biasMode
+        f_cell(3, 0, "Bias:")
+        f_cell(3, 1, biasStr)
+
+        invalStr = i_swingInval ? "Swing" : "Breaker"
+        f_cell(4, 0, "Invalidation:")
+        f_cell(4, 1, invalStr)
+
+        sizeStr = i_sizeFilter == "Custom" ?
+                  (i_customMin > 0 ? "Min: " + str.tostring(i_customMin,"#") : "") +
+                  (i_customMax > 0 ? "  Max: " + str.tostring(i_customMax,"#") : "") :
+                  i_sizeFilter
+        if sizeStr == ""
+            sizeStr := "All"
+        f_cell(5, 0, "Breaker Size:")
+        f_cell(5, 1, sizeStr)
+
+        srcStr = i_srcAuto == "Automatic" ? "Auto (" + i_srcAType + ")" : "Manual"
+        f_cell(6, 0, "Sources:")
+        f_cell(6, 1, srcStr)
+
+        f_cell(7, 0, "Ticker:")
+        f_cell(7, 1, syminfo.ticker)
+
+var table statsTbl = table(na)
+
+if i_showStats and barstate.islast and statsEligible and array.size(stat_years) > 0
+    unique_years  = array.new_int(0)
+    unique_months = array.new_int(0)
+
+    for i = 0 to array.size(stat_years) - 1
+        y = array.get(stat_years, i)
+        m = array.get(stat_months, i)
+
+        exists = false
+        if array.size(unique_years) > 0
+            for j = 0 to array.size(unique_years) - 1
+                if array.get(unique_years, j) == y and array.get(unique_months, j) == m
+                    exists := true
+                    break
+        if not exists
+            array.push(unique_years, y)
+            array.push(unique_months, m)
+
+    int n_unique = array.size(unique_years)
+
+    if n_unique > 1
+        for i = 0 to n_unique - 2
+            for j = i + 1 to n_unique - 1
+                valI = array.get(unique_years, i) * 12 + array.get(unique_months, i)
+                valJ = array.get(unique_years, j) * 12 + array.get(unique_months, j)
+                if valJ > valI
+                    tempY = array.get(unique_years, i)
+                    tempM = array.get(unique_months, i)
+                    array.set(unique_years, i, array.get(unique_years, j))
+                    array.set(unique_months, i, array.get(unique_months, j))
+                    array.set(unique_years, j, tempY)
+                    array.set(unique_months, j, tempM)
+
+    statsTbl := table.new(f_tblPos(i_statsPos), 6, n_unique + 1,
+                         bgcolor      = color.new(color.black, 100),
+                         border_color = color.new(#455a64, 40),
+                         border_width = 1,
+                         frame_color  = color.new(#455a64, 40),
+                         frame_width  = 1)
+
+    table.cell(statsTbl, 0, 0, "Month", text_color=color.white, bgcolor=color.new(#1a1a1a, 10), text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTbl, 1, 0, "T",     text_color=color.white, bgcolor=color.new(#1a1a1a, 10), text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTbl, 2, 0, "W",     text_color=color.white, bgcolor=color.new(#1a1a1a, 10), text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTbl, 3, 0, "L",     text_color=color.white, bgcolor=color.new(#1a1a1a, 10), text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTbl, 4, 0, "BE",    text_color=color.white, bgcolor=color.new(#1a1a1a, 10), text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTbl, 5, 0, "Win%",  text_color=color.white, bgcolor=color.new(#1a1a1a, 10), text_size=size.small, text_font_family=font.family_monospace)
+
+    for r = 0 to n_unique - 1
+        y = array.get(unique_years, r)
+        m = array.get(unique_months, r)
+
+        int total  = 0
+        int wins   = 0
+        int losses = 0
+        int bes    = 0
+
+        for i = 0 to array.size(stat_years) - 1
+            if array.get(stat_years, i) == y and array.get(stat_months, i) == m
+                total  += 1
+                outcome = array.get(stat_outcomes, i)
+                if outcome == 1
+                    wins += 1
+                else if outcome == 0
+                    losses += 1
+                else if outcome == 2
+                    bes += 1
+
+        winRate = (wins + losses) > 0 ? (wins * 100.0) / (wins + losses) : 0.0
+
+        cellBg = r % 2 == 0 ? color.new(chart.bg_color, 10) : color.new(chart.bg_color, 25)
+
+        table.cell(statsTbl, 0, r + 1, str.tostring(m) + "/" + str.tostring(y), text_color=chart.fg_color, bgcolor=cellBg, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(statsTbl, 1, r + 1, str.tostring(total),                     text_color=chart.fg_color, bgcolor=cellBg, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(statsTbl, 2, r + 1, str.tostring(wins),                      text_color=color.new(#26a69a, 0), bgcolor=cellBg, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(statsTbl, 3, r + 1, str.tostring(losses),                    text_color=color.new(#ef5350, 0), bgcolor=cellBg, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(statsTbl, 4, r + 1, str.tostring(bes),                       text_color=color.new(#ff9800, 0), bgcolor=cellBg, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(statsTbl, 5, r + 1, str.tostring(math.round(winRate)) + "%", text_color=chart.fg_color, bgcolor=cellBg, text_size=size.small, text_font_family=font.family_monospace)
