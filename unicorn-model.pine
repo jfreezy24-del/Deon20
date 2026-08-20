@@ -2,8 +2,11 @@
 // Liquidity sweep -> breaker (and "unicorn": a breaker overlapped by an FVG)
 // with R projections, break-even protection, session filters and HTF context.
 
-//@version=5
-indicator("Unicorn Model", shorttitle="Unicorn", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=500)
+//@version=6
+// dynamic_requests is explicitly disabled: it defaults to true in v6, and
+// detectStandaloneFVG() carries var state across the requested HTF series, so
+// the one-evaluation-per-bar model is the behaviour this module is built on.
+indicator("Unicorn Model", shorttitle="Unicorn", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=500, dynamic_requests=false)
 
 type UnicornSetup
     bool    isBull
@@ -26,13 +29,13 @@ type UnicornSetup
     bool    alertedBE
     bool    isBEActive
     box     zoneBox
-    box[]   fvgBoxes
+    array<box>   fvgBoxes
     line    sweepLine
     label   sweepLbl
-    line[]  targetLines
-    label[] targetLabels
+    array<line>  targetLines
+    array<label> targetLabels
     line    bb50Line
-    line[]  fvgCeLines
+    array<line>  fvgCeLines
     line    beTriggerLine
     label   beTriggerLabel
 
@@ -96,7 +99,7 @@ type SettingsCandle
     color           line_color
 
 type CandleSet
-    Candle[]        candles
+    array<Candle>   candles
     CandleSettings  settings
     label           infoLabel
     int             htf_start_bar
@@ -203,11 +206,11 @@ i_useDailyLimit  = input.bool(true, "Enable Daily Trade Limits", group=GRP_LIMIT
 i_maxDailyWins   = input.int(1, "Max Wins", minval=1,   inline="dl1", group=GRP_LIMIT)
 i_maxDailyLosses = input.int(2, "Max Losses", minval=1, inline="dl1", group=GRP_LIMIT)
 
-var int[] dailyStats = array.new_int(3, 0)
+var array<int> dailyStats = array.new<int>(3, 0)
 
-var int[]   stat_years    = array.new_int(0)
-var int[]   stat_months   = array.new_int(0)
-var int[]   stat_outcomes = array.new_int(0)
+var array<int> stat_years    = array.new<int>(0)
+var array<int> stat_months   = array.new<int>(0)
+var array<int> stat_outcomes = array.new<int>(0)
 
 GRP_STY  = "Visuals & Zone Styling"
 i_lblSize        = input.string("small", "Label Size",   options=["tiny","small","normal","large","huge"], group=GRP_STY)
@@ -316,11 +319,11 @@ i_statsPos       = input.string("Top Right", "Position",    options=["Top Left",
 // formatTimeframe / f_tfLabel trio, which disagreed with each other).
 f_tfName(string tf) =>
     int s = timeframe.in_seconds(tf)
-    s >= 2592000 and s % 2592000 == 0 ? str.tostring(s / 2592000) + "M" :
-     s >= 604800 and s % 604800 == 0  ? str.tostring(s / 604800)  + "W" :
-     s >= 86400  and s % 86400  == 0  ? str.tostring(s / 86400)   + "D" :
-     s >= 3600   and s % 3600   == 0  ? str.tostring(s / 3600)    + "H" :
-     s >= 60                          ? str.tostring(s / 60)      + "m" :
+    s >= 2592000 and s % 2592000 == 0 ? str.tostring(int(s / 2592000)) + "M" :
+     s >= 604800 and s % 604800 == 0  ? str.tostring(int(s / 604800))  + "W" :
+     s >= 86400  and s % 86400  == 0  ? str.tostring(int(s / 86400))   + "D" :
+     s >= 3600   and s % 3600   == 0  ? str.tostring(int(s / 3600))    + "H" :
+     s >= 60                          ? str.tostring(int(s / 60))      + "m" :
      str.tostring(s) + "s"
 
 getRemainingTimeHTF(string htf) =>
@@ -427,7 +430,7 @@ var SettingsCandle settingsCandle = SettingsCandle.new(
 
 var CandleSet htf1 = CandleSet.new(array.new<Candle>(0), CandleSettings.new(show_htf_candles, max_display_inp_candle), na, bar_index, open, high, low)
 
-var line[]  sweep_lines = array.new_line(0)
+var array<line> sweep_lines = array.new<line>(0)
 
 tf_secs_candle = timeframe.in_seconds(timeframe.period)
 auto_tf_candle = tf_secs_candle <= timeframe.in_seconds("1")    ? "15"  :
@@ -455,7 +458,7 @@ method Reorder(CandleSet candleSet, int offset, string infoTxt) =>
             Candle candle = candleSet.candles.get(i)
             t_buffer = offset + ((settingsCandle.width + settingsCandle.buffer) * (size - i - 1))
             posX = bar_index + t_buffer
-            midX = posX + (settingsCandle.width / 2)
+            midX = posX + int(settingsCandle.width / 2)
             r_pos = posX + settingsCandle.width
 
             highest_point := math.max(highest_point, candle.h)
@@ -490,7 +493,7 @@ method Reorder(CandleSet candleSet, int offset, string infoTxt) =>
             if i < size - 1
                 Candle prev = candleSet.candles.get(i+1)
                 prevPosX = offset + ((settingsCandle.width + settingsCandle.buffer) * (size - (i+1) - 1))
-                prevMidX = bar_index + prevPosX + (settingsCandle.width / 2)
+                prevMidX = bar_index + prevPosX + int(settingsCandle.width / 2)
 
                 if show_sweeps
                     if candle.h > prev.h and candle.c < prev.h
@@ -500,7 +503,7 @@ method Reorder(CandleSet candleSet, int offset, string infoTxt) =>
 
         if show_htf_info
             label.delete(candleSet.infoLabel)
-            labelX = bar_index + offset + ((settingsCandle.width + settingsCandle.buffer) * (size - 1) / 2)
+            labelX = bar_index + offset + int(((settingsCandle.width + settingsCandle.buffer) * (size - 1)) / 2)
 
             candleSet.infoLabel := label.new(labelX, highest_point, infoTxt,
                                  color=color.new(color.white, 100),
@@ -644,7 +647,7 @@ f_sessString() =>
             s += i_sess3Name + ": " + i_sess3
     s
 
-var float[] _bkSizeHistory = array.new_float(0)
+var array<float> _bkSizeHistory = array.new<float>(0)
 
 f_sizeOk(float bkSize) =>
     pip = syminfo.mintick * (syminfo.type == "forex" ? 10.0 : 1.0)
@@ -860,7 +863,7 @@ getSmtPair() =>
 fvg_selectedHTF = fvg_autoMode ? getAutoHTFPeriod() : fvg_manualHTF
 fvg_newPeriod   = ta.change(time(fvg_selectedHTF)) != 0
 
-var HtfFVG[] activeHtfFVGs = array.new<HtfFVG>()
+var array<HtfFVG> activeHtfFVGs = array.new<HtfFVG>()
 
 [fvg_htfHasBear, fvg_htfHasBull, fvg_htfBearBot, fvg_htfBearTop, fvg_htfBullBot, fvg_htfBullTop, fvg_htfT2] = request.security(syminfo.tickerid, fvg_selectedHTF, detectStandaloneFVG(), lookahead = barmerge.lookahead_off)
 // close[1] so that on the bar where the HTF period rolls we test the close of
@@ -1092,7 +1095,7 @@ var int    bld_bear_pivotBar    = na
 var string bld_bear_liqLabel    = ""
 var float  bld_bear_manipHigh   = na
 
-var UnicornSetup[] setups = array.new<UnicornSetup>(0)
+var array<UnicornSetup> setups = array.new<UnicornSetup>(0)
 
 srcAactive = i_srcMode == "Multiple" ? i_srcAEnable : true
 srcBactive = i_srcMode == "Multiple" ? i_srcBEnable : false
@@ -1591,9 +1594,9 @@ f_updateSetups(string prevLabel) =>
 
             if i_modelMode == "Breaker + Unicorn" and not s.isUnicorn
                 bool    fFound = false
-                float[] fTops  = na
-                float[] fBots  = na
-                int[]   fIdxs  = na
+                array<float> fTops = na
+                array<float> fBots = na
+                array<int>   fIdxs = na
 
                 if s.isBull
                     [found, tops, bots, idxs] = f_findBullFvg(s.zoneTop, s.zoneBot, s.sweepBar)
@@ -1979,7 +1982,7 @@ if smtInRange
 
                     labelStyle = isB ? label.style_label_down : label.style_label_up
 
-                    newL = label.new((p1T+p2T)/2, (p1P+p2P)/2, cleanName,
+                    newL = label.new(int((p1T+p2T)/2), (p1P+p2P)/2, cleanName,
                                      color=color.new(color.white, 100),
                                      textcolor=c,
                                      style=labelStyle,
