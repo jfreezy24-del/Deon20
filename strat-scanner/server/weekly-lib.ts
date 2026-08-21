@@ -315,13 +315,8 @@ export function positionLine(basis: CostBasis): string | null {
  * A fill is the one thing here worth interrupting someone for: a resting bid
  * became a position while they were not looking.
  */
-export function formatFillsDiscord(fills: FillEvent[], expired: ExpiredRung[]): DiscordMessage {
-  const bySymbol = new Map<string, FillEvent[]>();
-  for (const fill of fills) {
-    bySymbol.set(fill.symbol, [...(bySymbol.get(fill.symbol) ?? []), fill]);
-  }
-
-  const fields: DiscordField[] = [...bySymbol.entries()].map(([symbol, events]) => ({
+export function formatFillsDiscord(fills: FillEvent[], expired: ExpiredRungOf[]): DiscordMessage {
+  const fields: DiscordField[] = bySymbol(fills).map(([symbol, events]) => ({
     name: `${symbol} · ${events.length} rung${events.length > 1 ? 's' : ''} filled`,
     value: events
       .map((f) => `${f.allocationPct}% at ${money(f.price)} on ${f.filledOn} (${f.source})`)
@@ -331,8 +326,15 @@ export function formatFillsDiscord(fills: FillEvent[], expired: ExpiredRung[]): 
   if (expired.length > 0) {
     fields.push({
       name: 'Expired, never filled',
-      value: expired
-        .map((r) => `${r.allocationPct}% at ${money(r.price)}, resting ${r.ageDays} days`)
+      // Named by symbol: more than one coin can age out on the same day, and
+      // a bare list of prices does not say which ladder lost a rung.
+      value: bySymbol(expired)
+        .map(
+          ([symbol, rungs]) =>
+            `${symbol}: ${rungs
+              .map((r) => `${r.allocationPct}% at ${money(r.price)}, resting ${r.ageDays} days`)
+              .join(', ')}`,
+        )
         .join('\n'),
     });
   }
@@ -346,6 +348,59 @@ export function formatFillsDiscord(fills: FillEvent[], expired: ExpiredRung[]): 
         fields,
       },
     ],
+  };
+}
+
+/** A rung that expired, carrying the symbol it rested under. */
+export type ExpiredRungOf = ExpiredRung & { symbol: string };
+
+/** Group entries by symbol, preserving the order each symbol first appeared. */
+function bySymbol<T extends { symbol: string }>(items: T[]): [string, T[]][] {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    groups.set(item.symbol, [...(groups.get(item.symbol) ?? []), item]);
+  }
+  return [...groups.entries()];
+}
+
+/** Fills as an ntfy push: a bid became a position while nobody was looking. */
+export function fillPush(fills: FillEvent[]): PushMessage {
+  return {
+    title: `🎯 ${fills.length} ladder rung(s) filled`,
+    body: bySymbol(fills)
+      .map(
+        ([symbol, events]) =>
+          `${symbol}: ${events.map((e) => `${e.allocationPct}% at ${money(e.price)}`).join(', ')}`,
+      )
+      .join('\n'),
+    // A bid becoming a position is worth a lock-screen interruption.
+    priority: 'high',
+    tags: 'dart',
+  };
+}
+
+/**
+ * Expiries as their own ntfy push, for every coin in the watchlist.
+ *
+ * Separate from the fill push on purpose: a cleared bid is housekeeping and
+ * must never dilute the high-priority alert that a real one just executed.
+ * ntfy carries this for all coins, while Discord only hears about the ones it
+ * publishes write-ups for, so a rung ageing out on a quieter coin still
+ * reaches you somewhere.
+ */
+export function expiryPush(expired: ExpiredRungOf[]): PushMessage {
+  return {
+    title: `🗑️ ${expired.length} stale rung(s) cleared`,
+    body: bySymbol(expired)
+      .map(
+        ([symbol, rungs]) =>
+          `${symbol}: ${rungs
+            .map((r) => `${r.allocationPct}% at ${money(r.price)}, resting ${r.ageDays} days`)
+            .join(', ')}`,
+      )
+      .join('\n'),
+    priority: 'default',
+    tags: 'wastebasket',
   };
 }
 

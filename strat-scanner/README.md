@@ -330,6 +330,13 @@ it more than a small shallow one.
 structure that produced it still stands; months later it is a stale order, not
 a plan. Filled rungs are never expired, because they are the position.
 
+Expiries push to ntfy for **every** coin, as their own message at normal
+priority rather than riding along with the fills. A cleared bid is a record,
+not an event: it should never dilute the high-priority alert that a real one
+just executed. Discord sees expiries only for the `WRITEUP_SYMBOL` coins, same
+as fills, so a rung ageing out on a quieter coin still reaches your phone even
+though the channel never hears about it.
+
 Republishing the same ladder every week does **not** reset the staleness
 clock: a level the new plan still wants keeps its original placement date.
 Without that, nothing could ever go stale.
