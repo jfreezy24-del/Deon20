@@ -306,7 +306,19 @@ what happened to them.
 **Fill alerts.** Any rung price traded down to is marked filled, on the day it
 happened rather than up to a week later. A touch counts as a fill: these are
 resting limit orders, so a bar whose low reaches the level would have executed
-it. Fills push to ntfy at high priority and post to Discord.
+it. Fills push to ntfy at high priority.
+
+**Discord hears about the write-up coins only.** ntfy carries fills for every
+coin in the watchlist, because that is where the full ladder lives. Discord
+gets fills for the coins in `WRITEUP_SYMBOL` — the same four that get a weekly
+written analysis, so the channel is told when a position it has been reading
+about actually opens, and not about the six it has never seen a plan for. When
+a day's fills are all outside that list, Discord gets no message at all rather
+than an empty one, and the run log says how many were held back. Adding a coin
+to the write-ups adds its fill alerts too; there is no second setting.
+
+Every coin is still tracked, costed and expired exactly as before — the filter
+applies to what is *sent*, never to what is *recorded*.
 
 **Running cost basis.** Each ladder card in the weekly report carries a line
 like `3 of 4 filled, average $171 against $166 planned, 72% deployed`. The
@@ -332,6 +344,7 @@ silently starting over, which would re-report every old rung as a new fill.
 | Variable | Default | Meaning |
 |---|---|---|
 | `RUNG_TTL_DAYS` | `90` | Days a rung may rest unfilled before expiring |
+| `WRITEUP_SYMBOL` | `SOL-USD,BTC-USD,ETH-USD,HYPE-USD` | Coins whose fills reach Discord — shared with the weekly write-ups |
 
 Run it anywhere with Node 18+: `DRY_RUN=true npm run ladder-fills` prints what
 would be recorded and saves nothing.

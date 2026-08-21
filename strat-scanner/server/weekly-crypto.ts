@@ -34,6 +34,7 @@ import { CRYPTO_UNIVERSE } from '../src/crypto/universe';
 import { DEFAULT_WEEKLY_OPTIONS, scanCryptoWeekly } from '../src/crypto/weeklyReport';
 import { buildNtfyPayload, PushMessage } from './lib';
 import {
+  DEFAULT_WRITEUP_SYMBOLS,
   describeDiscord,
   DiscordMessage,
   composeWeeklyMessages,
@@ -51,11 +52,8 @@ import { costBasis, isoDate, reconcilePlan } from '../src/crypto/ladderState';
 
 const WATCHLIST_FILE = path.join(__dirname, 'crypto-watchlist.json');
 
-/**
- * Coins that get a written analysis, one Discord message each. Every one must
- * also be in the scanned watchlist, or there is no structure to write about.
- */
-const DEFAULT_WRITEUP_SYMBOLS = ['SOL-USD', 'BTC-USD', 'ETH-USD', 'HYPE-USD'];
+// The write-up list lives in weekly-lib: it is the set of coins Discord
+// reports on, and the daily fill checker reads the same one.
 
 const loadUniverse = (): string[] => loadSymbolList(WATCHLIST_FILE, CRYPTO_UNIVERSE);
 
