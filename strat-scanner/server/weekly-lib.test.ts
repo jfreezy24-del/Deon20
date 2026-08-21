@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   assetField,
   DEFAULT_WRITEUP_SYMBOLS,
+  ExpiredRungOf,
+  expiryPush,
+  fillPush,
   formatFillsDiscord,
   onlySymbols,
   parseSymbols,
@@ -102,15 +105,28 @@ describe('positionLine', () => {
   });
 });
 
+const fill = (over = {}) => ({
+  symbol: 'SOL-USD',
+  price: 186,
+  allocationPct: 20,
+  source: 'Prior week low',
+  filledOn: '2026-08-13',
+  ...over,
+});
+
+const stale = (over = {}): ExpiredRungOf => ({
+  symbol: 'SOL-USD',
+  price: 120,
+  allocationPct: 29,
+  source: 'Monthly pivot low',
+  timeframe: 'M',
+  placedOn: '2026-01-01',
+  filledOn: null,
+  ageDays: 120,
+  ...over,
+});
+
 describe('formatFillsDiscord', () => {
-  const fill = (over = {}) => ({
-    symbol: 'SOL-USD',
-    price: 186,
-    allocationPct: 20,
-    source: 'Prior week low',
-    filledOn: '2026-08-13',
-    ...over,
-  });
 
   it('groups fills by symbol', () => {
     const msg = formatFillsDiscord(
@@ -123,23 +139,19 @@ describe('formatFillsDiscord', () => {
   });
 
   it('lists expired rungs separately from fills', () => {
-    const msg = formatFillsDiscord(
-      [],
-      [
-        {
-          price: 120,
-          allocationPct: 29,
-          source: 'Monthly pivot low',
-          timeframe: 'M',
-          placedOn: '2026-01-01',
-          filledOn: null,
-          ageDays: 120,
-        },
-      ],
-    );
+    const msg = formatFillsDiscord([], [stale()]);
     expect(msg.embeds[0].title).toBe('Stale rungs cleared');
     expect(msg.embeds[0].fields?.[0].name).toBe('Expired, never filled');
     expect(msg.embeds[0].fields?.[0].value).toContain('resting 120 days');
+  });
+
+  it('names the coin each expired rung belonged to', () => {
+    // More than one ladder can age out on the same day, and a bare list of
+    // prices does not say which one lost a rung.
+    const msg = formatFillsDiscord([], [stale(), stale({ symbol: 'ADA-USD', price: 0.42 })]);
+    const value = msg.embeds[0].fields?.[0].value ?? '';
+    expect(value).toContain('SOL-USD: 29% at $120');
+    expect(value).toContain('ADA-USD: 29% at $0.42');
   });
 
   it('colours a fill green and a bare expiry amber', () => {
@@ -149,17 +161,11 @@ describe('formatFillsDiscord', () => {
 });
 
 describe('onlySymbols', () => {
-  const fill = (symbol: string) => ({
-    symbol,
-    price: 186,
-    allocationPct: 20,
-    source: 'Prior week low',
-    filledOn: '2026-08-13',
-  });
+  const of = (symbol: string) => fill({ symbol });
 
   it('keeps the write-up coins and drops the rest', () => {
     const kept = onlySymbols(
-      [fill('SOL-USD'), fill('DOGE-USD'), fill('BTC-USD'), fill('LINK-USD')],
+      [of('SOL-USD'), of('DOGE-USD'), of('BTC-USD'), of('LINK-USD')],
       DEFAULT_WRITEUP_SYMBOLS,
     );
     expect(kept.map((f) => f.symbol)).toEqual(['SOL-USD', 'BTC-USD']);
@@ -168,24 +174,58 @@ describe('onlySymbols', () => {
   it('leaves nothing to send when no write-up coin filled', () => {
     // The caller checks for an empty result and sends no message at all,
     // rather than an embed with no fields in it.
-    expect(onlySymbols([fill('ADA-USD'), fill('DOT-USD')], DEFAULT_WRITEUP_SYMBOLS)).toEqual([]);
+    expect(onlySymbols([of('ADA-USD'), of('DOT-USD')], DEFAULT_WRITEUP_SYMBOLS)).toEqual([]);
   });
 
   it('matches regardless of case or stray spacing in the setting', () => {
-    expect(onlySymbols([fill('sol-usd')], [' SOL-USD '])).toHaveLength(1);
+    expect(onlySymbols([of('sol-usd')], [' SOL-USD '])).toHaveLength(1);
   });
 
   it('follows the same list the weekly write-ups use', () => {
     // One setting drives both: adding a coin to the write-ups adds its fill
     // alerts, with nothing else to remember.
     const configured = parseSymbols('SOL-USD, HYPE-USD', DEFAULT_WRITEUP_SYMBOLS);
-    expect(onlySymbols([fill('BTC-USD'), fill('HYPE-USD')], configured).map((f) => f.symbol)).toEqual(
-      ['HYPE-USD'],
-    );
+    expect(onlySymbols([of('BTC-USD'), of('HYPE-USD')], configured).map((f) => f.symbol)).toEqual([
+      'HYPE-USD',
+    ]);
   });
 
   it('defaults to the four coins Discord reports on', () => {
     expect(DEFAULT_WRITEUP_SYMBOLS).toEqual(['SOL-USD', 'BTC-USD', 'ETH-USD', 'HYPE-USD']);
+  });
+});
+
+describe('ntfy pushes', () => {
+  it('groups fills by coin and interrupts for them', () => {
+    const push = fillPush([fill(), fill({ price: 171, allocationPct: 24 }), fill({ symbol: 'ADA-USD', price: 0.42 })]);
+    expect(push.title).toBe('🎯 3 ladder rung(s) filled');
+    // Sub-dollar coins keep four decimals, so a cent is not rounded away.
+    expect(push.body).toBe('SOL-USD: 20% at $186, 24% at $171\nADA-USD: 20% at $0.4200');
+    expect(push.priority).toBe('high');
+  });
+
+  it('sends expiries quietly, so housekeeping never dilutes a fill', () => {
+    const push = expiryPush([stale(), stale({ symbol: 'DOT-USD', price: 3.1, ageDays: 96 })]);
+    expect(push.title).toBe('🗑️ 2 stale rung(s) cleared');
+    expect(push.body).toBe(
+      'SOL-USD: 29% at $120, resting 120 days\nDOT-USD: 29% at $3.10, resting 96 days',
+    );
+    // A cleared bid is a record, not an event: never a lock-screen alert.
+    expect(push.priority).toBe('default');
+  });
+
+  it('reaches coins Discord never mentions', () => {
+    // The point of routing expiries here: ntfy carries every coin, Discord
+    // only the four it writes up.
+    const push = expiryPush([stale({ symbol: 'LINK-USD' })]);
+    expect(push.body).toContain('LINK-USD');
+    expect(DEFAULT_WRITEUP_SYMBOLS).not.toContain('LINK-USD');
+  });
+
+  it('never renders a missing field as undefined', () => {
+    for (const push of [fillPush([fill()]), expiryPush([stale()])]) {
+      expect(`${push.title} ${push.body}`).not.toContain('undefined');
+    }
   });
 });
 

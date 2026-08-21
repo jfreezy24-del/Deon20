@@ -7,9 +7,10 @@
  * day they happen rather than up to a week later, and rungs that have rested
  * past their lifetime are cleared.
  *
- * ntfy carries every coin, since that is where the full ladder lives. Discord
- * carries only the coins that get a weekly write-up, so the channel hears
- * about the positions it has been reading about and nothing else.
+ * ntfy carries every coin, since that is where the full ladder lives: fills at
+ * high priority, expiries as a quieter second push. Discord carries only the
+ * coins that get a weekly write-up, so the channel hears about the positions
+ * it has been reading about and nothing else.
  *
  * Usage:  npx tsx server/ladder-fills.ts
  *
@@ -33,13 +34,15 @@ import {
   applyFills,
   costBasis,
   expireStaleRungs,
-  ExpiredRung,
   FillEvent,
   isoDate,
 } from '../src/crypto/ladderState';
 import { buildNtfyPayload, PushMessage } from './lib';
 import {
   DEFAULT_WRITEUP_SYMBOLS,
+  ExpiredRungOf,
+  expiryPush,
+  fillPush,
   formatFillsDiscord,
   onlySymbols,
   parseRoleIds,
@@ -78,22 +81,6 @@ async function sendDiscord(webhookUrl: string, message: object) {
   if (!res.ok) throw new Error(`Discord responded ${res.status}: ${await res.text()}`);
 }
 
-function fillPush(fills: FillEvent[]): PushMessage {
-  const bySymbol = [...new Set(fills.map((f) => f.symbol))];
-  return {
-    title: `🎯 ${fills.length} ladder rung(s) filled`,
-    body: bySymbol
-      .map((symbol) => {
-        const events = fills.filter((f) => f.symbol === symbol);
-        return `${symbol}: ${events.map((e) => `${e.allocationPct}% at ${money(e.price)}`).join(', ')}`;
-      })
-      .join('\n'),
-    // A bid becoming a position is worth a lock-screen interruption.
-    priority: 'high',
-    tags: 'dart',
-  };
-}
-
 async function main() {
   const topic = process.env.NTFY_TOPIC?.trim();
   const server = process.env.NTFY_SERVER?.trim() || 'https://ntfy.sh';
@@ -114,9 +101,9 @@ async function main() {
   }
 
   const fills: FillEvent[] = [];
-  // Tagged with their symbol so the Discord filter can reach them. The rung
-  // record itself does not carry one; it only ever lived under its symbol.
-  const expired: (ExpiredRung & { symbol: string })[] = [];
+  // Tagged with their symbol so the filters and the push can reach it. The
+  // rung record itself does not carry one; it only ever lived under its symbol.
+  const expired: ExpiredRungOf[] = [];
 
   for (const symbol of symbols) {
     const position = state.positions[symbol];
@@ -175,9 +162,19 @@ async function main() {
   const sendErrors: string[] = [];
 
   // ntfy gets everything: it is the phone, and it holds the full ladder.
+  // Fills and expiries go as two pushes rather than one, so the high-priority
+  // fill alert is not diluted by housekeeping — and so an expiry on a coin
+  // Discord never mentions still reaches you somewhere.
   if (topic && fills.length > 0) {
     try {
       await sendNtfy(server, topic, fillPush(fills));
+    } catch (e) {
+      sendErrors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  if (topic && expired.length > 0) {
+    try {
+      await sendNtfy(server, topic, expiryPush(expired));
     } catch (e) {
       sendErrors.push(e instanceof Error ? e.message : String(e));
     }
