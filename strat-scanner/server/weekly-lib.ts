@@ -383,6 +383,16 @@ export function formatWriteupDiscord(w: Writeup, dca: DcaPlan): DiscordMessage {
   };
 }
 
+/**
+ * The coins Discord reports on: one written analysis each on Sunday, and the
+ * only symbols whose fills interrupt the channel during the week.
+ *
+ * The ladder still tracks and fills every coin in the watchlist — those go to
+ * ntfy, where the full plan lives. This list is the narrower set worth
+ * speaking up about in a room full of people.
+ */
+export const DEFAULT_WRITEUP_SYMBOLS = ['SOL-USD', 'BTC-USD', 'ETH-USD', 'HYPE-USD'];
+
 /** Symbols for the written analyses, read as a list like the webhooks are. */
 export function parseSymbols(raw: string | undefined, fallback: string[]): string[] {
   const symbols = (raw ?? '')
@@ -390,6 +400,18 @@ export function parseSymbols(raw: string | undefined, fallback: string[]): strin
     .map((sym) => sym.trim().toUpperCase())
     .filter(Boolean);
   return symbols.length > 0 ? [...new Set(symbols)] : fallback;
+}
+
+/**
+ * Keep only the entries belonging to the coins Discord reports on.
+ *
+ * Applied to what gets *sent*, never to what gets recorded: a fill on a coin
+ * outside this list is still tracked, still costed, and still pushed to ntfy.
+ * It just does not ping a channel.
+ */
+export function onlySymbols<T extends { symbol: string }>(items: T[], symbols: string[]): T[] {
+  const allowed = new Set(symbols.map((s) => s.trim().toUpperCase()));
+  return items.filter((item) => allowed.has(item.symbol.trim().toUpperCase()));
 }
 
 /**

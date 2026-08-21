@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   assetField,
+  DEFAULT_WRITEUP_SYMBOLS,
   formatFillsDiscord,
+  onlySymbols,
+  parseSymbols,
   parseRoleIds,
   parseWebhooks,
   positionLine,
@@ -142,6 +145,47 @@ describe('formatFillsDiscord', () => {
   it('colours a fill green and a bare expiry amber', () => {
     expect(formatFillsDiscord([fill()], []).embeds[0].color).toBe(0x57f287);
     expect(formatFillsDiscord([], []).embeds[0].color).toBe(0xfee75c);
+  });
+});
+
+describe('onlySymbols', () => {
+  const fill = (symbol: string) => ({
+    symbol,
+    price: 186,
+    allocationPct: 20,
+    source: 'Prior week low',
+    filledOn: '2026-08-13',
+  });
+
+  it('keeps the write-up coins and drops the rest', () => {
+    const kept = onlySymbols(
+      [fill('SOL-USD'), fill('DOGE-USD'), fill('BTC-USD'), fill('LINK-USD')],
+      DEFAULT_WRITEUP_SYMBOLS,
+    );
+    expect(kept.map((f) => f.symbol)).toEqual(['SOL-USD', 'BTC-USD']);
+  });
+
+  it('leaves nothing to send when no write-up coin filled', () => {
+    // The caller checks for an empty result and sends no message at all,
+    // rather than an embed with no fields in it.
+    expect(onlySymbols([fill('ADA-USD'), fill('DOT-USD')], DEFAULT_WRITEUP_SYMBOLS)).toEqual([]);
+  });
+
+  it('matches regardless of case or stray spacing in the setting', () => {
+    expect(onlySymbols([fill('sol-usd')], [' SOL-USD '])).toHaveLength(1);
+  });
+
+  it('follows the same list the weekly write-ups use', () => {
+    // One setting drives both: adding a coin to the write-ups adds its fill
+    // alerts, with nothing else to remember.
+    const configured = parseSymbols('SOL-USD, HYPE-USD', DEFAULT_WRITEUP_SYMBOLS);
+    expect(onlySymbols([fill('BTC-USD'), fill('HYPE-USD')], configured).map((f) => f.symbol)).toEqual(
+      ['HYPE-USD'],
+    );
+  });
+
+  it('defaults to the four coins Discord reports on', () => {
+    expect(DEFAULT_WRITEUP_SYMBOLS).toEqual(['SOL-USD', 'BTC-USD', 'ETH-USD', 'HYPE-USD']);
   });
 });
 
