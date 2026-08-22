@@ -90,7 +90,9 @@
 //
 // Every line is anchored to the candle that created it, so a level starts at
 // its source period and a target starts at whichever earlier period produced
-// it. Each carries a price label, and taken levels are marked SWEPT.
+// it. Each carries a price label, and taken levels are marked SWEPT. Levels
+// are coloured by timeframe; targets keep their own fixed colours so the two
+// never blur together.
 //
 // DATA: statistics come from the chart symbol's own full higher-timeframe
 // history, requested per timeframe. Works on any crypto asset (or anything
@@ -119,8 +121,8 @@ showTgt   = input.bool(true, "Show Target 1", group=grpTg)
 tgtMode   = input.string("Continuation (same side)", "Target direction", options=["Continuation (same side)","Reversal (opposite side)"], group=grpTg, tooltip="Continuation: the sweep keeps running, so the target is the next earlier candle that pushed FURTHER in the same direction — sweep a high, aim for a higher high.\n\nReversal: the sweep is a stop hunt and price turns, so the target is on the far side — sweep a high, aim for a lower low.\n\nEither way the search starts two periods back and keeps walking until it finds a candle that genuinely extends beyond the swept one. Add the indicator twice, once per mode, to see both targets and compare their hit rates.")
 showTgt2  = input.bool(true, "Show Target 2", group=grpTg, tooltip="The next rung out: the first candle beyond Target 1 in the same direction. Always further away than T1 on the same side, so its hit rate is always the lower of the two.")
 tgtAlways = input.bool(false, "Show targets before the sweep", group=grpTg, tooltip="Off by default, so a target only appears once its level has actually been taken. Turn on to see in advance where each target sits.")
-tgtByTf   = input.bool(true, "Colour targets by their timeframe", group=grpTg, tooltip="On: a daily target is drawn in the daily colour, a weekly target in the weekly colour, so every line stays matched to the timeframe it came from. Off: all targets use the single colour below.")
-tgtCol    = input.color(#e0e0e0, "Target color (when not coloured by timeframe)", group=grpTg)
+tgt1Col   = input.color(#eaeaea, "Target 1 color", group=grpTg, tooltip="Targets keep this colour at all times. They are not the swept level, so they do not take its timeframe colour and do not change shade as it is taken.")
+tgt2Col   = input.color(#9e9e9e, "Target 2 color", group=grpTg)
 tgtLook   = input.int(250, "Target search depth (periods)", minval=3, maxval=1000, group=grpTg, tooltip="How far back to walk looking for a candle that extends beyond the swept one.\n\nThis matters most in continuation mode near highs or lows. An upside target needs an EARLIER candle with a higher high, so when an asset is making new highs — routine on crypto — the nearest one can be hundreds of periods back at the previous major high. A shallow depth finds nothing and no target is drawn.\n\nRaise it if targets are missing; lower it if load time suffers. When nothing qualifies the level is left out of the target statistics rather than counted as a miss.")
 tgtSty    = input.string("Dashed", "Target line style", options=["Solid","Dashed","Dotted"], group=grpTg)
 tgtW      = input.int(1, "Target line width", minval=1, maxval=4, group=grpTg)
@@ -478,14 +480,15 @@ f_level(int i, string tag, color col, float lvl, float pSweep, float n, bool swe
 
 // Target 1: anchored at the period two back that produced it. Drawn only once
 // its level has been swept, unless the user asks to see targets in advance.
-f_target1(int i, string tag, color tfCol, float lvl, float p, float n, int off, bool active, bool reached, bool rung2) =>
+f_target1(int i, string tag, float lvl, float p, float n, int off, bool active, bool reached, bool rung2) =>
     if (rung2 ? showTgt2 : showTgt) and not na(lvl) and (active or tgtAlways)
         int src = f_startOf(i, off)
         int x1 = na(src) ? math.max(0, bar_index - 100) : src
-        color baseC = tgtByTf ? tfCol : tgtCol
-        color c = reached ? sweptCol : active ? baseC : color.new(baseC, 55)
+        // A target holds its own fixed colour whatever the level does. Reaching
+        // it is signalled by the line style and the label, never by a recolour.
+        color c = rung2 ? tgt2Col : tgt1Col
         line ln = line.new(x1, lvl, bar_index + rightPad, lvl, xloc=xloc.bar_index,
-             color=rung2 ? color.new(c, 35) : c, style=reached ? line.style_dotted : tgtStyle, width=tgtW)
+             color=c, style=reached ? line.style_dotted : tgtStyle, width=tgtW)
         array.push(lns, ln)
         string txt = tag + "  " + str.tostring(lvl, format.mintick)
         if probIn
@@ -526,42 +529,42 @@ if barstate.islast
         f_srcBox(0, colD, dHi, dLo)
         if showHi
             f_level(0, "PDH", colD, dHi, dSwH, dN, array.get(hitHi, 0))
-            f_target1(0, "PDH T1", colD, dTgH, dPtH, dTnH, dOfH, array.get(hitHi, 0), array.get(tgtHiOk, 0), false)
-            f_target1(0, "PDH T2", colD, dT2H, dP2H, dN2H, dO2H, array.get(hitHi, 0), array.get(tg2HiOk, 0), true)
+            f_target1(0, "PDH T1", dTgH, dPtH, dTnH, dOfH, array.get(hitHi, 0), array.get(tgtHiOk, 0), false)
+            f_target1(0, "PDH T2", dT2H, dP2H, dN2H, dO2H, array.get(hitHi, 0), array.get(tg2HiOk, 0), true)
         if showLo
             f_level(0, "PDL", colD, dLo, dSwL, dN, array.get(hitLo, 0))
-            f_target1(0, "PDL T1", colD, dTgL, dPtL, dTnL, dOfL, array.get(hitLo, 0), array.get(tgtLoOk, 0), false)
-            f_target1(0, "PDL T2", colD, dT2L, dP2L, dN2L, dO2L, array.get(hitLo, 0), array.get(tg2LoOk, 0), true)
+            f_target1(0, "PDL T1", dTgL, dPtL, dTnL, dOfL, array.get(hitLo, 0), array.get(tgtLoOk, 0), false)
+            f_target1(0, "PDL T2", dT2L, dP2L, dN2L, dO2L, array.get(hitLo, 0), array.get(tg2LoOk, 0), true)
     if onW
         f_srcBox(1, colW, wHi, wLo)
         if showHi
             f_level(1, "PWH", colW, wHi, wSwH, wN, array.get(hitHi, 1))
-            f_target1(1, "PWH T1", colW, wTgH, wPtH, wTnH, wOfH, array.get(hitHi, 1), array.get(tgtHiOk, 1), false)
-            f_target1(1, "PWH T2", colW, wT2H, wP2H, wN2H, wO2H, array.get(hitHi, 1), array.get(tg2HiOk, 1), true)
+            f_target1(1, "PWH T1", wTgH, wPtH, wTnH, wOfH, array.get(hitHi, 1), array.get(tgtHiOk, 1), false)
+            f_target1(1, "PWH T2", wT2H, wP2H, wN2H, wO2H, array.get(hitHi, 1), array.get(tg2HiOk, 1), true)
         if showLo
             f_level(1, "PWL", colW, wLo, wSwL, wN, array.get(hitLo, 1))
-            f_target1(1, "PWL T1", colW, wTgL, wPtL, wTnL, wOfL, array.get(hitLo, 1), array.get(tgtLoOk, 1), false)
-            f_target1(1, "PWL T2", colW, wT2L, wP2L, wN2L, wO2L, array.get(hitLo, 1), array.get(tg2LoOk, 1), true)
+            f_target1(1, "PWL T1", wTgL, wPtL, wTnL, wOfL, array.get(hitLo, 1), array.get(tgtLoOk, 1), false)
+            f_target1(1, "PWL T2", wT2L, wP2L, wN2L, wO2L, array.get(hitLo, 1), array.get(tg2LoOk, 1), true)
     if onM
         f_srcBox(2, colM, mHi, mLo)
         if showHi
             f_level(2, "PMH", colM, mHi, mSwH, mN, array.get(hitHi, 2))
-            f_target1(2, "PMH T1", colM, mTgH, mPtH, mTnH, mOfH, array.get(hitHi, 2), array.get(tgtHiOk, 2), false)
-            f_target1(2, "PMH T2", colM, mT2H, mP2H, mN2H, mO2H, array.get(hitHi, 2), array.get(tg2HiOk, 2), true)
+            f_target1(2, "PMH T1", mTgH, mPtH, mTnH, mOfH, array.get(hitHi, 2), array.get(tgtHiOk, 2), false)
+            f_target1(2, "PMH T2", mT2H, mP2H, mN2H, mO2H, array.get(hitHi, 2), array.get(tg2HiOk, 2), true)
         if showLo
             f_level(2, "PML", colM, mLo, mSwL, mN, array.get(hitLo, 2))
-            f_target1(2, "PML T1", colM, mTgL, mPtL, mTnL, mOfL, array.get(hitLo, 2), array.get(tgtLoOk, 2), false)
-            f_target1(2, "PML T2", colM, mT2L, mP2L, mN2L, mO2L, array.get(hitLo, 2), array.get(tg2LoOk, 2), true)
+            f_target1(2, "PML T1", mTgL, mPtL, mTnL, mOfL, array.get(hitLo, 2), array.get(tgtLoOk, 2), false)
+            f_target1(2, "PML T2", mT2L, mP2L, mN2L, mO2L, array.get(hitLo, 2), array.get(tg2LoOk, 2), true)
     if onY
         f_srcBox(3, colY, yHi, yLo)
         if showHi
             f_level(3, "PYH", colY, yHi, ySwH, yN, array.get(hitHi, 3))
-            f_target1(3, "PYH T1", colY, yTgH, yPtH, yTnH, yOfH, array.get(hitHi, 3), array.get(tgtHiOk, 3), false)
-            f_target1(3, "PYH T2", colY, yT2H, yP2H, yN2H, yO2H, array.get(hitHi, 3), array.get(tg2HiOk, 3), true)
+            f_target1(3, "PYH T1", yTgH, yPtH, yTnH, yOfH, array.get(hitHi, 3), array.get(tgtHiOk, 3), false)
+            f_target1(3, "PYH T2", yT2H, yP2H, yN2H, yO2H, array.get(hitHi, 3), array.get(tg2HiOk, 3), true)
         if showLo
             f_level(3, "PYL", colY, yLo, ySwL, yN, array.get(hitLo, 3))
-            f_target1(3, "PYL T1", colY, yTgL, yPtL, yTnL, yOfL, array.get(hitLo, 3), array.get(tgtLoOk, 3), false)
-            f_target1(3, "PYL T2", colY, yT2L, yP2L, yN2L, yO2L, array.get(hitLo, 3), array.get(tg2LoOk, 3), true)
+            f_target1(3, "PYL T1", yTgL, yPtL, yTnL, yOfL, array.get(hitLo, 3), array.get(tgtLoOk, 3), false)
+            f_target1(3, "PYL T2", yT2L, yP2L, yN2L, yO2L, array.get(hitLo, 3), array.get(tg2LoOk, 3), true)
 
 // ================================= Alerts ====================================
 anyHi  = fdH or fwH or fmH or fyH
@@ -629,13 +632,13 @@ f_row(int r, string tag, color col, float lvl, float pAll, float pRec, float pRe
     table.cell(t, 3, r, f_pct(pRec), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
     table.cell(t, 4, r, f_pct(pRev), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
     string noneTip = "No earlier candle within the search depth (" + str.tostring(tgtLook) + " periods) extends beyond the swept one, so there is no target to draw.\n\nIn continuation mode an upside target needs an earlier candle with a HIGHER high. At or near new highs none exists nearby — common on crypto. Raise the target search depth, or switch to Reversal mode."
-    table.cell(t, 5, r, na(tgt) ? "none" : str.tostring(tgt, format.mintick), bgcolor=bg, text_color=na(tgt) ? color.gray : tgtDone ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel, tooltip=na(tgt) ? noneTip : "Target 1. A price here but no line on the chart means the level has not been swept yet — turn on \"Show targets before the sweep\" to see it in advance.")
+    table.cell(t, 5, r, na(tgt) ? "none" : str.tostring(tgt, format.mintick), bgcolor=bg, text_color=na(tgt) ? color.gray : tgt1Col, text_size=tSzSel, tooltip=na(tgt) ? noneTip : "Target 1. A price here but no line on the chart means the level has not been swept yet — turn on \"Show targets before the sweep\" to see it in advance.")
     table.cell(t, 6, r, f_pct(pTgt), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
-    table.cell(t, 7, r, na(tgt2) ? "none" : str.tostring(tgt2, format.mintick), bgcolor=bg, text_color=na(tgt2) ? color.gray : tgt2Done ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel, tooltip=na(tgt2) ? noneTip : "Target 2, the next rung beyond Target 1.")
+    table.cell(t, 7, r, na(tgt2) ? "none" : str.tostring(tgt2, format.mintick), bgcolor=bg, text_color=na(tgt2) ? color.gray : tgt2Col, text_size=tSzSel, tooltip=na(tgt2) ? noneTip : "Target 2, the next rung beyond Target 1.")
     table.cell(t, 8, r, f_pct(pTgt2), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
     table.cell(t, 9, r, str.tostring(n, "#"), bgcolor=bg, text_color=color.gray, text_size=tSzSel)
     table.cell(t, 10, r, tgt2Done ? "T2 HIT" : tgtDone ? "T1 HIT" : swept ? "SWEPT" : "open", bgcolor=bg,
-         text_color=(tgtDone or tgt2Done) ? (tgtByTf ? col : tgtCol) : swept ? color.gray : col, text_size=tSzSel)
+         text_color=tgt2Done ? tgt2Col : tgtDone ? tgt1Col : swept ? color.gray : col, text_size=tSzSel)
     true
 
 if barstate.islast and showTbl
