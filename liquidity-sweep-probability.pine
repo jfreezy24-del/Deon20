@@ -62,6 +62,16 @@
 //   T2 carries its own sample count, because a qualifying second candle does
 //   not always exist within the search depth even when the first one does.
 //
+// WHEN A TARGET IS MISSING:
+//   Two reasons, and the table tells them apart. If the T1 column shows a
+//   price but no line is on the chart, the level simply has not been swept
+//   yet — targets stay hidden until their level is taken unless "Show targets
+//   before the sweep" is on. If the column reads "none", no earlier candle
+//   within the search depth extends beyond the swept one. That is routine in
+//   continuation mode near highs: an upside target needs an EARLIER candle
+//   with a higher high, and an asset printing new highs has none nearby.
+//   Raise the search depth to reach the previous major high.
+//
 //   Each target carries its own conditional probability: given the level was
 //   swept, how often did price go on to reach that target inside the same
 //   period. Targets are drawn only once their level is actually taken (there
@@ -111,7 +121,7 @@ showTgt2  = input.bool(true, "Show Target 2", group=grpTg, tooltip="The next run
 tgtAlways = input.bool(false, "Show targets before the sweep", group=grpTg, tooltip="Off by default, so a target only appears once its level has actually been taken. Turn on to see in advance where each target sits.")
 tgtByTf   = input.bool(true, "Colour targets by their timeframe", group=grpTg, tooltip="On: a daily target is drawn in the daily colour, a weekly target in the weekly colour, so every line stays matched to the timeframe it came from. Off: all targets use the single colour below.")
 tgtCol    = input.color(#e0e0e0, "Target color (when not coloured by timeframe)", group=grpTg)
-tgtLook   = input.int(50, "Target search depth (periods)", minval=3, maxval=200, group=grpTg, tooltip="How far back to walk looking for a candle that extends beyond the swept one. If nothing qualifies within this many periods, no target is drawn and that period is left out of the target statistics.")
+tgtLook   = input.int(250, "Target search depth (periods)", minval=3, maxval=1000, group=grpTg, tooltip="How far back to walk looking for a candle that extends beyond the swept one.\n\nThis matters most in continuation mode near highs or lows. An upside target needs an EARLIER candle with a higher high, so when an asset is making new highs — routine on crypto — the nearest one can be hundreds of periods back at the previous major high. A shallow depth finds nothing and no target is drawn.\n\nRaise it if targets are missing; lower it if load time suffers. When nothing qualifies the level is left out of the target statistics rather than counted as a miss.")
 tgtSty    = input.string("Dashed", "Target line style", options=["Solid","Dashed","Dotted"], group=grpTg)
 tgtW      = input.int(1, "Target line width", minval=1, maxval=4, group=grpTg)
 
@@ -618,9 +628,10 @@ f_row(int r, string tag, color col, float lvl, float pAll, float pRec, float pRe
     table.cell(t, 2, r, f_pct(pAll), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
     table.cell(t, 3, r, f_pct(pRec), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
     table.cell(t, 4, r, f_pct(pRev), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
-    table.cell(t, 5, r, na(tgt) ? "—" : str.tostring(tgt, format.mintick), bgcolor=bg, text_color=tgtDone ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel)
+    string noneTip = "No earlier candle within the search depth (" + str.tostring(tgtLook) + " periods) extends beyond the swept one, so there is no target to draw.\n\nIn continuation mode an upside target needs an earlier candle with a HIGHER high. At or near new highs none exists nearby — common on crypto. Raise the target search depth, or switch to Reversal mode."
+    table.cell(t, 5, r, na(tgt) ? "none" : str.tostring(tgt, format.mintick), bgcolor=bg, text_color=na(tgt) ? color.gray : tgtDone ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel, tooltip=na(tgt) ? noneTip : "Target 1. A price here but no line on the chart means the level has not been swept yet — turn on \"Show targets before the sweep\" to see it in advance.")
     table.cell(t, 6, r, f_pct(pTgt), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
-    table.cell(t, 7, r, na(tgt2) ? "—" : str.tostring(tgt2, format.mintick), bgcolor=bg, text_color=tgt2Done ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel)
+    table.cell(t, 7, r, na(tgt2) ? "none" : str.tostring(tgt2, format.mintick), bgcolor=bg, text_color=na(tgt2) ? color.gray : tgt2Done ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel, tooltip=na(tgt2) ? noneTip : "Target 2, the next rung beyond Target 1.")
     table.cell(t, 8, r, f_pct(pTgt2), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
     table.cell(t, 9, r, str.tostring(n, "#"), bgcolor=bg, text_color=color.gray, text_size=tSzSel)
     table.cell(t, 10, r, tgt2Done ? "T2 HIT" : tgtDone ? "T1 HIT" : swept ? "SWEPT" : "open", bgcolor=bg,
