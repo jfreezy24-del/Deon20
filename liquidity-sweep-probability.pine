@@ -1,0 +1,337 @@
+//@version=6
+// =============================================================================
+// Liquidity Sweep Probability — Prev Day / Week / Month / Year
+// -----------------------------------------------------------------------------
+// The previous period's HIGH and LOW are where resting stops and pending orders
+// pile up. This marks those levels for the Day, Week, Month and Year, and puts
+// a historically measured probability on each one:
+//
+//     "The previous day's high has been swept on 63% of days over 4,812 days."
+//
+// For every level you get:
+//   * SWEEP probability  — how often price traded through that level during the
+//                          following period. Wick counts: liquidity taken is
+//                          liquidity taken, whether or not it closed beyond.
+//   * REVERSAL rate      — of the times it WAS swept, how often price closed
+//                          back inside. High reversal = classic stop hunt.
+//                          Low reversal = the level breaks and price runs.
+//   * RECENT vs ALL-TIME — the same sweep probability over the last N periods
+//                          only, so you can see whether behaviour has shifted.
+//
+// Highs and lows are measured SEPARATELY, never mirrored — buy-side and
+// sell-side liquidity do not get taken at the same rate.
+//
+// Every line is anchored to the candle that created it: it starts at the open
+// of the period whose high/low it marks, so you can always see the source.
+// Each carries a label with the price and its sweep probability, and levels
+// already taken this period are marked SWEPT.
+//
+// DATA: statistics come from the chart symbol's own full higher-timeframe
+// history, requested per timeframe. Works on any crypto asset (or anything
+// else) with zero configuration. Nothing repaints — every statistic is built
+// from confirmed, completed periods only.
+//
+// NOTE: run this on a chart timeframe FINER than the levels you display. A
+// weekly chart cannot resolve daily sweeps.
+// =============================================================================
+
+indicator("Liquidity Sweep Probability", shorttitle="LiqSweep",
+     overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ================================== Inputs ===================================
+grpL = "Levels"
+onD  = input.bool(true,  "Previous Day    (PDH / PDL)", group=grpL)
+onW  = input.bool(true,  "Previous Week   (PWH / PWL)", group=grpL)
+onM  = input.bool(true,  "Previous Month  (PMH / PML)", group=grpL)
+onY  = input.bool(false, "Previous Year   (PYH / PYL)", group=grpL)
+showHi = input.bool(true, "Show highs (buy-side liquidity)", group=grpL)
+showLo = input.bool(true, "Show lows (sell-side liquidity)", group=grpL)
+hideSwept = input.bool(false, "Hide levels once swept", group=grpL, tooltip="Off by default: a swept level is still information — it tells you the liquidity there is gone.")
+
+grpS = "Statistics"
+recentN = input.int(250, "Recent window (periods)", minval=20, maxval=2000, group=grpS, tooltip="Second sweep probability computed over just the last N completed periods, shown beside the all-time figure. A large gap between them means the behaviour of this level has changed.")
+minN    = input.int(30, "Minimum sample to trust", minval=5, maxval=500, group=grpS, tooltip="Below this the probability is shown in amber. The yearly timeframe will sit under it on almost every crypto asset — that is honest, not broken.")
+probIn  = input.bool(true, "Show probability in label", group=grpS)
+
+grpC = "Colors"
+colD = input.color(#42bda8, "Day",   group=grpC)
+colW = input.color(#5b8def, "Week",  group=grpC)
+colM = input.color(#c678dd, "Month", group=grpC)
+colY = input.color(#e5a54b, "Year",  group=grpC)
+sweptCol = input.color(color.new(color.gray, 45), "Swept level", group=grpC)
+
+grpV = "Display"
+lineW    = input.int(1, "Line width", minval=1, maxval=4, group=grpV)
+lineSty  = input.string("Solid", "Line style", options=["Solid","Dashed","Dotted"], group=grpV)
+rightPad = input.int(12, "Extend right (bars)", minval=0, maxval=200, group=grpV)
+showBox  = input.bool(false, "Shade the source candle's range", group=grpV, tooltip="Draws a translucent box over the period whose high and low are being marked, so the origin of each pair of lines is unmistakable.")
+lblSize  = input.string("small", "Label size", options=["tiny","small","normal"], group=grpV)
+
+grpT = "Stats Table"
+showTbl = input.bool(true, "Show table", group=grpT)
+tblPos  = input.string("top_right", "Position", options=["top_right","top_left","bottom_right","bottom_left","middle_right"], group=grpT)
+tblSize = input.string("small", "Text size", options=["tiny","small","normal","large"], group=grpT)
+
+grpA = "Alerts"
+alertOn = input.bool(true, "Fire alert() on first sweep of a level", group=grpA)
+
+// ============================== Sweep engine =================================
+// Runs inside request.security on the level's own timeframe and walks that
+// symbol's entire history. Only counters and one small rolling window are
+// kept, so this stays light no matter how deep the history goes.
+//
+// A period is scored by comparing it to the period BEFORE it, and only
+// completed periods are ever read, so nothing repaints.
+f_liq(int recN) =>
+    var int nTot = 0
+    var int swHi = 0
+    var int rvHi = 0
+    var int swLo = 0
+    var int rvLo = 0
+    var array<float> recHi = array.new<float>()
+    var array<float> recLo = array.new<float>()
+
+    if bar_index > 1
+        float ph = high[2]
+        float pl = low[2]
+        float h  = high[1]
+        float l  = low[1]
+        float c  = close[1]
+        if not na(ph) and not na(pl) and not na(h) and not na(l)
+            nTot += 1
+            bool sh = h > ph
+            bool sl = l < pl
+            if sh
+                swHi += 1
+                // closed back below the level it took: the sweep failed
+                if c < ph
+                    rvHi += 1
+            if sl
+                swLo += 1
+                if c > pl
+                    rvLo += 1
+            array.push(recHi, sh ? 1.0 : 0.0)
+            array.push(recLo, sl ? 1.0 : 0.0)
+            if array.size(recHi) > recN
+                array.shift(recHi)
+                array.shift(recLo)
+
+    int nRec = array.size(recHi)
+    float pSwHiAll = nTot > 0 ? swHi * 1.0 / nTot : na
+    float pSwLoAll = nTot > 0 ? swLo * 1.0 / nTot : na
+    float pRvHi    = swHi > 0 ? rvHi * 1.0 / swHi : na
+    float pRvLo    = swLo > 0 ? rvLo * 1.0 / swLo : na
+    float pSwHiRec = nRec > 0 ? array.avg(recHi) : na
+    float pSwLoRec = nRec > 0 ? array.avg(recLo) : na
+
+    // A tuple of plain numbers crosses the security boundary cheaply and is
+    // na-safe: a symbol with no data at this bar yields na elements rather
+    // than an undefined object.
+    [high[1], low[1], pSwHiAll, pSwLoAll, pRvHi, pRvLo, pSwHiRec, pSwLoRec, nTot, nRec]
+
+// lookahead_on paired with strictly historical references ([1] and [2] inside
+// the engine) is the correct idiom for previous-period levels. Without it the
+// value delivered during a live period comes from the last CLOSED higher
+// timeframe bar, so high[1] inside would resolve two periods back and every
+// level would be off by one. Because nothing here ever reads the forming bar,
+// lookahead leaks no future data.
+[dHi, dLo, dSwH, dSwL, dRvH, dRvL, dRcH, dRcL, dN, dNr] = request.security(syminfo.tickerid, "1D",  f_liq(recentN), lookahead = barmerge.lookahead_on)
+[wHi, wLo, wSwH, wSwL, wRvH, wRvL, wRcH, wRcL, wN, wNr] = request.security(syminfo.tickerid, "1W",  f_liq(recentN), lookahead = barmerge.lookahead_on)
+[mHi, mLo, mSwH, mSwL, mRvH, mRvL, mRcH, mRcL, mN, mNr] = request.security(syminfo.tickerid, "1M",  f_liq(recentN), lookahead = barmerge.lookahead_on)
+[yHi, yLo, ySwH, ySwL, yRvH, yRvL, yRcH, yRcL, yN, yNr] = request.security(syminfo.tickerid, "12M", f_liq(recentN), lookahead = barmerge.lookahead_on)
+
+// ====================== Chart-side period tracking ===========================
+// Index 0 = Day, 1 = Week, 2 = Month, 3 = Year.
+var array<int>  pStart = array.new<int>(4, na)   // first bar of the SOURCE period
+var array<int>  cStart = array.new<int>(4, na)   // first bar of the current period
+var array<bool> hitHi  = array.new<bool>(4, false)
+var array<bool> hitLo  = array.new<bool>(4, false)
+
+newD = ta.change(time("1D"))  != 0
+newW = ta.change(time("1W"))  != 0
+newM = ta.change(time("1M"))  != 0
+newY = ta.change(time("12M")) != 0
+
+// On a new period the previous period becomes the source of the levels, so its
+// start bar is what each line should be anchored to.
+f_roll(int i, bool isNew) =>
+    if isNew
+        array.set(pStart, i, na(array.get(cStart, i)) ? bar_index : array.get(cStart, i))
+        array.set(cStart, i, bar_index)
+        array.set(hitHi, i, false)
+        array.set(hitLo, i, false)
+    isNew
+
+f_roll(0, newD)
+f_roll(1, newW)
+f_roll(2, newM)
+f_roll(3, newY)
+
+// ---- live sweep detection: has this level already been taken this period? ---
+f_mark(int i, float lvlHi, float lvlLo) =>
+    bool firedHi = false
+    bool firedLo = false
+    if not na(lvlHi) and high > lvlHi and not array.get(hitHi, i)
+        array.set(hitHi, i, true)
+        firedHi := true
+    if not na(lvlLo) and low < lvlLo and not array.get(hitLo, i)
+        array.set(hitLo, i, true)
+        firedLo := true
+    [firedHi, firedLo]
+
+[fdH, fdL] = f_mark(0, dHi, dLo)
+[fwH, fwL] = f_mark(1, wHi, wLo)
+[fmH, fmL] = f_mark(2, mHi, mLo)
+[fyH, fyL] = f_mark(3, yHi, yLo)
+
+// ================================ Drawing ====================================
+var array<line>  lns = array.new<line>()
+var array<label> lbs = array.new<label>()
+var array<box>   bxs = array.new<box>()
+
+styleSel = lineSty == "Dashed" ? line.style_dashed : lineSty == "Dotted" ? line.style_dotted : line.style_solid
+lblSzSel = lblSize == "tiny" ? size.tiny : lblSize == "normal" ? size.normal : size.small
+
+f_pct(float p) => na(p) ? "—" : str.tostring(math.round(p * 100)) + "%"
+
+// One level: line anchored at its source candle, plus a price label.
+f_level(int i, string tag, color col, float lvl, float pSweep, float n, bool swept) =>
+    if not na(lvl) and not (hideSwept and swept)
+        int x1 = na(array.get(pStart, i)) ? math.max(0, bar_index - 100) : array.get(pStart, i)
+        color c = swept ? sweptCol : col
+        line ln = line.new(x1, lvl, bar_index + rightPad, lvl, xloc=xloc.bar_index,
+             color=c, style=swept ? line.style_dotted : styleSel, width=lineW)
+        array.push(lns, ln)
+        string txt = tag + "  " + str.tostring(lvl, format.mintick)
+        if probIn
+            txt += "  " + f_pct(pSweep)
+        if swept
+            txt += "  SWEPT"
+        label lb = label.new(bar_index + rightPad, lvl, txt, xloc=xloc.bar_index,
+             style=label.style_label_left, color=color.new(c, 88), textcolor=c,
+             size=lblSzSel, tooltip="Sample: " + str.tostring(n, "#") + " periods" + (nz(n) < minN ? "  (thin)" : ""))
+        array.push(lbs, lb)
+    true
+
+// Shade the period the levels came from, so the source candle is unmistakable.
+f_srcBox(int i, color col, float hi, float lo) =>
+    if showBox and not na(hi) and not na(lo) and not na(array.get(pStart, i))
+        int x1 = array.get(pStart, i)
+        int x2 = na(array.get(cStart, i)) ? bar_index : array.get(cStart, i)
+        if x2 > x1
+            array.push(bxs, box.new(x1, hi, x2, lo, xloc=xloc.bar_index,
+                 border_color=color.new(col, 70), bgcolor=color.new(col, 93)))
+    true
+
+if barstate.islast
+    for l in lns
+        line.delete(l)
+    array.clear(lns)
+    for lb in lbs
+        label.delete(lb)
+    array.clear(lbs)
+    for b in bxs
+        box.delete(b)
+    array.clear(bxs)
+
+    if onD
+        f_srcBox(0, colD, dHi, dLo)
+        if showHi
+            f_level(0, "PDH", colD, dHi, dSwH, dN, array.get(hitHi, 0))
+        if showLo
+            f_level(0, "PDL", colD, dLo, dSwL, dN, array.get(hitLo, 0))
+    if onW
+        f_srcBox(1, colW, wHi, wLo)
+        if showHi
+            f_level(1, "PWH", colW, wHi, wSwH, wN, array.get(hitHi, 1))
+        if showLo
+            f_level(1, "PWL", colW, wLo, wSwL, wN, array.get(hitLo, 1))
+    if onM
+        f_srcBox(2, colM, mHi, mLo)
+        if showHi
+            f_level(2, "PMH", colM, mHi, mSwH, mN, array.get(hitHi, 2))
+        if showLo
+            f_level(2, "PML", colM, mLo, mSwL, mN, array.get(hitLo, 2))
+    if onY
+        f_srcBox(3, colY, yHi, yLo)
+        if showHi
+            f_level(3, "PYH", colY, yHi, ySwH, yN, array.get(hitHi, 3))
+        if showLo
+            f_level(3, "PYL", colY, yLo, ySwL, yN, array.get(hitLo, 3))
+
+// ================================= Alerts ====================================
+anyHi = fdH or fwH or fmH or fyH
+anyLo = fdL or fwL or fmL or fyL
+
+alertcondition(anyHi, "Buy-side liquidity swept",  "A previous high was taken")
+alertcondition(anyLo, "Sell-side liquidity swept", "A previous low was taken")
+
+f_alert(bool fired, string tag, float lvl, float p) =>
+    if alertOn and fired
+        alert(syminfo.ticker + "  " + tag + " swept at " + str.tostring(lvl, format.mintick) +
+             "  (historical sweep rate " + f_pct(p) + ")", alert.freq_once_per_bar)
+    fired
+
+f_alert(fdH, "PDH", dHi, dSwH)
+f_alert(fdL, "PDL", dLo, dSwL)
+f_alert(fwH, "PWH", wHi, wSwH)
+f_alert(fwL, "PWL", wLo, wSwL)
+f_alert(fmH, "PMH", mHi, mSwH)
+f_alert(fmL, "PML", mLo, mSwL)
+f_alert(fyH, "PYH", yHi, ySwH)
+f_alert(fyL, "PYL", yLo, ySwL)
+
+// =============================== Stats table =================================
+posSel  = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : tblPos == "middle_right" ? position.middle_right : position.top_right
+tSzSel  = tblSize == "tiny" ? size.tiny : tblSize == "normal" ? size.normal : tblSize == "large" ? size.large : size.small
+
+var table t = table.new(posSel, 7, 10, border_width=1, frame_color=color.new(color.gray, 55), frame_width=1)
+
+f_row(int r, string tag, color col, float lvl, float pAll, float pRec, float pRev, float n, bool swept) =>
+    bg   = color.new(color.black, 15)
+    warn = color.new(color.orange, 40)
+    cellBg = nz(n) < minN ? warn : bg
+    table.cell(t, 0, r, tag, bgcolor=bg, text_color=col, text_size=tSzSel)
+    table.cell(t, 1, r, na(lvl) ? "—" : str.tostring(lvl, format.mintick), bgcolor=bg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 2, r, f_pct(pAll), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 3, r, f_pct(pRec), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 4, r, f_pct(pRev), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 5, r, str.tostring(n, "#"), bgcolor=bg, text_color=color.gray, text_size=tSzSel)
+    table.cell(t, 6, r, swept ? "SWEPT" : "open", bgcolor=bg, text_color=swept ? color.gray : col, text_size=tSzSel)
+    true
+
+if barstate.islast and showTbl
+    hbg = color.new(color.gray, 35)
+    table.cell(t, 0, 0, "Level",  bgcolor=hbg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 1, 0, "Price",  bgcolor=hbg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 2, 0, "Sweep",  bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Share of periods in which this level was traded through at some point. All available history.")
+    table.cell(t, 3, 0, "Recent", bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Same probability over the last " + str.tostring(recentN) + " periods only. A wide gap versus the all-time column means behaviour has shifted.")
+    table.cell(t, 4, 0, "Rev",    bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Of the times this level was swept, how often price closed back inside it. High = stop hunt and reversal. Low = the level breaks and price keeps going.")
+    table.cell(t, 5, 0, "n",      bgcolor=hbg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 6, 0, "Status", bgcolor=hbg, text_color=color.white, text_size=tSzSel)
+
+    int r = 1
+    if onD and showHi
+        f_row(r, "PDH", colD, dHi, dSwH, dRcH, dRvH, dN, array.get(hitHi, 0))
+        r += 1
+    if onD and showLo
+        f_row(r, "PDL", colD, dLo, dSwL, dRcL, dRvL, dN, array.get(hitLo, 0))
+        r += 1
+    if onW and showHi
+        f_row(r, "PWH", colW, wHi, wSwH, wRcH, wRvH, wN, array.get(hitHi, 1))
+        r += 1
+    if onW and showLo
+        f_row(r, "PWL", colW, wLo, wSwL, wRcL, wRvL, wN, array.get(hitLo, 1))
+        r += 1
+    if onM and showHi
+        f_row(r, "PMH", colM, mHi, mSwH, mRcH, mRvH, mN, array.get(hitHi, 2))
+        r += 1
+    if onM and showLo
+        f_row(r, "PML", colM, mLo, mSwL, mRcL, mRvL, mN, array.get(hitLo, 2))
+        r += 1
+    if onY and showHi
+        f_row(r, "PYH", colY, yHi, ySwH, yRcH, yRvH, yN, array.get(hitHi, 3))
+        r += 1
+    if onY and showLo
+        f_row(r, "PYL", colY, yLo, ySwL, yRcL, yRvL, yN, array.get(hitLo, 3))
+        r += 1
