@@ -50,6 +50,18 @@
 //   — once per mode — tells you directly whether sweeps on this asset more
 //   often continue or reverse.
 //
+// TARGET 2:
+//   The next rung of the same ladder. Where T1 is the first earlier candle
+//   that extends beyond the swept one, T2 is the first candle beyond T1 in the
+//   same direction — the next pool of liquidity out. Because T2 always sits
+//   further away than T1 on the same side, reaching T2 means T1 was passed on
+//   the way, so the two hit rates are naturally nested: T2 can never exceed
+//   T1. The gap between them is the useful part — it tells you how much of the
+//   time a move that gets to T1 keeps going.
+//
+//   T2 carries its own sample count, because a qualifying second candle does
+//   not always exist within the search depth even when the first one does.
+//
 //   Each target carries its own conditional probability: given the level was
 //   swept, how often did price go on to reach that target inside the same
 //   period. Targets are drawn only once their level is actually taken (there
@@ -95,6 +107,7 @@ hideSwept = input.bool(false, "Hide levels once swept", group=grpL, tooltip="Off
 grpTg = "Targets"
 showTgt   = input.bool(true, "Show Target 1", group=grpTg)
 tgtMode   = input.string("Continuation (same side)", "Target direction", options=["Continuation (same side)","Reversal (opposite side)"], group=grpTg, tooltip="Continuation: the sweep keeps running, so the target is the next earlier candle that pushed FURTHER in the same direction — sweep a high, aim for a higher high.\n\nReversal: the sweep is a stop hunt and price turns, so the target is on the far side — sweep a high, aim for a lower low.\n\nEither way the search starts two periods back and keeps walking until it finds a candle that genuinely extends beyond the swept one. Add the indicator twice, once per mode, to see both targets and compare their hit rates.")
+showTgt2  = input.bool(true, "Show Target 2", group=grpTg, tooltip="The next rung out: the first candle beyond Target 1 in the same direction. Always further away than T1 on the same side, so its hit rate is always the lower of the two.")
 tgtAlways = input.bool(false, "Show targets before the sweep", group=grpTg, tooltip="Off by default, so a target only appears once its level has actually been taken. Turn on to see in advance where each target sits.")
 tgtByTf   = input.bool(true, "Colour targets by their timeframe", group=grpTg, tooltip="On: a daily target is drawn in the daily colour, a weekly target in the weekly colour, so every line stays matched to the timeframe it came from. Off: all targets use the single colour below.")
 tgtCol    = input.color(#e0e0e0, "Target color (when not coloured by timeframe)", group=grpTg)
@@ -146,6 +159,7 @@ alertOn = input.bool(true, "Fire alert() on sweeps and target hits", group=grpA)
 f_find(array<float> buf, int startIdx, float ref, bool up) =>
     float res = na
     int off = 0
+    int idx = -1
     if startIdx >= 0 and not na(ref)
         int m = array.size(buf)
         for j = startIdx to 0
@@ -153,25 +167,39 @@ f_find(array<float> buf, int startIdx, float ref, bool up) =>
             if up ? v > ref : v < ref
                 res := v
                 off := m - j
+                idx := j
                 break
-    [res, off]
+    [res, off, idx]
 
 // Resolve Target 1 for one side of a sweep. `up` falls out of the mode: a high
 // sweep continues upward or reverses downward, and a low sweep does the
 // reverse, so the side searched is simply whether the sweep and the mode agree.
-f_tgt(array<float> hB, array<float> lB, int startIdx, float refHi, float refLo, bool sweptHigh, bool cont) =>
+// Target 2 continues the same walk from just past Target 1, looking for the
+// next candle that extends beyond T1 itself. Same buffer, same direction, so
+// T2 is always further out than T1.
+f_tgts(array<float> hB, array<float> lB, int startIdx, float refHi, float refLo, bool sweptHigh, bool cont) =>
     bool up = sweptHigh == cont
-    float v = na
-    int o = 0
+    float v1 = na
+    int   o1 = 0
+    float v2 = na
+    int   o2 = 0
     if up
-        [vv, oo] = f_find(hB, startIdx, refHi, true)
-        v := vv
-        o := oo
+        [a1, b1, c1] = f_find(hB, startIdx, refHi, true)
+        v1 := a1
+        o1 := b1
+        if not na(a1) and c1 > 0
+            [a2, b2, _c2] = f_find(hB, c1 - 1, a1, true)
+            v2 := a2
+            o2 := b2
     else
-        [vv2, oo2] = f_find(lB, startIdx, refLo, false)
-        v := vv2
-        o := oo2
-    [v, o, up]
+        [d1, e1, g1] = f_find(lB, startIdx, refLo, false)
+        v1 := d1
+        o1 := e1
+        if not na(d1) and g1 > 0
+            [d2, e2, _g2] = f_find(lB, g1 - 1, d1, false)
+            v2 := d2
+            o2 := e2
+    [v1, o1, v2, o2, up]
 
 f_liq(int recN, int look, bool cont) =>
     var int nTot = 0
@@ -183,6 +211,10 @@ f_liq(int recN, int look, bool cont) =>
     var int swLoT = 0
     var int tgHi  = 0     // ...of those, how many reached Target 1
     var int tgLo  = 0
+    var int sw2HiT = 0    // sweeps where a second rung was measurable
+    var int sw2LoT = 0
+    var int tg2Hi  = 0
+    var int tg2Lo  = 0
     var array<float> recHi = array.new<float>()
     var array<float> recLo = array.new<float>()
     // Rolling extremes of completed periods, oldest first, used to search
@@ -221,17 +253,25 @@ f_liq(int recN, int look, bool cont) =>
             int m = array.size(hBuf)
             if m >= 2
                 if sh
-                    [t1a, _o1, up1] = f_tgt(hBuf, lBuf, m - 2, ph, pl, true, cont)
+                    [t1a, _o1, t2a, _q1, up1] = f_tgts(hBuf, lBuf, m - 2, ph, pl, true, cont)
                     if not na(t1a)
                         swHiT += 1
                         if up1 ? h >= t1a : l <= t1a
                             tgHi += 1
+                    if not na(t2a)
+                        sw2HiT += 1
+                        if up1 ? h >= t2a : l <= t2a
+                            tg2Hi += 1
                 if sl
-                    [t1b, _o2, up2] = f_tgt(hBuf, lBuf, m - 2, ph, pl, false, cont)
+                    [t1b, _o2, t2b, _q2, up2] = f_tgts(hBuf, lBuf, m - 2, ph, pl, false, cont)
                     if not na(t1b)
                         swLoT += 1
                         if up2 ? h >= t1b : l <= t1b
                             tgLo += 1
+                    if not na(t2b)
+                        sw2LoT += 1
+                        if up2 ? h >= t2b : l <= t2b
+                            tg2Lo += 1
 
             array.push(recHi, sh ? 1.0 : 0.0)
             array.push(recLo, sl ? 1.0 : 0.0)
@@ -255,8 +295,8 @@ f_liq(int recN, int look, bool cont) =>
     int mm = array.size(hBuf)
     float refHi = mm > 0 ? array.get(hBuf, mm - 1) : na
     float refLo = mm > 0 ? array.get(lBuf, mm - 1) : na
-    [tgtForHi, offForHi, _uh] = f_tgt(hBuf, lBuf, mm - 2, refHi, refLo, true,  cont)
-    [tgtForLo, offForLo, _ul] = f_tgt(hBuf, lBuf, mm - 2, refHi, refLo, false, cont)
+    [tgtForHi, offForHi, tgt2ForHi, off2ForHi, _uh] = f_tgts(hBuf, lBuf, mm - 2, refHi, refLo, true,  cont)
+    [tgtForLo, offForLo, tgt2ForLo, off2ForLo, _ul] = f_tgts(hBuf, lBuf, mm - 2, refHi, refLo, false, cont)
 
     int nRec = array.size(recHi)
     float pSwHiAll = nTot > 0 ? swHi * 1.0 / nTot : na
@@ -267,6 +307,8 @@ f_liq(int recN, int look, bool cont) =>
     float pSwLoRec = nRec > 0 ? array.avg(recLo) : na
     float pTgHi    = swHiT > 0 ? tgHi * 1.0 / swHiT : na
     float pTgLo    = swLoT > 0 ? tgLo * 1.0 / swLoT : na
+    float pTg2Hi   = sw2HiT > 0 ? tg2Hi * 1.0 / sw2HiT : na
+    float pTg2Lo   = sw2LoT > 0 ? tg2Lo * 1.0 / sw2LoT : na
 
     // A tuple of plain numbers crosses the security boundary cheaply and is
     // na-safe: a symbol with no data at this bar yields na elements rather
@@ -274,7 +316,8 @@ f_liq(int recN, int look, bool cont) =>
     // tgtForHi / tgtForLo are the live Target 1 prices for a high / low sweep,
     // with how many periods back each was found so the line can be anchored.
     [high[1], low[1], pSwHiAll, pSwLoAll, pRvHi, pRvLo, pSwHiRec, pSwLoRec, nTot, nRec,
-     tgtForHi, tgtForLo, pTgHi, pTgLo, swHiT, swLoT, offForHi, offForLo]
+     tgtForHi, tgtForLo, pTgHi, pTgLo, swHiT, swLoT, offForHi, offForLo,
+     tgt2ForHi, tgt2ForLo, pTg2Hi, pTg2Lo, sw2HiT, sw2LoT, off2ForHi, off2ForLo]
 
 // Which way a target points is fixed by the mode: a high sweep aims up when
 // continuing, a low sweep aims up when reversing.
@@ -288,10 +331,10 @@ upLo = not contMode
 // timeframe bar, so high[1] inside would resolve two periods back and every
 // level would be off by one. Because nothing here ever reads the forming bar,
 // lookahead leaks no future data.
-[dHi, dLo, dSwH, dSwL, dRvH, dRvL, dRcH, dRcL, dN, dNr, dTgH, dTgL, dPtH, dPtL, dTnH, dTnL, dOfH, dOfL] = request.security(syminfo.tickerid, "1D",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
-[wHi, wLo, wSwH, wSwL, wRvH, wRvL, wRcH, wRcL, wN, wNr, wTgH, wTgL, wPtH, wPtL, wTnH, wTnL, wOfH, wOfL] = request.security(syminfo.tickerid, "1W",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
-[mHi, mLo, mSwH, mSwL, mRvH, mRvL, mRcH, mRcL, mN, mNr, mTgH, mTgL, mPtH, mPtL, mTnH, mTnL, mOfH, mOfL] = request.security(syminfo.tickerid, "1M",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
-[yHi, yLo, ySwH, ySwL, yRvH, yRvL, yRcH, yRcL, yN, yNr, yTgH, yTgL, yPtH, yPtL, yTnH, yTnL, yOfH, yOfL] = request.security(syminfo.tickerid, "12M", f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
+[dHi, dLo, dSwH, dSwL, dRvH, dRvL, dRcH, dRcL, dN, dNr, dTgH, dTgL, dPtH, dPtL, dTnH, dTnL, dOfH, dOfL, dT2H, dT2L, dP2H, dP2L, dN2H, dN2L, dO2H, dO2L] = request.security(syminfo.tickerid, "1D",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
+[wHi, wLo, wSwH, wSwL, wRvH, wRvL, wRcH, wRcL, wN, wNr, wTgH, wTgL, wPtH, wPtL, wTnH, wTnL, wOfH, wOfL, wT2H, wT2L, wP2H, wP2L, wN2H, wN2L, wO2H, wO2L] = request.security(syminfo.tickerid, "1W",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
+[mHi, mLo, mSwH, mSwL, mRvH, mRvL, mRcH, mRcL, mN, mNr, mTgH, mTgL, mPtH, mPtL, mTnH, mTnL, mOfH, mOfL, mT2H, mT2L, mP2H, mP2L, mN2H, mN2L, mO2H, mO2L] = request.security(syminfo.tickerid, "1M",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
+[yHi, yLo, ySwH, ySwL, yRvH, yRvL, yRcH, yRcL, yN, yNr, yTgH, yTgL, yPtH, yPtL, yTnH, yTnL, yOfH, yOfL, yT2H, yT2L, yP2H, yP2L, yN2H, yN2L, yO2H, yO2L] = request.security(syminfo.tickerid, "12M", f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
 
 // ====================== Chart-side period tracking ===========================
 // Index 0 = Day, 1 = Week, 2 = Month, 3 = Year.
@@ -307,6 +350,8 @@ var array<bool> hitHi   = array.new<bool>(4, false)
 var array<bool> hitLo   = array.new<bool>(4, false)
 var array<bool> tgtHiOk = array.new<bool>(4, false)
 var array<bool> tgtLoOk = array.new<bool>(4, false)
+var array<bool> tg2HiOk = array.new<bool>(4, false)
+var array<bool> tg2LoOk = array.new<bool>(4, false)
 
 if array.size(pb) == 0
     for i = 0 to 3
@@ -327,6 +372,8 @@ f_roll(int i, bool isNew) =>
         array.set(hitLo,   i, false)
         array.set(tgtHiOk, i, false)
         array.set(tgtLoOk, i, false)
+        array.set(tg2HiOk, i, false)
+        array.set(tg2LoOk, i, false)
     isNew
 
 // Start bar of the period `k` back from the one now forming.
@@ -361,21 +408,31 @@ f_mark(int i, float lvlHi, float lvlLo) =>
 // ---- live target detection, strictly after its level was taken --------------
 // A high sweep aims DOWN at tHi (the low two periods back); a low sweep aims UP
 // at tLo (the high two periods back).
-f_target(int i, float tHi, float tLo) =>
+// T2 sits beyond T1 on the same side, so reaching it implies T1 was passed on
+// the way; no extra ordering logic is needed beyond requiring the sweep first.
+f_target(int i, float tHi, float tLo, float t2Hi, float t2Lo) =>
     bool firedHi = false
     bool firedLo = false
+    bool fired2Hi = false
+    bool fired2Lo = false
     if array.get(hitHi, i) and not na(tHi) and (upHi ? high >= tHi : low <= tHi) and not array.get(tgtHiOk, i)
         array.set(tgtHiOk, i, true)
         firedHi := true
     if array.get(hitLo, i) and not na(tLo) and (upLo ? high >= tLo : low <= tLo) and not array.get(tgtLoOk, i)
         array.set(tgtLoOk, i, true)
         firedLo := true
-    [firedHi, firedLo]
+    if array.get(hitHi, i) and not na(t2Hi) and (upHi ? high >= t2Hi : low <= t2Hi) and not array.get(tg2HiOk, i)
+        array.set(tg2HiOk, i, true)
+        fired2Hi := true
+    if array.get(hitLo, i) and not na(t2Lo) and (upLo ? high >= t2Lo : low <= t2Lo) and not array.get(tg2LoOk, i)
+        array.set(tg2LoOk, i, true)
+        fired2Lo := true
+    [firedHi, firedLo, fired2Hi, fired2Lo]
 
-[tdH, tdL] = f_target(0, dTgH, dTgL)
-[twH, twL] = f_target(1, wTgH, wTgL)
-[tmH, tmL] = f_target(2, mTgH, mTgL)
-[tyH, tyL] = f_target(3, yTgH, yTgL)
+[tdH, tdL, udH, udL] = f_target(0, dTgH, dTgL, dT2H, dT2L)
+[twH, twL, uwH, uwL] = f_target(1, wTgH, wTgL, wT2H, wT2L)
+[tmH, tmL, umH, umL] = f_target(2, mTgH, mTgL, mT2H, mT2L)
+[tyH, tyL, uyH, uyL] = f_target(3, yTgH, yTgL, yT2H, yT2L)
 
 // ================================ Drawing ====================================
 var array<line>  lns = array.new<line>()
@@ -411,14 +468,14 @@ f_level(int i, string tag, color col, float lvl, float pSweep, float n, bool swe
 
 // Target 1: anchored at the period two back that produced it. Drawn only once
 // its level has been swept, unless the user asks to see targets in advance.
-f_target1(int i, string tag, color tfCol, float lvl, float p, float n, int off, bool active, bool reached) =>
-    if showTgt and not na(lvl) and (active or tgtAlways)
+f_target1(int i, string tag, color tfCol, float lvl, float p, float n, int off, bool active, bool reached, bool rung2) =>
+    if (rung2 ? showTgt2 : showTgt) and not na(lvl) and (active or tgtAlways)
         int src = f_startOf(i, off)
         int x1 = na(src) ? math.max(0, bar_index - 100) : src
         color baseC = tgtByTf ? tfCol : tgtCol
         color c = reached ? sweptCol : active ? baseC : color.new(baseC, 55)
         line ln = line.new(x1, lvl, bar_index + rightPad, lvl, xloc=xloc.bar_index,
-             color=c, style=reached ? line.style_dotted : tgtStyle, width=tgtW)
+             color=rung2 ? color.new(c, 35) : c, style=reached ? line.style_dotted : tgtStyle, width=tgtW)
         array.push(lns, ln)
         string txt = tag + "  " + str.tostring(lvl, format.mintick)
         if probIn
@@ -459,43 +516,53 @@ if barstate.islast
         f_srcBox(0, colD, dHi, dLo)
         if showHi
             f_level(0, "PDH", colD, dHi, dSwH, dN, array.get(hitHi, 0))
-            f_target1(0, "PDH T1", colD, dTgH, dPtH, dTnH, dOfH, array.get(hitHi, 0), array.get(tgtHiOk, 0))
+            f_target1(0, "PDH T1", colD, dTgH, dPtH, dTnH, dOfH, array.get(hitHi, 0), array.get(tgtHiOk, 0), false)
+            f_target1(0, "PDH T2", colD, dT2H, dP2H, dN2H, dO2H, array.get(hitHi, 0), array.get(tg2HiOk, 0), true)
         if showLo
             f_level(0, "PDL", colD, dLo, dSwL, dN, array.get(hitLo, 0))
-            f_target1(0, "PDL T1", colD, dTgL, dPtL, dTnL, dOfL, array.get(hitLo, 0), array.get(tgtLoOk, 0))
+            f_target1(0, "PDL T1", colD, dTgL, dPtL, dTnL, dOfL, array.get(hitLo, 0), array.get(tgtLoOk, 0), false)
+            f_target1(0, "PDL T2", colD, dT2L, dP2L, dN2L, dO2L, array.get(hitLo, 0), array.get(tg2LoOk, 0), true)
     if onW
         f_srcBox(1, colW, wHi, wLo)
         if showHi
             f_level(1, "PWH", colW, wHi, wSwH, wN, array.get(hitHi, 1))
-            f_target1(1, "PWH T1", colW, wTgH, wPtH, wTnH, wOfH, array.get(hitHi, 1), array.get(tgtHiOk, 1))
+            f_target1(1, "PWH T1", colW, wTgH, wPtH, wTnH, wOfH, array.get(hitHi, 1), array.get(tgtHiOk, 1), false)
+            f_target1(1, "PWH T2", colW, wT2H, wP2H, wN2H, wO2H, array.get(hitHi, 1), array.get(tg2HiOk, 1), true)
         if showLo
             f_level(1, "PWL", colW, wLo, wSwL, wN, array.get(hitLo, 1))
-            f_target1(1, "PWL T1", colW, wTgL, wPtL, wTnL, wOfL, array.get(hitLo, 1), array.get(tgtLoOk, 1))
+            f_target1(1, "PWL T1", colW, wTgL, wPtL, wTnL, wOfL, array.get(hitLo, 1), array.get(tgtLoOk, 1), false)
+            f_target1(1, "PWL T2", colW, wT2L, wP2L, wN2L, wO2L, array.get(hitLo, 1), array.get(tg2LoOk, 1), true)
     if onM
         f_srcBox(2, colM, mHi, mLo)
         if showHi
             f_level(2, "PMH", colM, mHi, mSwH, mN, array.get(hitHi, 2))
-            f_target1(2, "PMH T1", colM, mTgH, mPtH, mTnH, mOfH, array.get(hitHi, 2), array.get(tgtHiOk, 2))
+            f_target1(2, "PMH T1", colM, mTgH, mPtH, mTnH, mOfH, array.get(hitHi, 2), array.get(tgtHiOk, 2), false)
+            f_target1(2, "PMH T2", colM, mT2H, mP2H, mN2H, mO2H, array.get(hitHi, 2), array.get(tg2HiOk, 2), true)
         if showLo
             f_level(2, "PML", colM, mLo, mSwL, mN, array.get(hitLo, 2))
-            f_target1(2, "PML T1", colM, mTgL, mPtL, mTnL, mOfL, array.get(hitLo, 2), array.get(tgtLoOk, 2))
+            f_target1(2, "PML T1", colM, mTgL, mPtL, mTnL, mOfL, array.get(hitLo, 2), array.get(tgtLoOk, 2), false)
+            f_target1(2, "PML T2", colM, mT2L, mP2L, mN2L, mO2L, array.get(hitLo, 2), array.get(tg2LoOk, 2), true)
     if onY
         f_srcBox(3, colY, yHi, yLo)
         if showHi
             f_level(3, "PYH", colY, yHi, ySwH, yN, array.get(hitHi, 3))
-            f_target1(3, "PYH T1", colY, yTgH, yPtH, yTnH, yOfH, array.get(hitHi, 3), array.get(tgtHiOk, 3))
+            f_target1(3, "PYH T1", colY, yTgH, yPtH, yTnH, yOfH, array.get(hitHi, 3), array.get(tgtHiOk, 3), false)
+            f_target1(3, "PYH T2", colY, yT2H, yP2H, yN2H, yO2H, array.get(hitHi, 3), array.get(tg2HiOk, 3), true)
         if showLo
             f_level(3, "PYL", colY, yLo, ySwL, yN, array.get(hitLo, 3))
-            f_target1(3, "PYL T1", colY, yTgL, yPtL, yTnL, yOfL, array.get(hitLo, 3), array.get(tgtLoOk, 3))
+            f_target1(3, "PYL T1", colY, yTgL, yPtL, yTnL, yOfL, array.get(hitLo, 3), array.get(tgtLoOk, 3), false)
+            f_target1(3, "PYL T2", colY, yT2L, yP2L, yN2L, yO2L, array.get(hitLo, 3), array.get(tg2LoOk, 3), true)
 
 // ================================= Alerts ====================================
 anyHi  = fdH or fwH or fmH or fyH
 anyLo  = fdL or fwL or fmL or fyL
-anyTgt = tdH or tdL or twH or twL or tmH or tmL or tyH or tyL
+anyTgt  = tdH or tdL or twH or twL or tmH or tmL or tyH or tyL
+anyTgt2 = udH or udL or uwH or uwL or umH or umL or uyH or uyL
 
 alertcondition(anyHi,  "Buy-side liquidity swept",  "A previous high was taken")
 alertcondition(anyLo,  "Sell-side liquidity swept", "A previous low was taken")
-alertcondition(anyTgt, "Target 1 reached",          "Price reached Target 1 after a sweep")
+alertcondition(anyTgt,  "Target 1 reached",         "Price reached Target 1 after a sweep")
+alertcondition(anyTgt2, "Target 2 reached",         "Price reached Target 2 after a sweep")
 
 f_alert(bool fired, string tag, float lvl, float p) =>
     if alertOn and fired
@@ -503,9 +570,9 @@ f_alert(bool fired, string tag, float lvl, float p) =>
              "  (historical sweep rate " + f_pct(p) + ")", alert.freq_once_per_bar)
     fired
 
-f_alertT(bool fired, string tag, float lvl, float p) =>
+f_alertT(bool fired, string tag, string rung, float lvl, float p) =>
     if alertOn and fired
-        alert(syminfo.ticker + "  " + tag + " Target 1 reached at " + str.tostring(lvl, format.mintick) +
+        alert(syminfo.ticker + "  " + tag + " " + rung + " reached at " + str.tostring(lvl, format.mintick) +
              "  (historical hit rate " + f_pct(p) + ")", alert.freq_once_per_bar)
     fired
 
@@ -518,23 +585,31 @@ f_alert(fmL, "PML", mLo, mSwL)
 f_alert(fyH, "PYH", yHi, ySwH)
 f_alert(fyL, "PYL", yLo, ySwL)
 
-f_alertT(tdH, "PDH", dTgH, dPtH)
-f_alertT(tdL, "PDL", dTgL, dPtL)
-f_alertT(twH, "PWH", wTgH, wPtH)
-f_alertT(twL, "PWL", wTgL, wPtL)
-f_alertT(tmH, "PMH", mTgH, mPtH)
-f_alertT(tmL, "PML", mTgL, mPtL)
-f_alertT(tyH, "PYH", yTgH, yPtH)
-f_alertT(tyL, "PYL", yTgL, yPtL)
+f_alertT(tdH, "PDH", "Target 1", dTgH, dPtH)
+f_alertT(udH, "PDH", "Target 2", dT2H, dP2H)
+f_alertT(tdL, "PDL", "Target 1", dTgL, dPtL)
+f_alertT(udL, "PDL", "Target 2", dT2L, dP2L)
+f_alertT(twH, "PWH", "Target 1", wTgH, wPtH)
+f_alertT(uwH, "PWH", "Target 2", wT2H, wP2H)
+f_alertT(twL, "PWL", "Target 1", wTgL, wPtL)
+f_alertT(uwL, "PWL", "Target 2", wT2L, wP2L)
+f_alertT(tmH, "PMH", "Target 1", mTgH, mPtH)
+f_alertT(umH, "PMH", "Target 2", mT2H, mP2H)
+f_alertT(tmL, "PML", "Target 1", mTgL, mPtL)
+f_alertT(umL, "PML", "Target 2", mT2L, mP2L)
+f_alertT(tyH, "PYH", "Target 1", yTgH, yPtH)
+f_alertT(uyH, "PYH", "Target 2", yT2H, yP2H)
+f_alertT(tyL, "PYL", "Target 1", yTgL, yPtL)
+f_alertT(uyL, "PYL", "Target 2", yT2L, yP2L)
 
 // =============================== Stats table =================================
 posSel  = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : tblPos == "middle_right" ? position.middle_right : position.top_right
 tSzSel  = tblSize == "tiny" ? size.tiny : tblSize == "normal" ? size.normal : tblSize == "large" ? size.large : size.small
 
-var table t = table.new(posSel, 9, 10, border_width=1, frame_color=color.new(color.gray, 55), frame_width=1)
+var table t = table.new(posSel, 11, 10, border_width=1, frame_color=color.new(color.gray, 55), frame_width=1)
 
 f_row(int r, string tag, color col, float lvl, float pAll, float pRec, float pRev,
-      float tgt, float pTgt, float n, bool swept, bool tgtDone) =>
+      float tgt, float pTgt, float tgt2, float pTgt2, float n, bool swept, bool tgtDone, bool tgt2Done) =>
     bg   = color.new(color.black, 15)
     warn = color.new(color.orange, 40)
     cellBg = nz(n) < minN ? warn : bg
@@ -545,9 +620,11 @@ f_row(int r, string tag, color col, float lvl, float pAll, float pRec, float pRe
     table.cell(t, 4, r, f_pct(pRev), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
     table.cell(t, 5, r, na(tgt) ? "—" : str.tostring(tgt, format.mintick), bgcolor=bg, text_color=tgtDone ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel)
     table.cell(t, 6, r, f_pct(pTgt), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
-    table.cell(t, 7, r, str.tostring(n, "#"), bgcolor=bg, text_color=color.gray, text_size=tSzSel)
-    table.cell(t, 8, r, tgtDone ? "T1 HIT" : swept ? "SWEPT" : "open", bgcolor=bg,
-         text_color=tgtDone ? (tgtByTf ? col : tgtCol) : swept ? color.gray : col, text_size=tSzSel)
+    table.cell(t, 7, r, na(tgt2) ? "—" : str.tostring(tgt2, format.mintick), bgcolor=bg, text_color=tgt2Done ? color.gray : (tgtByTf ? col : tgtCol), text_size=tSzSel)
+    table.cell(t, 8, r, f_pct(pTgt2), bgcolor=cellBg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 9, r, str.tostring(n, "#"), bgcolor=bg, text_color=color.gray, text_size=tSzSel)
+    table.cell(t, 10, r, tgt2Done ? "T2 HIT" : tgtDone ? "T1 HIT" : swept ? "SWEPT" : "open", bgcolor=bg,
+         text_color=(tgtDone or tgt2Done) ? (tgtByTf ? col : tgtCol) : swept ? color.gray : col, text_size=tSzSel)
     true
 
 if barstate.islast and showTbl
@@ -559,31 +636,33 @@ if barstate.islast and showTbl
     table.cell(t, 4, 0, "Rev",    bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Of the times this level was swept, how often price closed back inside it. High = stop hunt and reversal. Low = the level breaks and price keeps going.")
     table.cell(t, 5, 0, "T1",     bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Target 1 under the current mode (" + tgtMode + "): the nearest earlier candle that extends beyond the one that supplied this level, searched from two periods back.")
     table.cell(t, 6, 0, "T1 hit", bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Given this level was swept, how often price also reached Target 1 in the same period. A single higher-timeframe candle does not record whether the high came before the low, so this counts 'swept AND reached' rather than strictly 'reached after sweeping'.")
-    table.cell(t, 7, 0, "n",      bgcolor=hbg, text_color=color.white, text_size=tSzSel)
-    table.cell(t, 8, 0, "Status", bgcolor=hbg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 7, 0, "T2",     bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Target 2: the first candle beyond Target 1 in the same direction — the next pool of liquidity out.")
+    table.cell(t, 8, 0, "T2 hit", bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Given this level was swept, how often price also reached Target 2. Always at or below the T1 figure, since T2 lies beyond T1 on the same side. The gap between the two columns is how often a move that reaches T1 keeps going.")
+    table.cell(t, 9, 0, "n",      bgcolor=hbg, text_color=color.white, text_size=tSzSel)
+    table.cell(t, 10, 0, "Status", bgcolor=hbg, text_color=color.white, text_size=tSzSel)
 
     int r = 1
     if onD and showHi
-        f_row(r, "PDH", colD, dHi, dSwH, dRcH, dRvH, dTgH, dPtH, dN, array.get(hitHi, 0), array.get(tgtHiOk, 0))
+        f_row(r, "PDH", colD, dHi, dSwH, dRcH, dRvH, dTgH, dPtH, dT2H, dP2H, dN, array.get(hitHi, 0), array.get(tgtHiOk, 0), array.get(tg2HiOk, 0))
         r += 1
     if onD and showLo
-        f_row(r, "PDL", colD, dLo, dSwL, dRcL, dRvL, dTgL, dPtL, dN, array.get(hitLo, 0), array.get(tgtLoOk, 0))
+        f_row(r, "PDL", colD, dLo, dSwL, dRcL, dRvL, dTgL, dPtL, dT2L, dP2L, dN, array.get(hitLo, 0), array.get(tgtLoOk, 0), array.get(tg2LoOk, 0))
         r += 1
     if onW and showHi
-        f_row(r, "PWH", colW, wHi, wSwH, wRcH, wRvH, wTgH, wPtH, wN, array.get(hitHi, 1), array.get(tgtHiOk, 1))
+        f_row(r, "PWH", colW, wHi, wSwH, wRcH, wRvH, wTgH, wPtH, wT2H, wP2H, wN, array.get(hitHi, 1), array.get(tgtHiOk, 1), array.get(tg2HiOk, 1))
         r += 1
     if onW and showLo
-        f_row(r, "PWL", colW, wLo, wSwL, wRcL, wRvL, wTgL, wPtL, wN, array.get(hitLo, 1), array.get(tgtLoOk, 1))
+        f_row(r, "PWL", colW, wLo, wSwL, wRcL, wRvL, wTgL, wPtL, wT2L, wP2L, wN, array.get(hitLo, 1), array.get(tgtLoOk, 1), array.get(tg2LoOk, 1))
         r += 1
     if onM and showHi
-        f_row(r, "PMH", colM, mHi, mSwH, mRcH, mRvH, mTgH, mPtH, mN, array.get(hitHi, 2), array.get(tgtHiOk, 2))
+        f_row(r, "PMH", colM, mHi, mSwH, mRcH, mRvH, mTgH, mPtH, mT2H, mP2H, mN, array.get(hitHi, 2), array.get(tgtHiOk, 2), array.get(tg2HiOk, 2))
         r += 1
     if onM and showLo
-        f_row(r, "PML", colM, mLo, mSwL, mRcL, mRvL, mTgL, mPtL, mN, array.get(hitLo, 2), array.get(tgtLoOk, 2))
+        f_row(r, "PML", colM, mLo, mSwL, mRcL, mRvL, mTgL, mPtL, mT2L, mP2L, mN, array.get(hitLo, 2), array.get(tgtLoOk, 2), array.get(tg2LoOk, 2))
         r += 1
     if onY and showHi
-        f_row(r, "PYH", colY, yHi, ySwH, yRcH, yRvH, yTgH, yPtH, yN, array.get(hitHi, 3), array.get(tgtHiOk, 3))
+        f_row(r, "PYH", colY, yHi, ySwH, yRcH, yRvH, yTgH, yPtH, yT2H, yP2H, yN, array.get(hitHi, 3), array.get(tgtHiOk, 3), array.get(tg2HiOk, 3))
         r += 1
     if onY and showLo
-        f_row(r, "PYL", colY, yLo, ySwL, yRcL, yRvL, yTgL, yPtL, yN, array.get(hitLo, 3), array.get(tgtLoOk, 3))
+        f_row(r, "PYL", colY, yLo, ySwL, yRcL, yRvL, yTgL, yPtL, yT2L, yP2L, yN, array.get(hitLo, 3), array.get(tgtLoOk, 3), array.get(tg2LoOk, 3))
         r += 1
