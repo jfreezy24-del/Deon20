@@ -20,21 +20,35 @@
 //   * RECENT vs ALL-TIME — the same sweep probability over the last N periods
 //                          only, so you can see whether behaviour has shifted.
 //
-// TARGET 1:
-//   Once a level is swept, the objective is the opposite side of an EARLIER
-//   candle — but only one that actually extends beyond the candle that was
-//   swept. The search starts two periods back and walks further back until it
-//   finds a qualifying candle:
+// TARGET 1 — two modes:
+//
+//   CONTINUATION (same side). The sweep keeps going. Target sits on the SAME
+//   side as the liquidity that was taken — the next earlier candle that pushed
+//   further in that direction:
+//
+//       previous HIGH swept  ->  T1 = the HIGH of the first earlier candle
+//                                whose HIGH is ABOVE the swept candle's high
+//       previous LOW  swept  ->  T1 = the LOW of the first earlier candle
+//                                whose LOW is BELOW the swept candle's low
+//
+//   REVERSAL (opposite side). The sweep is a stop hunt and price turns. Target
+//   sits on the far side of the swept candle:
 //
 //       previous HIGH swept  ->  T1 = the LOW of the first earlier candle
 //                                whose LOW is BELOW the swept candle's low
 //       previous LOW  swept  ->  T1 = the HIGH of the first earlier candle
 //                                whose HIGH is ABOVE the swept candle's high
 //
-//   Without that condition the "target" can land inside the range price has
-//   already traded through, which makes it meaningless. If no qualifying
-//   candle exists within the search depth, no target is drawn and the period
-//   is excluded from the target statistics rather than counted as a miss.
+//   Both modes start the search two periods back and walk further back until
+//   a candle qualifies. Without the "must extend beyond the swept candle"
+//   condition the target can land inside the range price has already traded
+//   through, which makes it meaningless. If nothing qualifies within the
+//   search depth, no target is drawn and that period is excluded from the
+//   target statistics rather than counted as a miss.
+//
+//   Each mode has its own historical hit rate, so running the indicator twice
+//   — once per mode — tells you directly whether sweeps on this asset more
+//   often continue or reverse.
 //
 //   Each target carries its own conditional probability: given the level was
 //   swept, how often did price go on to reach that target inside the same
@@ -53,7 +67,7 @@
 // sell-side liquidity do not get taken at the same rate.
 //
 // Every line is anchored to the candle that created it, so a level starts at
-// its source period and a target starts at the period two back that produced
+// its source period and a target starts at whichever earlier period produced
 // it. Each carries a price label, and taken levels are marked SWEPT.
 //
 // DATA: statistics come from the chart symbol's own full higher-timeframe
@@ -79,7 +93,8 @@ showLo = input.bool(true, "Show lows (sell-side liquidity)", group=grpL)
 hideSwept = input.bool(false, "Hide levels once swept", group=grpL, tooltip="Off by default: a swept level is still information — it tells you the liquidity there is gone.")
 
 grpTg = "Targets"
-showTgt   = input.bool(true, "Show Target 1", group=grpTg, tooltip="After a level is swept, T1 is the OPPOSITE extreme of the candle before the one that supplied the level — two periods back. Sweep the previous high, target the low from two periods back, and vice versa.")
+showTgt   = input.bool(true, "Show Target 1", group=grpTg)
+tgtMode   = input.string("Continuation (same side)", "Target direction", options=["Continuation (same side)","Reversal (opposite side)"], group=grpTg, tooltip="Continuation: the sweep keeps running, so the target is the next earlier candle that pushed FURTHER in the same direction — sweep a high, aim for a higher high.\n\nReversal: the sweep is a stop hunt and price turns, so the target is on the far side — sweep a high, aim for a lower low.\n\nEither way the search starts two periods back and keeps walking until it finds a candle that genuinely extends beyond the swept one. Add the indicator twice, once per mode, to see both targets and compare their hit rates.")
 tgtAlways = input.bool(false, "Show targets before the sweep", group=grpTg, tooltip="Off by default, so a target only appears once its level has actually been taken. Turn on to see in advance where each target sits.")
 tgtByTf   = input.bool(true, "Colour targets by their timeframe", group=grpTg, tooltip="On: a daily target is drawn in the daily colour, a weekly target in the weekly colour, so every line stays matched to the timeframe it came from. Off: all targets use the single colour below.")
 tgtCol    = input.color(#e0e0e0, "Target color (when not coloured by timeframe)", group=grpTg)
@@ -141,7 +156,24 @@ f_find(array<float> buf, int startIdx, float ref, bool up) =>
                 break
     [res, off]
 
-f_liq(int recN, int look) =>
+// Resolve Target 1 for one side of a sweep. `up` falls out of the mode: a high
+// sweep continues upward or reverses downward, and a low sweep does the
+// reverse, so the side searched is simply whether the sweep and the mode agree.
+f_tgt(array<float> hB, array<float> lB, int startIdx, float refHi, float refLo, bool sweptHigh, bool cont) =>
+    bool up = sweptHigh == cont
+    float v = na
+    int o = 0
+    if up
+        [vv, oo] = f_find(hB, startIdx, refHi, true)
+        v := vv
+        o := oo
+    else
+        [vv2, oo2] = f_find(lB, startIdx, refLo, false)
+        v := vv2
+        o := oo2
+    [v, o, up]
+
+f_liq(int recN, int look, bool cont) =>
     var int nTot = 0
     var int swHi = 0
     var int rvHi = 0
@@ -189,16 +221,16 @@ f_liq(int recN, int look) =>
             int m = array.size(hBuf)
             if m >= 2
                 if sh
-                    [t1Lo, _o1] = f_find(lBuf, m - 2, pl, false)
-                    if not na(t1Lo)
+                    [t1a, _o1, up1] = f_tgt(hBuf, lBuf, m - 2, ph, pl, true, cont)
+                    if not na(t1a)
                         swHiT += 1
-                        if l <= t1Lo
+                        if up1 ? h >= t1a : l <= t1a
                             tgHi += 1
                 if sl
-                    [t1Hi, _o2] = f_find(hBuf, m - 2, ph, true)
-                    if not na(t1Hi)
+                    [t1b, _o2, up2] = f_tgt(hBuf, lBuf, m - 2, ph, pl, false, cont)
+                    if not na(t1b)
                         swLoT += 1
-                        if h >= t1Hi
+                        if up2 ? h >= t1b : l <= t1b
                             tgLo += 1
 
             array.push(recHi, sh ? 1.0 : 0.0)
@@ -223,8 +255,8 @@ f_liq(int recN, int look) =>
     int mm = array.size(hBuf)
     float refHi = mm > 0 ? array.get(hBuf, mm - 1) : na
     float refLo = mm > 0 ? array.get(lBuf, mm - 1) : na
-    [tgtForHi, offForHi] = f_find(lBuf, mm - 2, refLo, false)
-    [tgtForLo, offForLo] = f_find(hBuf, mm - 2, refHi, true)
+    [tgtForHi, offForHi, _uh] = f_tgt(hBuf, lBuf, mm - 2, refHi, refLo, true,  cont)
+    [tgtForLo, offForLo, _ul] = f_tgt(hBuf, lBuf, mm - 2, refHi, refLo, false, cont)
 
     int nRec = array.size(recHi)
     float pSwHiAll = nTot > 0 ? swHi * 1.0 / nTot : na
@@ -244,16 +276,22 @@ f_liq(int recN, int look) =>
     [high[1], low[1], pSwHiAll, pSwLoAll, pRvHi, pRvLo, pSwHiRec, pSwLoRec, nTot, nRec,
      tgtForHi, tgtForLo, pTgHi, pTgLo, swHiT, swLoT, offForHi, offForLo]
 
+// Which way a target points is fixed by the mode: a high sweep aims up when
+// continuing, a low sweep aims up when reversing.
+contMode = tgtMode == "Continuation (same side)"
+upHi = contMode
+upLo = not contMode
+
 // lookahead_on paired with strictly historical references ([1], [2], [3] inside
 // the engine) is the correct idiom for previous-period levels. Without it the
 // value delivered during a live period comes from the last CLOSED higher
 // timeframe bar, so high[1] inside would resolve two periods back and every
 // level would be off by one. Because nothing here ever reads the forming bar,
 // lookahead leaks no future data.
-[dHi, dLo, dSwH, dSwL, dRvH, dRvL, dRcH, dRcL, dN, dNr, dTgH, dTgL, dPtH, dPtL, dTnH, dTnL, dOfH, dOfL] = request.security(syminfo.tickerid, "1D",  f_liq(recentN, tgtLook), lookahead = barmerge.lookahead_on)
-[wHi, wLo, wSwH, wSwL, wRvH, wRvL, wRcH, wRcL, wN, wNr, wTgH, wTgL, wPtH, wPtL, wTnH, wTnL, wOfH, wOfL] = request.security(syminfo.tickerid, "1W",  f_liq(recentN, tgtLook), lookahead = barmerge.lookahead_on)
-[mHi, mLo, mSwH, mSwL, mRvH, mRvL, mRcH, mRcL, mN, mNr, mTgH, mTgL, mPtH, mPtL, mTnH, mTnL, mOfH, mOfL] = request.security(syminfo.tickerid, "1M",  f_liq(recentN, tgtLook), lookahead = barmerge.lookahead_on)
-[yHi, yLo, ySwH, ySwL, yRvH, yRvL, yRcH, yRcL, yN, yNr, yTgH, yTgL, yPtH, yPtL, yTnH, yTnL, yOfH, yOfL] = request.security(syminfo.tickerid, "12M", f_liq(recentN, tgtLook), lookahead = barmerge.lookahead_on)
+[dHi, dLo, dSwH, dSwL, dRvH, dRvL, dRcH, dRcL, dN, dNr, dTgH, dTgL, dPtH, dPtL, dTnH, dTnL, dOfH, dOfL] = request.security(syminfo.tickerid, "1D",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
+[wHi, wLo, wSwH, wSwL, wRvH, wRvL, wRcH, wRcL, wN, wNr, wTgH, wTgL, wPtH, wPtL, wTnH, wTnL, wOfH, wOfL] = request.security(syminfo.tickerid, "1W",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
+[mHi, mLo, mSwH, mSwL, mRvH, mRvL, mRcH, mRcL, mN, mNr, mTgH, mTgL, mPtH, mPtL, mTnH, mTnL, mOfH, mOfL] = request.security(syminfo.tickerid, "1M",  f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
+[yHi, yLo, ySwH, ySwL, yRvH, yRvL, yRcH, yRcL, yN, yNr, yTgH, yTgL, yPtH, yPtL, yTnH, yTnL, yOfH, yOfL] = request.security(syminfo.tickerid, "12M", f_liq(recentN, tgtLook, contMode), lookahead = barmerge.lookahead_on)
 
 // ====================== Chart-side period tracking ===========================
 // Index 0 = Day, 1 = Week, 2 = Month, 3 = Year.
@@ -326,10 +364,10 @@ f_mark(int i, float lvlHi, float lvlLo) =>
 f_target(int i, float tHi, float tLo) =>
     bool firedHi = false
     bool firedLo = false
-    if array.get(hitHi, i) and not na(tHi) and low <= tHi and not array.get(tgtHiOk, i)
+    if array.get(hitHi, i) and not na(tHi) and (upHi ? high >= tHi : low <= tHi) and not array.get(tgtHiOk, i)
         array.set(tgtHiOk, i, true)
         firedHi := true
-    if array.get(hitLo, i) and not na(tLo) and high >= tLo and not array.get(tgtLoOk, i)
+    if array.get(hitLo, i) and not na(tLo) and (upLo ? high >= tLo : low <= tLo) and not array.get(tgtLoOk, i)
         array.set(tgtLoOk, i, true)
         firedLo := true
     [firedHi, firedLo]
@@ -390,7 +428,7 @@ f_target1(int i, string tag, color tfCol, float lvl, float p, float n, int off, 
              style=label.style_label_left, color=color.new(c, 88), textcolor=c,
              size=lblSzSel, tooltip="Target 1 for " + tag + ": reached on " + f_pct(p) + " of the " +
                   str.tostring(n, "#") + " recorded sweeps of this level.\nFound " +
-                  str.tostring(off) + " periods back — the nearest candle extending beyond the swept one.")
+                  str.tostring(off) + " periods back — the nearest candle extending beyond the swept one.\nMode: " + tgtMode)
         array.push(lbs, lb)
     true
 
@@ -519,7 +557,7 @@ if barstate.islast and showTbl
     table.cell(t, 2, 0, "Sweep",  bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Share of periods in which this level was traded through at some point. All available history.")
     table.cell(t, 3, 0, "Recent", bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Same probability over the last " + str.tostring(recentN) + " periods only. A wide gap versus the all-time column means behaviour has shifted.")
     table.cell(t, 4, 0, "Rev",    bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Of the times this level was swept, how often price closed back inside it. High = stop hunt and reversal. Low = the level breaks and price keeps going.")
-    table.cell(t, 5, 0, "T1",     bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Target 1: the opposite extreme of the candle before the one that supplied this level — two periods back.")
+    table.cell(t, 5, 0, "T1",     bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Target 1 under the current mode (" + tgtMode + "): the nearest earlier candle that extends beyond the one that supplied this level, searched from two periods back.")
     table.cell(t, 6, 0, "T1 hit", bgcolor=hbg, text_color=color.white, text_size=tSzSel, tooltip="Given this level was swept, how often price also reached Target 1 in the same period. A single higher-timeframe candle does not record whether the high came before the low, so this counts 'swept AND reached' rather than strictly 'reached after sweeping'.")
     table.cell(t, 7, 0, "n",      bgcolor=hbg, text_color=color.white, text_size=tSzSel)
     table.cell(t, 8, 0, "Status", bgcolor=hbg, text_color=color.white, text_size=tSzSel)
