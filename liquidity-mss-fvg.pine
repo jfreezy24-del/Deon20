@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // =============================================================================
 // Liquidity, MSS & FVG
 // -----------------------------------------------------------------------------
@@ -144,9 +144,8 @@ f_trimSwingArray(arr, maxLen) =>
     bool keepTrimming = true
     while array.size(arr) > maxLen and keepTrimming
         SwingPoint oldest = array.get(arr, 0)
-        if oldest.pendingMSS
-            keepTrimming := false
-        else
+        keepTrimming := not oldest.pendingMSS
+        if keepTrimming
             f_deleteSwingVisuals(array.shift(arr))
 
 f_findExactHighBar(float val) =>
