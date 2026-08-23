@@ -58,6 +58,7 @@ i_sweptStyle        = input.string("Dotted", "Once Swept       ", options=["Soli
 i_sweptFade         = input.int(70, "Fade", minval=0, maxval=95, inline="liq_sw", group=grpStyle, tooltip="Transparency applied to a swept pool's line. Its label text fades by half as much, so the text stays readable while the line recedes.")
 i_showLiqLabels     = input.bool(true, "Text Labels      ", inline="liq_lbl", group=grpStyle)
 i_labelSize         = input.string("Small", "", options=["Tiny", "Small", "Normal"], inline="liq_lbl", group=grpStyle)
+i_showLiqPrice      = input.bool(true, "Price", inline="liq_lbl", group=grpStyle, tooltip="Append the pool's price to its label, after the Buy/Sell Side Liquidity text.")
 i_bslColor          = input.color(color.new(#4e5057, 0), "Buy Side (BSL)   ", inline="liq_col", group=grpStyle)
 i_sslColor          = input.color(color.new(#4e5057, 0), "Sell Side (SSL)", inline="liq_col", group=grpStyle)
 
@@ -137,10 +138,17 @@ f_drawPool(SwingPoint sp, bool isBuySide) =>
              color = color.new(col, 35),
              width = i_lineWidth,
              style = f_lineStyleChoice(i_lineStyle))
+
+    // format.mintick rounds to the symbol's own tick, so the printed price is one
+    // a real order could rest at rather than a raw float tail.
+    string poolText = isBuySide ? "𝗕𝘂𝘆 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆" : "𝗦𝗲𝗹𝗹 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆"
+    if i_showLiqPrice
+        poolText := poolText + "  " + str.tostring(sp.price, format.mintick)
+
     if i_showLiqLabels
         sp.poolLabel := label.new(
              x = math.max(sp.barIndex, bar_index - 8), y = sp.price,
-             text = isBuySide ? "𝗕𝘂𝘆 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆" : "𝗦𝗲𝗹𝗹 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆",
+             text = poolText,
              style = isBuySide ? label.style_label_down : label.style_label_up,
              color = color.new(color.black, 100),
              textcolor = color.new(col, 10), size = f_labelSize(i_labelSize))
