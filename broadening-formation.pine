@@ -27,15 +27,23 @@
 //   expand ends the formation, and that failed pivot together with the one
 //   before it becomes the seed of the next one. The formation on screen is
 //   therefore always the longest run of consecutive expansions ending at the
-//   most recent pivot. Four points is the minimum that is genuinely broadening
-//   — one expansion on each side.
+//   most recent pivot.
+//
+//   Three points is the earliest the structure can be called: the seed high and
+//   low, then the first point that expands on one of them. Only one side has
+//   expanded at that stage, so the other side still has a single point and its
+//   rail is drawn flat through it — there is no second point yet to give it a
+//   slope. It picks up its slope the moment point 4 prints. Four points is the
+//   first count that is broadening on both sides, five the classic count where
+//   the outside-in trade is taken.
 //
 // WHAT IS DRAWN
 //   * THE RAILS — the expanding edges. Each rail is anchored on the most recent
 //     point of its own side and sloped so that every earlier point of that side
 //     sits inside it: the containing trendline a chartist would draw by hand.
-//     Rails project forward, so the edge of the range is visible where it is
-//     NOW, not only where it was.
+//     A side holding only one point so far is drawn flat through it. Rails
+//     project forward, so the edge of the range is visible where it is NOW, not
+//     only where it was.
 //   * THE BODY between the rails, shaded.
 //   * THE LEGS — the real price path 1 -> 2 -> 3 -> ... inside the megaphone.
 //   * NUMBERED POINTS, each carrying in its tooltip the Strat type of the bar
@@ -82,8 +90,8 @@ gStr = "Structure"
 pivLeft  = input.int(2, "Pivot strength   left", minval = 1, maxval = 25, group = gStr, inline = "piv")
 pivRight = input.int(2, "right", minval = 1, maxval = 25, group = gStr, inline = "piv",
      tooltip = "Bars either side of a swing needed to call it a point. Left/right = 1 is the raw bar-by-bar structure; higher values give fewer, larger formations. Right is also the confirmation lag.")
-minPts   = input.int(4, "Minimum points", minval = 4, maxval = 10, group = gStr,
-     tooltip = "How many alternating, expanding points before the formation is drawn. 4 = one expansion on each side (the minimum that is broadening at all), 5 = the classic count where the outside-in trade is taken.")
+minPts   = input.int(3, "Minimum points", minval = 3, maxval = 10, group = gStr,
+     tooltip = "How many alternating, expanding points before the formation is drawn. 3 = the seed high and low plus the first expansion off one of them — the side that has not expanded yet gets a flat rail through its single point until it does. 4 = one expansion on each side. 5 = the classic count where the outside-in trade is taken.")
 
 gDraw = "Formation"
 showRails = input.bool(true, "Rails", group = gDraw, inline = "rail")
