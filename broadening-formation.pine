@@ -1,0 +1,513 @@
+//@version=6
+// =============================================================================
+// Broadening Formation — #TheStrat
+// -----------------------------------------------------------------------------
+// A broadening formation is what a market expanding in BOTH directions looks
+// like: a higher high, then a lower low, then a higher high again, then a lower
+// low again — a megaphone. In #TheStrat it is the structure that gives a trade
+// its magnitude. Actionable signals are measured to "the previous broadening
+// formation point": the last place the other side of the market actually
+// defended.
+//
+// WHAT COUNTS AS A FORMATION
+//   Points are swing pivots that strictly alternate high, low, high, low ... A
+//   same-side pivot that prints before the other side does is merged into the
+//   more extreme of the two, so the sequence can never repeat a side.
+//
+//   Points 1 and 2 are the seed — the first high and the first low, no
+//   condition attached. From point 3 on, every point must EXPAND on the point
+//   two back:
+//
+//       point 3 > point 1     (higher high)
+//       point 4 < point 2     (lower low)
+//       point 5 > point 3     (higher high)
+//       ...
+//
+//   The chain runs for as long as that holds. The first pivot that fails to
+//   expand ends the formation, and that failed pivot together with the one
+//   before it becomes the seed of the next one. The formation on screen is
+//   therefore always the longest run of consecutive expansions ending at the
+//   most recent pivot. Four points is the minimum that is genuinely broadening
+//   — one expansion on each side.
+//
+// WHAT IS DRAWN
+//   * THE RAILS — the expanding edges. Each rail is anchored on the most recent
+//     point of its own side and sloped so that every earlier point of that side
+//     sits inside it: the containing trendline a chartist would draw by hand.
+//     Rails project forward, so the edge of the range is visible where it is
+//     NOW, not only where it was.
+//   * THE BODY between the rails, shaded.
+//   * THE LEGS — the real price path 1 -> 2 -> 3 -> ... inside the megaphone.
+//   * NUMBERED POINTS, each carrying in its tooltip the Strat type of the bar
+//     that made it (1, 2u, 2d, 3) and the price.
+//   * MAGNITUDE and INVALIDATION for the live read (below).
+//   * RAIL TAGS — bars that trade into a projected rail, where the outside-in
+//     entry lives.
+//
+//   Finished formations stay on the chart, trimmed and frozen, so the sequence
+//   of expansions and where each one stopped is readable at a glance.
+//
+// THE TRADE THE STRUCTURE OFFERS
+//   Broadening formations are traded from the outside in. When the newest point
+//   is a high, price has just probed the top rail and failed; the rotation that
+//   follows targets the opposite side, and the magnitude of that rotation is
+//   the previous point — the last low. The formation's own extreme is the
+//   invalidation: taken out, the expansion simply continued and that high is
+//   now the next point of a longer formation.
+//
+//       newest point is a HIGH -> magnitude = previous LOW,  invalid above it
+//       newest point is a LOW  -> magnitude = previous HIGH, invalid below it
+//
+//   ROTATION RATE in the dashboard measures exactly that, on the symbol and
+//   timeframe in front of you: of every point this script has confirmed, how
+//   often price reached the opposite point before taking out the point's own
+//   extreme. Measurement starts at the bar the pivot is CONFIRMED — left+right
+//   bars after the fact — not at the pivot itself, so it counts only what was
+//   tradeable in real time. A bar that does both at once cannot be resolved
+//   without intrabar data; those are counted as ambiguous and excluded from the
+//   rate rather than guessed at.
+//
+// NOTE ON PIVOT STRENGTH
+//   Left/right = 1 gives the raw bar-by-bar structure — every 2u that gets
+//   reversed is a point. Larger values step back to swing structure and print
+//   fewer, bigger formations. The right-hand setting is also the lag: a point
+//   cannot be known until that many bars have closed after it.
+// =============================================================================
+
+indicator("Broadening Formation #TheStrat", "BF", overlay = true,
+     max_lines_count = 500, max_labels_count = 500)
+
+// ================================== Inputs ===================================
+gStr = "Structure"
+pivLeft  = input.int(2, "Pivot strength   left", minval = 1, maxval = 25, group = gStr, inline = "piv")
+pivRight = input.int(2, "right", minval = 1, maxval = 25, group = gStr, inline = "piv",
+     tooltip = "Bars either side of a swing needed to call it a point. Left/right = 1 is the raw bar-by-bar structure; higher values give fewer, larger formations. Right is also the confirmation lag.")
+minPts   = input.int(4, "Minimum points", minval = 4, maxval = 10, group = gStr,
+     tooltip = "How many alternating, expanding points before the formation is drawn. 4 = one expansion on each side (the minimum that is broadening at all), 5 = the classic count where the outside-in trade is taken.")
+
+gDraw = "Formation"
+showRails = input.bool(true, "Rails", group = gDraw, inline = "rail")
+railWidth = input.int(2, "W", minval = 1, maxval = 5, group = gDraw, inline = "rail")
+railStyIn = input.string("Solid", "", options = ["Solid", "Dashed", "Dotted"], group = gDraw, inline = "rail")
+upCol     = input.color(color.rgb(239, 83, 80), "Upper", group = gDraw, inline = "col")
+dnCol     = input.color(color.rgb(38, 166, 154), "Lower", group = gDraw, inline = "col")
+showFill  = input.bool(true, "Shade body", group = gDraw, inline = "fill")
+bodyCol   = input.color(color.rgb(120, 123, 134), "", group = gDraw, inline = "fill")
+fillTrans = input.int(92, "Transp", minval = 50, maxval = 100, group = gDraw, inline = "fill")
+showLegs  = input.bool(true, "Legs (price path through the points)", group = gDraw, inline = "leg")
+legCol    = input.color(color.new(color.gray, 30), "", group = gDraw, inline = "leg")
+showPts   = input.bool(true, "Numbered points", group = gDraw, inline = "pt")
+lblSizeIn = input.string("small", "", options = ["tiny", "small", "normal"], group = gDraw, inline = "pt")
+projBars  = input.int(20, "Project rails forward (bars)", minval = 0, maxval = 200, group = gDraw)
+keepForms = input.int(3, "Finished formations kept", minval = 0, maxval = 10, group = gDraw,
+     tooltip = "0 keeps only the live formation on the chart.")
+
+gLvl = "Magnitude / invalidation"
+showLvls = input.bool(true, "Show levels off the newest point", group = gLvl)
+tgtCol   = input.color(color.rgb(255, 193, 7), "Magnitude", group = gLvl, inline = "lv")
+invCol   = input.color(color.rgb(156, 39, 176), "Invalidation", group = gLvl, inline = "lv")
+showTags = input.bool(true, "Mark bars that tag a projected rail", group = gLvl,
+     tooltip = "The outside-in entry: price trading back into the expanding edge of the formation.")
+
+gTbl = "Dashboard"
+showTbl = input.bool(true, "Show dashboard", group = gTbl)
+tblPos  = input.string("top_right", "Position", options = ["top_right", "top_left", "bottom_right", "bottom_left", "middle_right"], group = gTbl)
+posSel  = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : tblPos == "middle_right" ? position.middle_right : position.top_right
+
+f_style(string s) => s == "Dashed" ? line.style_dashed : s == "Dotted" ? line.style_dotted : line.style_solid
+railStyle = f_style(railStyIn)
+lblSize   = lblSizeIn == "tiny" ? size.tiny : lblSizeIn == "normal" ? size.normal : size.small
+
+// ================================== Types ====================================
+// One confirmed pivot: its price, the bar it printed on, which side it is, and
+// the Strat type of that bar (1 / 2u / 2d / 3).
+type Pt
+    float  p
+    int    b
+    bool   hi
+    string t
+
+// A finished formation's drawings, kept whole so the whole set can be recycled
+// together once it falls out of the "formations kept" window.
+type Draw
+    array<line>     lines
+    array<label>    labels
+    array<linefill> fills
+
+// One point being measured for the rotation rate: does price reach the opposite
+// point (tgt) before taking out the point's own extreme (inv)?
+type Pend
+    float tgt
+    float inv
+    bool  down
+
+// ================================ Pivot chain ================================
+var array<Pt> pts = array.new<Pt>()
+
+f_barType(int off) =>
+    bool up = high[off] > high[off + 1]
+    bool dn = low[off]  < low[off + 1]
+    up and dn ? "3" : up ? "2u" : dn ? "2d" : "1"
+
+// Append a pivot, keeping the sequence strictly alternating. A pivot on the
+// same side as the last one does not add a point — it either replaces it (if it
+// is the more extreme of the two) or is discarded, because until the other side
+// prints there has been no rotation.
+f_addPt(float price, int b, bool hi, string t) =>
+    bool changed = false
+    int  n = array.size(pts)
+    if n == 0
+        array.push(pts, Pt.new(price, b, hi, t))
+        changed := true
+    else
+        Pt last = array.get(pts, n - 1)
+        if last.hi == hi
+            if (hi and price > last.p) or (not hi and price < last.p)
+                last.p := price
+                last.b := b
+                last.t := t
+                changed := true
+        else
+            array.push(pts, Pt.new(price, b, hi, t))
+            changed := true
+    changed
+
+// Does point i expand on the point two back — the last one on its own side?
+f_expands(int i) =>
+    Pt c = array.get(pts, i)
+    Pt r = array.get(pts, i - 2)
+    c.hi ? c.p > r.p : c.p < r.p
+
+// Walk back from the newest point for as long as each one expands. The chain
+// stops at the first failure; the two points before that failure are the seed
+// of the run, so the start is one further back than the last expanding point.
+f_chainStart() =>
+    int n = array.size(pts)
+    int j = n - 1
+    if n >= 3
+        for k = n - 1 to 2
+            if f_expands(k)
+                j := k - 1
+            else
+                break
+    j - 1 < 0 ? 0 : j - 1
+
+// ============================== Rotation record ==============================
+// Resolved BEFORE this bar's pivots are processed, so a point registered on bar
+// N is first measured on bar N+1 — never on the bar that revealed it.
+var array<Pend> pend = array.new<Pend>()
+var int rotHit = 0
+var int rotMiss = 0
+var int rotAmb  = 0
+
+if array.size(pend) > 0
+    for i = array.size(pend) - 1 to 0
+        Pend q = array.get(pend, i)
+        bool hit = q.down ? low <= q.tgt : high >= q.tgt
+        bool inv = q.down ? high > q.inv : low < q.inv
+        if hit and inv
+            rotAmb += 1
+            array.remove(pend, i)
+        else if hit
+            rotHit += 1
+            array.remove(pend, i)
+        else if inv
+            rotMiss += 1
+            array.remove(pend, i)
+
+// ================================ Drawing state ==============================
+var array<line>     curLines  = array.new<line>()
+var array<label>    curLabels = array.new<label>()
+var array<linefill> curFills  = array.new<linefill>()
+var array<Draw>     hist      = array.new<Draw>()
+
+var line  upRail = na
+var line  dnRail = na
+var line  tgtLn  = na
+var line  invLn  = na
+var label tgtLb  = na
+var label invLb  = na
+
+// Rails are stored as anchor + slope so they can be re-projected on every bar
+// without rebuilding the formation.
+var float upSlope = na
+var int   upAnchB = na
+var float upAnchP = na
+var float dnSlope = na
+var int   dnAnchB = na
+var float dnAnchP = na
+
+var int   drawnStart = na     // bar of point 1 of the formation on screen
+var bool  curLive    = false  // is that formation still the live chain?
+var int   curCount   = 0
+var int   curLastBar = na
+var bool  curLastHi  = false
+var float curTgt     = na
+var float curInv     = na
+var int   regBar     = na     // last point already entered in the rotation record
+
+f_clearLive() =>
+    line.delete(tgtLn)
+    line.delete(invLn)
+    label.delete(tgtLb)
+    label.delete(invLb)
+
+// =============================== Pivot intake ================================
+float ph = ta.pivothigh(high, pivLeft, pivRight)
+float pl = ta.pivotlow(low, pivLeft, pivRight)
+
+bool ptsChanged = false
+if not na(ph)
+    bool addedHi = f_addPt(ph, bar_index - pivRight, true, f_barType(pivRight))
+    ptsChanged := ptsChanged or addedHi
+if not na(pl)
+    bool addedLo = f_addPt(pl, bar_index - pivRight, false, f_barType(pivRight))
+    ptsChanged := ptsChanged or addedLo
+
+if array.size(pts) > 300
+    array.shift(pts)
+
+bool newForm  = false
+bool newPoint = false
+bool formEnd  = false
+
+// ========================= Formation build / rebuild =========================
+if ptsChanged and array.size(pts) >= 2
+    int n    = array.size(pts)
+    int s    = f_chainStart()
+    int sBar = array.get(pts, s).b
+    int cnt  = n - s
+
+    // The live chain has moved off the formation on screen: that one is done.
+    if curLive and sBar != drawnStart
+        curLive := false
+        formEnd := true
+        f_clearLive()
+        tgtLn := na
+        invLn := na
+        tgtLb := na
+        invLb := na
+
+    if cnt >= minPts
+        bool isNew = na(drawnStart) or sBar != drawnStart
+
+        // A genuinely different formation: freeze the old drawing set, trimmed
+        // back to its own last point so dead rails do not run across the chart.
+        if isNew and not na(drawnStart)
+            int trimX = curLastBar + (projBars < 10 ? projBars : 10)
+            if not na(upRail)
+                line.set_x2(upRail, trimX)
+                line.set_y2(upRail, upAnchP + upSlope * (trimX - upAnchB))
+            if not na(dnRail)
+                line.set_x2(dnRail, trimX)
+                line.set_y2(dnRail, dnAnchP + dnSlope * (trimX - dnAnchB))
+            array.push(hist, Draw.new(curLines, curLabels, curFills))
+            curLines  := array.new<line>()
+            curLabels := array.new<label>()
+            curFills  := array.new<linefill>()
+            upRail := na
+            dnRail := na
+            if array.size(hist) > keepForms
+                Draw old = array.shift(hist)
+                for fl in old.fills
+                    linefill.delete(fl)
+                for ln in old.lines
+                    line.delete(ln)
+                for lb in old.labels
+                    label.delete(lb)
+
+        // Same formation, one point longer (or a point that moved): redraw it.
+        for ln in curLines
+            line.delete(ln)
+        array.clear(curLines)
+        for lb in curLabels
+            label.delete(lb)
+        array.clear(curLabels)
+        for fl in curFills
+            linefill.delete(fl)
+        array.clear(curFills)
+        upRail := na
+        dnRail := na
+        f_clearLive()
+        tgtLn := na
+        invLn := na
+        tgtLb := na
+        invLb := na
+
+        // ---- the newest point on each side, which anchors that side's rail ---
+        int   hiLastB = na
+        float hiLastP = na
+        int   loLastB = na
+        float loLastP = na
+        for i = s to n - 1
+            Pt q = array.get(pts, i)
+            if q.hi
+                hiLastB := q.b
+                hiLastP := q.p
+            else
+                loLastB := q.b
+                loLastP := q.p
+
+        // ---- rails: anchored on the newest point of the side, sloped so that
+        //      every earlier point of that side is contained --------------------
+        float upS = na
+        float dnS = na
+        for i = s to n - 1
+            Pt q = array.get(pts, i)
+            if q.hi and q.b < hiLastB
+                float slU = (hiLastP - q.p) / (hiLastB - q.b)
+                upS := na(upS) ? slU : math.min(upS, slU)
+            if not q.hi and q.b < loLastB
+                float slD = (loLastP - q.p) / (loLastB - q.b)
+                dnS := na(dnS) ? slD : math.max(dnS, slD)
+        upSlope := na(upS) ? 0.0 : upS
+        dnSlope := na(dnS) ? 0.0 : dnS
+        upAnchB := hiLastB
+        upAnchP := hiLastP
+        dnAnchB := loLastB
+        dnAnchP := loLastP
+
+        int xL   = array.get(pts, s).b
+        int xEnd = hiLastB > loLastB ? hiLastB : loLastB
+        int xR   = (bar_index > xEnd ? bar_index : xEnd) + projBars
+
+        if showRails
+            upRail := line.new(xL, upAnchP + upSlope * (xL - upAnchB), xR, upAnchP + upSlope * (xR - upAnchB),
+                 xloc = xloc.bar_index, color = upCol, style = railStyle, width = railWidth)
+            dnRail := line.new(xL, dnAnchP + dnSlope * (xL - dnAnchB), xR, dnAnchP + dnSlope * (xR - dnAnchB),
+                 xloc = xloc.bar_index, color = dnCol, style = railStyle, width = railWidth)
+            array.push(curLines, upRail)
+            array.push(curLines, dnRail)
+            if showFill
+                array.push(curFills, linefill.new(upRail, dnRail, color.new(bodyCol, fillTrans)))
+
+        // ---- legs: the path price actually took between the points ----------
+        if showLegs
+            for i = s to n - 2
+                Pt legA = array.get(pts, i)
+                Pt legB = array.get(pts, i + 1)
+                array.push(curLines, line.new(legA.b, legA.p, legB.b, legB.p, xloc = xloc.bar_index,
+                     color = legCol, style = line.style_dotted, width = 1))
+
+        // ---- numbered points ------------------------------------------------
+        if showPts
+            for i = s to n - 1
+                Pt q = array.get(pts, i)
+                int num = i - s + 1
+                string what = num <= 2 ? (q.hi ? "high" : "low") : (q.hi ? "higher high" : "lower low")
+                array.push(curLabels, label.new(q.b, q.p, str.tostring(num), xloc = xloc.bar_index,
+                     yloc = yloc.price,
+                     style = q.hi ? label.style_label_down : label.style_label_up,
+                     color = color.new(q.hi ? upCol : dnCol, 25),
+                     textcolor = color.white, size = lblSize,
+                     tooltip = "Point " + str.tostring(num) + " — " + what + "\n" +
+                         str.tostring(q.p, format.mintick) + "   Strat bar: " + q.t))
+
+        // ---- the live read off the newest point ------------------------------
+        Pt lastPt = array.get(pts, n - 1)
+        Pt prevPt = array.get(pts, n - 2)
+        curTgt    := prevPt.p
+        curInv    := lastPt.p
+        curLastHi := lastPt.hi
+
+        if showLvls
+            tgtLn := line.new(lastPt.b, curTgt, xR, curTgt, xloc = xloc.bar_index,
+                 color = tgtCol, style = line.style_dashed, width = 1)
+            invLn := line.new(lastPt.b, curInv, xR, curInv, xloc = xloc.bar_index,
+                 color = invCol, style = line.style_dotted, width = 1)
+            tgtLb := label.new(xR, curTgt, "Magnitude  " + str.tostring(curTgt, format.mintick),
+                 xloc = xloc.bar_index, style = label.style_label_left,
+                 color = color.new(tgtCol, 85), textcolor = tgtCol, size = size.small)
+            invLb := label.new(xR, curInv, "Invalid  " + str.tostring(curInv, format.mintick),
+                 xloc = xloc.bar_index, style = label.style_label_left,
+                 color = color.new(invCol, 85), textcolor = invCol, size = size.small)
+
+        newForm    := isNew
+        newPoint   := not isNew and cnt > curCount
+        drawnStart := sBar
+        curCount   := cnt
+        curLastBar := lastPt.b
+        curLive    := true
+
+        // Enter the newest point in the rotation record once, from the bar it
+        // was confirmed on.
+        if na(regBar) or lastPt.b != regBar
+            array.push(pend, Pend.new(curTgt, curInv, lastPt.hi))
+            regBar := lastPt.b
+            if array.size(pend) > 50
+                array.shift(pend)
+
+// ========================= Live projection & rail tags =======================
+float upNow = curLive and not na(upAnchP) ? upAnchP + upSlope * (bar_index - upAnchB) : na
+float dnNow = curLive and not na(dnAnchP) ? dnAnchP + dnSlope * (bar_index - dnAnchB) : na
+
+if barstate.islast and curLive
+    int xR = bar_index + projBars
+    if not na(upRail)
+        line.set_x2(upRail, xR)
+        line.set_y2(upRail, upAnchP + upSlope * (xR - upAnchB))
+    if not na(dnRail)
+        line.set_x2(dnRail, xR)
+        line.set_y2(dnRail, dnAnchP + dnSlope * (xR - dnAnchB))
+    if not na(tgtLn)
+        line.set_x2(tgtLn, xR)
+        label.set_x(tgtLb, xR)
+    if not na(invLn)
+        line.set_x2(invLn, xR)
+        label.set_x(invLb, xR)
+
+// A bar trading into the projected edge of a live formation — where the
+// outside-in entry sits.
+bool tagUp = showTags and curLive and not na(upNow) and bar_index > curLastBar and high >= upNow
+bool tagDn = showTags and curLive and not na(dnNow) and bar_index > curLastBar and low <= dnNow
+
+plotshape(tagUp, "Upper rail tag", shape.triangledown, location.abovebar, color = upCol, size = size.tiny)
+plotshape(tagDn, "Lower rail tag", shape.triangleup, location.belowbar, color = dnCol, size = size.tiny)
+
+// ================================ Dashboard ==================================
+var table dash = table.new(posSel, 2, 10, border_width = 1, frame_color = color.new(color.gray, 50), frame_width = 1)
+
+f_row(int r, string k, string v, color vc) =>
+    table.cell(dash, 0, r, k, text_color = color.new(color.gray, 10), text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, r, v, text_color = vc, text_size = size.small, text_halign = text.align_right)
+
+if showTbl and barstate.islast
+    int    resolved = rotHit + rotMiss
+    string rotTxt   = resolved == 0 ? "—" :
+         str.tostring(math.round(100.0 * rotHit / resolved)) + "%  (n=" + str.tostring(resolved) +
+         (rotAmb > 0 ? ", " + str.tostring(rotAmb) + " amb" : "") + ")"
+    color  headCol  = not curLive ? color.gray : curLastHi ? upCol : dnCol
+    string state    = na(drawnStart) ? "none yet" : curLive ? str.tostring(curCount) + " points — live" : str.tostring(curCount) + " points — ended"
+    float  span     = na(upNow) or na(dnNow) ? na : upNow - dnNow
+    float  loc      = na(span) or span <= 0 ? na : 100.0 * (close - dnNow) / span
+
+    table.cell(dash, 0, 0, "BROADENING FORMATION", text_color = headCol, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 0, timeframe.period, text_color = headCol, text_size = size.small, text_halign = text.align_right)
+    f_row(1, "Formation", state, curLive ? color.white : color.gray)
+    f_row(2, "Newest point", not curLive ? "—" : "P" + str.tostring(curCount) + " " + (curLastHi ? "high" : "low") + "  " + str.tostring(curInv, format.mintick), curLive ? headCol : color.gray)
+    f_row(3, "Rotation to", not curLive ? "—" : curLastHi ? "the lower rail" : "the upper rail", curLive ? color.white : color.gray)
+    f_row(4, "Magnitude", curLive and not na(curTgt) ? str.tostring(curTgt, format.mintick) : "—", tgtCol)
+    f_row(5, "Invalidation", curLive and not na(curInv) ? str.tostring(curInv, format.mintick) : "—", invCol)
+    f_row(6, "Upper rail now", na(upNow) ? "—" : str.tostring(upNow, format.mintick), upCol)
+    f_row(7, "Lower rail now", na(dnNow) ? "—" : str.tostring(dnNow, format.mintick), dnCol)
+    f_row(8, "Price in range", na(loc) ? "—" : str.tostring(math.round(loc)) + "%", color.white)
+    f_row(9, "Rotation rate", rotTxt, resolved == 0 ? color.gray : color.white)
+
+// ================================== Alerts ===================================
+alertcondition(newForm,  "Broadening formation formed",
+     "A broadening formation has completed its minimum point count on {{ticker}} {{interval}}.")
+alertcondition(newPoint, "Broadening formation extended",
+     "The broadening formation on {{ticker}} {{interval}} has added a point — the range expanded again.")
+alertcondition(formEnd,  "Broadening formation ended",
+     "A pivot failed to expand: the broadening formation on {{ticker}} {{interval}} is finished.")
+alertcondition(tagUp,    "Upper rail tagged",
+     "Price is trading into the upper rail of the broadening formation on {{ticker}} {{interval}}.")
+alertcondition(tagDn,    "Lower rail tagged",
+     "Price is trading into the lower rail of the broadening formation on {{ticker}} {{interval}}.")
+
+if newForm or newPoint
+    alert("Broadening formation " + (newForm ? "formed" : "extended") + " on " + syminfo.ticker + " " + timeframe.period +
+         ": point " + str.tostring(curCount) + " is a " + (curLastHi ? "higher high" : "lower low") + " at " +
+         str.tostring(curInv, format.mintick) + ". Rotation " + (curLastHi ? "down" : "up") + " to " +
+         str.tostring(curTgt, format.mintick) + "; the expansion simply continues if that point gives way.",
+         alert.freq_once_per_bar_close)
