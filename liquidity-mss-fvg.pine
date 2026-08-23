@@ -13,8 +13,10 @@
 //  2. MARKET STRUCTURE SHIFT. A sweep alone is not a signal. After a sweep the
 //     script watches, for a bounded number of bars, for price to break the most
 //     recent opposing chart-timeframe pivot — up after an SSL sweep, down after
-//     a BSL sweep. Break confirmation is by close or by wick. If no break lands
-//     inside the waiting window, the setup expires and nothing is drawn.
+//     a BSL sweep. That pivot must still be unbroken, or price already trading
+//     above it would "confirm" a break of a level that was never structure.
+//     Break confirmation is by close or by wick. If no break lands inside the
+//     waiting window, the setup expires and nothing is drawn.
 //
 //  3. DISPLACEMENT FVG. The leg that produced the MSS is scanned for fair value
 //     gaps (3-bar imbalances), which are the entries the MSS earns.
@@ -31,6 +33,7 @@ type SwingPoint
     int   barIndex
     bool  taken         = false
     bool  visualsDrawn  = false
+    bool  pendingMSS    = false
     line  poolLine      = na
     label poolLabel     = na
     line  mssLine       = na
@@ -132,10 +135,19 @@ f_deleteSwingVisuals(SwingPoint sp) =>
         while array.size(sp.fvgBoxes) > 0
             box.delete(array.shift(sp.fvgBoxes))
 
+// Evicts oldest pools beyond maxLen, deleting everything they own. A pool whose
+// MSS search is still open is never evicted: its drawings are not all created
+// yet, so deleting it now would leave the MSS and FVGs drawn later untracked and
+// undeletable. The hold is bounded by i_mssMaxBars, after which the pool becomes
+// evictable again and the array catches up.
 f_trimSwingArray(arr, maxLen) =>
-    while array.size(arr) > maxLen
-        SwingPoint oldest = array.shift(arr)
-        f_deleteSwingVisuals(oldest)
+    bool keepTrimming = true
+    while array.size(arr) > maxLen and keepTrimming
+        SwingPoint oldest = array.get(arr, 0)
+        if oldest.pendingMSS
+            keepTrimming := false
+        else
+            f_deleteSwingVisuals(array.shift(arr))
 
 f_findExactHighBar(float val) =>
     int targetBar = bar_index
@@ -222,7 +234,10 @@ if array.size(bslArray) > 0
 
             waitingForBearMSS := true
             bslSweepBarIndex  := bar_index
+            if not na(activeBearSP)
+                activeBearSP.pendingMSS := false
             activeBearSP      := sp
+            sp.pendingMSS     := i_enableMSS
 
             if i_showSweepLines
                 sp.poolLine := line.new(
@@ -251,7 +266,10 @@ if array.size(sslArray) > 0
 
             waitingForBullMSS := true
             sslSweepBarIndex  := bar_index
+            if not na(activeBullSP)
+                activeBullSP.pendingMSS := false
             activeBullSP      := sp
+            sp.pendingMSS     := i_enableMSS
 
             if i_showSweepLines
                 sp.poolLine := line.new(
@@ -286,11 +304,15 @@ if i_enableMSS
     if waitingForBullMSS and not na(sslSweepBarIndex) and (bar_index - sslSweepBarIndex > i_mssMaxBars)
         waitingForBullMSS := false
         sslSweepBarIndex  := na
+        if not na(activeBullSP)
+            activeBullSP.pendingMSS := false
         activeBullSP      := na
 
     if waitingForBearMSS and not na(bslSweepBarIndex) and (bar_index - bslSweepBarIndex > i_mssMaxBars)
         waitingForBearMSS := false
         bslSweepBarIndex  := na
+        if not na(activeBearSP)
+            activeBearSP.pendingMSS := false
         activeBearSP      := na
 
     if waitingForBullMSS and not na(sslSweepBarIndex) and (bar_index - sslSweepBarIndex <= i_mssMaxBars)
@@ -305,7 +327,21 @@ if i_enableMSS
                     break
 
         bool breakUp = (i_mssConfirm == "Close" ? close : high) > targetHPrice
-        if breakUp and not na(targetHBar) and bar_index > targetHBar
+
+        // The most recent pivot high is not automatically unbroken structure. In a
+        // leg that already traded above it, price sits above the pivot before the
+        // sweep even happens, and breakUp would be true the instant the pool is
+        // taken — an MSS on a level that was never structure. Require the pivot to
+        // be virgin, measured the same way the break is confirmed.
+        bool pivotIntact = true
+        if breakUp and not na(targetHBar) and bar_index > targetHBar + 1
+            for j = targetHBar + 1 to bar_index - 1
+                float priorBreak = i_mssConfirm == "Close" ? close[bar_index - j] : high[bar_index - j]
+                if priorBreak > targetHPrice
+                    pivotIntact := false
+                    break
+
+        if breakUp and pivotIntact and not na(targetHBar) and bar_index > targetHBar
             bullMSSConfirmedThisBar := true
             waitingForBullMSS := false
             int sweepOriginBar = sslSweepBarIndex
@@ -325,6 +361,9 @@ if i_enableMSS
                 activeBullSP.mssLine  := mLine
                 activeBullSP.mssLabel := mLabel
                 activeBullSP.fvgBoxes := array.new_box()
+                // Search resolved: everything this pool owns is created on this
+                // bar, so it is safe to evict again (trimming runs after this).
+                activeBullSP.pendingMSS := false
 
             if i_showMssFvg
                 int fvgFound = 0
@@ -386,7 +425,18 @@ if i_enableMSS
                     break
 
         bool breakDown = (i_mssConfirm == "Close" ? close : low) < targetLPrice
-        if breakDown and not na(targetLBar) and bar_index > targetLBar
+
+        // Mirror of the bullish guard: the pivot low must still be unbroken, or a
+        // leg that already traded below it would confirm an MSS on the sweep bar.
+        bool pivotIntact = true
+        if breakDown and not na(targetLBar) and bar_index > targetLBar + 1
+            for j = targetLBar + 1 to bar_index - 1
+                float priorBreak = i_mssConfirm == "Close" ? close[bar_index - j] : low[bar_index - j]
+                if priorBreak < targetLPrice
+                    pivotIntact := false
+                    break
+
+        if breakDown and pivotIntact and not na(targetLBar) and bar_index > targetLBar
             bearMSSConfirmedThisBar := true
             waitingForBearMSS := false
             int sweepOriginBar = bslSweepBarIndex
@@ -406,6 +456,7 @@ if i_enableMSS
                 activeBearSP.mssLine  := mLine
                 activeBearSP.mssLabel := mLabel
                 activeBearSP.fvgBoxes := array.new_box()
+                activeBearSP.pendingMSS := false
 
             if i_showMssFvg
                 int fvgFound = 0
