@@ -11,7 +11,8 @@
 //     you can see what price is reaching for before it gets there. The line
 //     stops extending on the bar that takes the pool (Buyside = high above a HTF
 //     swing high, Sellside = low below a HTF swing low), leaving a finished
-//     segment that spans the level's whole life.
+//     segment that spans the level's whole life. Swept pools restyle and fade so
+//     the levels still in play are the ones that draw the eye.
 //
 //  2. MARKET STRUCTURE SHIFT. A sweep alone is not a signal. After a sweep the
 //     script watches, for a bounded number of bars, for price to break the most
@@ -51,8 +52,10 @@ i_maxSwings         = input.int(8, "Max Tracked Swings (History)", minval=1, max
 
 grpStyle            = "LIQUIDITY VISUALS & STYLING"
 i_showSweepLines    = input.bool(true, "Liquidity Lines  ", inline="liq_ln", group=grpStyle)
-i_lineStyle         = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="liq_ln", group=grpStyle)
+i_lineStyle         = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="liq_ln", group=grpStyle, tooltip="Style of a pool while it is still resting — liquidity price has not taken yet.")
 i_lineWidth         = input.int(1, "", minval=1, maxval=4, inline="liq_ln", group=grpStyle)
+i_sweptStyle        = input.string("Dotted", "Once Swept       ", options=["Solid", "Dashed", "Dotted"], inline="liq_sw", group=grpStyle, tooltip="Style a pool switches to on the bar that takes it, so resting liquidity and spent liquidity read differently at a glance.")
+i_sweptFade         = input.int(70, "Fade", minval=0, maxval=95, inline="liq_sw", group=grpStyle, tooltip="Transparency applied to a swept pool's line. Its label text fades by half as much, so the text stays readable while the line recedes.")
 i_showLiqLabels     = input.bool(true, "Text Labels      ", inline="liq_lbl", group=grpStyle)
 i_labelSize         = input.string("Small", "", options=["Tiny", "Small", "Normal"], inline="liq_lbl", group=grpStyle)
 i_bslColor          = input.color(color.new(#4e5057, 0), "Buy Side (BSL)   ", inline="liq_col", group=grpStyle)
@@ -150,6 +153,17 @@ f_extendPool(SwingPoint sp) =>
         line.set_x2(sp.poolLine, bar_index)
     if not na(sp.poolLabel)
         label.set_x(sp.poolLabel, math.max(sp.barIndex, bar_index - 8))
+
+// Restyles a pool on the bar that takes it: spent liquidity recedes so the
+// levels still in play stay the ones that draw the eye. The label fades at half
+// the line's rate, since text goes unreadable well before a line does.
+f_markPoolSwept(SwingPoint sp, bool isBuySide) =>
+    color col = isBuySide ? i_bslColor : i_sslColor
+    if not na(sp.poolLine)
+        line.set_color(sp.poolLine, color.new(col, i_sweptFade))
+        line.set_style(sp.poolLine, f_lineStyleChoice(i_sweptStyle))
+    if not na(sp.poolLabel)
+        label.set_textcolor(sp.poolLabel, color.new(col, i_sweptFade / 2))
 
 f_deleteSwingVisuals(SwingPoint sp) =>
     if not na(sp.poolLine)
@@ -279,6 +293,7 @@ if array.size(bslArray) > 0
 
             // Final extension, so the line ends on the bar that took it.
             f_extendPool(sp)
+            f_markPoolSwept(sp, true)
 
             if i_alertOnSweep
                 alert("Buy Side Liquidity Swept @ " + str.tostring(sp.price), alert.freq_once_per_bar_close)
@@ -305,6 +320,7 @@ if array.size(sslArray) > 0
 
             // Final extension, so the line ends on the bar that took it.
             f_extendPool(sp)
+            f_markPoolSwept(sp, false)
 
             if i_alertOnSweep
                 alert("Sell Side Liquidity Swept @ " + str.tostring(sp.price), alert.freq_once_per_bar_close)
