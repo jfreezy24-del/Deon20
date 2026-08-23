@@ -6,9 +6,12 @@
 //
 //  1. LIQUIDITY. Swing highs/lows are taken from a higher timeframe (default
 //     15m) via request.security, so the pools that matter on the HTF stay
-//     visible while you execute on a lower chart. A pool is "swept" the first
-//     time price trades through it (Buyside = high above a HTF swing high,
-//     Sellside = low below a HTF swing low).
+//     visible while you execute on a lower chart. A pool is drawn as soon as its
+//     pivot confirms and its line extends bar by bar while the level rests, so
+//     you can see what price is reaching for before it gets there. The line
+//     stops extending on the bar that takes the pool (Buyside = high above a HTF
+//     swing high, Sellside = low below a HTF swing low), leaving a finished
+//     segment that spans the level's whole life.
 //
 //  2. MARKET STRUCTURE SHIFT. A sweep alone is not a signal. After a sweep the
 //     script watches, for a bounded number of bars, for price to break the most
@@ -120,6 +123,34 @@ f_labelSize(_s) =>
 f_lineStyleChoice(_s) =>
     _s == "Dotted" ? line.style_dotted : _s == "Dashed" ? line.style_dashed : line.style_solid
 
+// Draws a pool the moment its pivot confirms, so resting liquidity is visible
+// ahead of price rather than only in hindsight. The line starts at the pivot bar
+// and is extended each bar by f_extendPool until the pool is taken.
+f_drawPool(SwingPoint sp, bool isBuySide) =>
+    color col = isBuySide ? i_bslColor : i_sslColor
+    if i_showSweepLines
+        sp.poolLine := line.new(
+             x1 = sp.barIndex, y1 = sp.price, x2 = bar_index, y2 = sp.price,
+             color = color.new(col, 35),
+             width = i_lineWidth,
+             style = f_lineStyleChoice(i_lineStyle))
+    if i_showLiqLabels
+        sp.poolLabel := label.new(
+             x = math.max(sp.barIndex, bar_index - 8), y = sp.price,
+             text = isBuySide ? "𝗕𝘂𝘆 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆" : "𝗦𝗲𝗹𝗹 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆",
+             style = isBuySide ? label.style_label_down : label.style_label_up,
+             color = color.new(color.black, 100),
+             textcolor = color.new(col, 10), size = f_labelSize(i_labelSize))
+    sp.visualsDrawn := true
+
+// Walks the pool's right edge forward to the current bar. Called every bar while
+// the pool is live, and once more on the sweep bar, which is where it stops.
+f_extendPool(SwingPoint sp) =>
+    if not na(sp.poolLine)
+        line.set_x2(sp.poolLine, bar_index)
+    if not na(sp.poolLabel)
+        label.set_x(sp.poolLabel, math.max(sp.barIndex, bar_index - 8))
+
 f_deleteSwingVisuals(SwingPoint sp) =>
     if not na(sp.poolLine)
         line.delete(sp.poolLine)
@@ -210,12 +241,14 @@ pivotLowVal  = ta.pivotlow(liq_low,   i_swingLen, i_swingLen)
 if not na(pivotHighVal)
     exactBar = f_findExactHighBar(pivotHighVal)
     sp = SwingPoint.new(price = pivotHighVal, barIndex = exactBar, taken = false)
+    f_drawPool(sp, true)
     array.push(bslArray, sp)
     f_trimSwingArray(bslArray, i_maxSwings)
 
 if not na(pivotLowVal)
     exactBar = f_findExactLowBar(pivotLowVal)
     sp = SwingPoint.new(price = pivotLowVal, barIndex = exactBar, taken = false)
+    f_drawPool(sp, false)
     array.push(sslArray, sp)
     f_trimSwingArray(sslArray, i_maxSwings)
 
@@ -227,7 +260,13 @@ bool bearMSSConfirmedThisBar = false
 if array.size(bslArray) > 0
     for i = array.size(bslArray) - 1 to 0
         SwingPoint sp = array.get(bslArray, i)
-        if not sp.taken and high > sp.price and bar_index > sp.barIndex
+        bool sweptNow = not sp.taken and high > sp.price and bar_index > sp.barIndex
+
+        // Live pool: walk its right edge up to the current bar.
+        if not sp.taken and not sweptNow
+            f_extendPool(sp)
+
+        if sweptNow
             sp.taken := true
             bslSweptThisBar := true
 
@@ -238,20 +277,8 @@ if array.size(bslArray) > 0
             activeBearSP      := sp
             sp.pendingMSS     := i_enableMSS
 
-            if i_showSweepLines
-                sp.poolLine := line.new(
-                     x1 = sp.barIndex, y1 = sp.price, x2 = bar_index, y2 = sp.price,
-                     color = color.new(i_bslColor, 35),
-                     width = i_lineWidth,
-                     style = f_lineStyleChoice(i_lineStyle))
-
-            if i_showLiqLabels
-                sp.poolLabel := label.new(
-                     x = math.max(sp.barIndex, bar_index - 8), y = sp.price, text = "𝗕𝘂𝘆 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆",
-                     style = label.style_label_down, color = color.new(color.black, 100),
-                     textcolor = color.new(i_bslColor, 10), size = f_labelSize(i_labelSize))
-
-            sp.visualsDrawn := true
+            // Final extension, so the line ends on the bar that took it.
+            f_extendPool(sp)
 
             if i_alertOnSweep
                 alert("Buy Side Liquidity Swept @ " + str.tostring(sp.price), alert.freq_once_per_bar_close)
@@ -259,7 +286,13 @@ if array.size(bslArray) > 0
 if array.size(sslArray) > 0
     for i = array.size(sslArray) - 1 to 0
         SwingPoint sp = array.get(sslArray, i)
-        if not sp.taken and low < sp.price and bar_index > sp.barIndex
+        bool sweptNow = not sp.taken and low < sp.price and bar_index > sp.barIndex
+
+        // Live pool: walk its right edge up to the current bar.
+        if not sp.taken and not sweptNow
+            f_extendPool(sp)
+
+        if sweptNow
             sp.taken := true
             sslSweptThisBar := true
 
@@ -270,20 +303,8 @@ if array.size(sslArray) > 0
             activeBullSP      := sp
             sp.pendingMSS     := i_enableMSS
 
-            if i_showSweepLines
-                sp.poolLine := line.new(
-                     x1 = sp.barIndex, y1 = sp.price, x2 = bar_index, y2 = sp.price,
-                     color = color.new(i_sslColor, 35),
-                     width = i_lineWidth,
-                     style = f_lineStyleChoice(i_lineStyle))
-
-            if i_showLiqLabels
-                sp.poolLabel := label.new(
-                     x = math.max(sp.barIndex, bar_index - 8), y = sp.price, text = "𝗦𝗲𝗹𝗹 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆",
-                     style = label.style_label_up, color = color.new(color.black, 100),
-                     textcolor = color.new(i_sslColor, 10), size = f_labelSize(i_labelSize))
-
-            sp.visualsDrawn := true
+            // Final extension, so the line ends on the bar that took it.
+            f_extendPool(sp)
 
             if i_alertOnSweep
                 alert("Sell Side Liquidity Swept @ " + str.tostring(sp.price), alert.freq_once_per_bar_close)
