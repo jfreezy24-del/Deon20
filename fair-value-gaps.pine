@@ -149,11 +149,11 @@ dropZone(Zone z) =>
 // sits under the move that created it rather than three bars behind it.
 addZone(float t, float b, bool bull) =>
     Zone z = Zone.new(top = t, bot = b, bstart = bar_index - 1, bull = bull, inv = false, dead = false, tested = false)
-    z.bx  = box.new(z.bstart, t, z.bstart + 2, b, border_color = cClear, bgcolor = cClear)
-    z.lt  = line.new(z.bstart, t, z.bstart + 2, t, color = cClear)
-    z.lb  = line.new(z.bstart, b, z.bstart + 2, b, color = cClear)
-    z.lc  = line.new(z.bstart, t, z.bstart + 2, t, color = cClear)
-    z.lab = label.new(z.bstart, math.avg(t, b), "", style = label.style_none, textcolor = cClear)
+    z.bx  := box.new(z.bstart, t, z.bstart + 2, b, border_color = cClear, bgcolor = cClear)
+    z.lt  := line.new(z.bstart, t, z.bstart + 2, t, color = cClear)
+    z.lb  := line.new(z.bstart, b, z.bstart + 2, b, color = cClear)
+    z.lc  := line.new(z.bstart, t, z.bstart + 2, t, color = cClear)
+    z.lab := label.new(z.bstart, math.avg(t, b), "", style = label.style_none, textcolor = cClear)
     zones.push(z)
 
 if barstate.isconfirmed and bar_index > 2
