@@ -1,0 +1,296 @@
+//@version=6
+// =============================================================================
+// SMT Fill — Fair Value Gaps + Inverse Fair Value Gaps
+// -----------------------------------------------------------------------------
+// A fair value gap is a three-candle imprint. The middle candle moves far enough
+// that the wicks either side of it never touch, leaving a band of price that
+// only ever traded in one direction:
+//
+//     BULLISH   low[0]  > high[2]     gap = high[2] .. low[0]
+//     BEARISH   high[0] < low[2]      gap = high[0] .. low[2]
+//
+// That band is drawn as a zone. Price coming back into it is a retest, and the
+// deepest point of that retest is joined to the edge price entered from by a
+// thin connector line — so at a glance you can see how far into the gap the
+// pullback actually reached.
+//
+// INVERSE FVG. A gap that gets traded through stops being support and starts
+// being resistance (and the other way round). When price invalidates a gap,
+// the zone is not deleted — it FLIPS: same top, same bottom, opposite side,
+// its own colour. That is the inverse fair value gap. Invalidate the inverse
+// and the zone is finished.
+//
+//     bullish FVG  ->  broken down  ->  bearish IFVG  ->  broken up  ->  gone
+//     bearish FVG  ->  broken up    ->  bullish IFVG  ->  broken down -> gone
+//
+// OVERLAP. Because inverted zones keep their original price band, an old IFVG
+// and a fresh FVG frequently sit on top of one another. Where their price
+// ranges AND their time ranges intersect, that intersection is drawn as its
+// own zone in its own colour — two independent reasons for price to react in
+// the same pocket.
+//
+// EXTENSION. Every zone's right edge is yours to set: a fixed number of bars
+// from formation, up to the bar that invalidated it, or permanently pinned to
+// the current bar. The "Bars" input is the length in fixed mode and a padding
+// in the other two.
+//
+// Zones are committed on bar close, so nothing that has been drawn is ever
+// redrawn or removed by a later tick of the same candle. Retests, inversions
+// and the right edge do update live.
+//
+// This is a drawing tool. It does not provide financial advice.
+// =============================================================================
+
+indicator("SMT Fill — FVG + IFVG", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ── Gaps ─────────────────────────────────────────────────────────────────────
+grpG = "Gaps"
+showBull  = input.bool(true, "Bullish", group = grpG, inline = "dir")
+showBear  = input.bool(true, "Bearish", group = grpG, inline = "dir")
+showIfvg  = input.bool(true, "Invert instead of delete (IFVG)", group = grpG,
+     tooltip = "On: an invalidated gap flips to the opposite side and is redrawn as an inverse FVG in the IFVG colours. Off: an invalidated gap is finished immediately and no IFVGs are produced.")
+mitRule   = input.string("Close", "Invalidate on", options = ["Close", "Wick"], group = grpG,
+     tooltip = "Close — the zone survives until a candle CLOSES beyond its far edge.\nWick — any trade beyond the far edge invalidates it.")
+minGapAtr = input.float(0.0, "Minimum size (× ATR 14)", minval = 0.0, maxval = 10.0, step = 0.05, group = grpG,
+     tooltip = "Ignore gaps narrower than this multiple of the 14-period ATR. 0 keeps every gap.")
+maxZones  = input.int(25, "Maximum zones kept", minval = 1, maxval = 60, group = grpG)
+hideDead  = input.bool(true, "Discard finished zones", group = grpG,
+     tooltip = "On: once a zone is fully invalidated it is removed from the chart. Off: it is frozen where it died and stays visible.")
+
+// ── Extension ────────────────────────────────────────────────────────────────
+grpE = "Extension"
+extMode = input.string("Until invalidated", "Extend right", options = ["Fixed length", "Until invalidated", "Always extend"], group = grpE,
+     tooltip = "Fixed length — every zone is exactly 'Bars' wide.\nUntil invalidated — the zone grows with price and stops at the bar that invalidated it, plus 'Bars'.\nAlways extend — the right edge is pinned to the current bar, plus 'Bars'.")
+extBars = input.int(20, "Bars", minval = 0, maxval = 480, group = grpE,
+     tooltip = "Length in fixed mode, padding beyond the right edge in the other two.")
+
+// ── Colours ──────────────────────────────────────────────────────────────────
+grpC = "Colours"
+cBullF  = input.color(#3fb950, "FVG  — bullish / bearish", group = grpC, inline = "f")
+cBearF  = input.color(#f85149, "", group = grpC, inline = "f")
+cBullI  = input.color(#2f81f7, "IFVG — bullish / bearish", group = grpC, inline = "i")
+cBearI  = input.color(#d29922, "", group = grpC, inline = "i")
+showOv  = input.bool(true, "Overlap zone", group = grpC, inline = "o")
+cOv     = input.color(#a371f7, "", group = grpC, inline = "o")
+fillT   = input.int(88, "Zone fill / border transparency", minval = 0, maxval = 100, group = grpC, inline = "t")
+bordT   = input.int(25, "", minval = 0, maxval = 100, group = grpC, inline = "t")
+ovFillT = input.int(80, "Overlap fill / border transparency", minval = 0, maxval = 100, group = grpC, inline = "ot")
+ovBordT = input.int(10, "", minval = 0, maxval = 100, group = grpC, inline = "ot")
+fadeU   = input.int(15, "Fade zones price has not returned to", minval = 0, maxval = 60, group = grpC,
+     tooltip = "Extra transparency applied until price retests the zone, so live zones read brighter than untouched ones.")
+maxOv   = input.int(30, "Maximum overlap zones", minval = 0, maxval = 80, group = grpC)
+
+// ── Style ────────────────────────────────────────────────────────────────────
+grpS = "Style"
+stUnt    = input.string("Dashed", "Border — untested / tested", options = ["Solid", "Dashed", "Dotted", "None"], group = grpS, inline = "s")
+stTst    = input.string("Solid", "", options = ["Solid", "Dashed", "Dotted", "None"], group = grpS, inline = "s")
+bWid     = input.int(1, "Border width", minval = 1, maxval = 4, group = grpS)
+showConn = input.bool(true, "Retest connector", group = grpS,
+     tooltip = "Joins the edge price entered the zone from to the deepest point the retest reached.")
+showLab  = input.bool(true, "Label", group = grpS, inline = "l")
+labSize  = input.string(size.small, "", options = [size.tiny, size.small, size.normal, size.large], group = grpS, inline = "l")
+labPos   = input.string("Right", "", options = ["Left", "Centre", "Right"], group = grpS, inline = "l")
+
+// ── Types ────────────────────────────────────────────────────────────────────
+type Zone
+    float top
+    float bot
+    int   bstart
+    int   bend
+    bool  bull
+    bool  inv
+    bool  dead
+    bool  tested
+    float deep
+    int   deepBar
+    box   bx
+    line  lt
+    line  lb
+    line  lc
+    label lab
+
+var array<Zone> zones  = array.new<Zone>()
+var array<box>  ovBoxes = array.new<box>()
+
+atrv   = ta.atr(14)
+cClear = color.new(color.gray, 100)
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+styleOf(string s) =>
+    switch s
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+// Colour a zone answers to right now: FVG palette before inversion, IFVG after.
+baseOf(Zone z) =>
+    z.inv ? (z.bull ? cBullI : cBearI) : (z.bull ? cBullF : cBearF)
+
+visibleOf(Zone z) =>
+    (z.bull ? showBull : showBear) and (not z.dead or not hideDead) and (not z.inv or showIfvg)
+
+// Right edge in bar_index terms. Never narrower than the three-candle imprint.
+rightOf(Zone z) =>
+    int r = switch extMode
+        "Fixed length"      => z.bstart + extBars
+        "Until invalidated" => (na(z.bend) ? bar_index : z.bend) + extBars
+        =>                     bar_index + extBars
+    math.max(r, z.bstart + 2)
+
+dropZone(Zone z) =>
+    box.delete(z.bx)
+    line.delete(z.lt)
+    line.delete(z.lb)
+    line.delete(z.lc)
+    label.delete(z.lab)
+
+// ── Detection ────────────────────────────────────────────────────────────────
+// The zone is anchored to the middle (displacement) candle, so its left edge
+// sits under the move that created it rather than three bars behind it.
+addZone(float t, float b, bool bull) =>
+    Zone z = Zone.new(top = t, bot = b, bstart = bar_index - 1, bull = bull, inv = false, dead = false, tested = false)
+    z.bx  = box.new(z.bstart, t, z.bstart + 2, b, border_color = cClear, bgcolor = cClear)
+    z.lt  = line.new(z.bstart, t, z.bstart + 2, t, color = cClear)
+    z.lb  = line.new(z.bstart, b, z.bstart + 2, b, color = cClear)
+    z.lc  = line.new(z.bstart, t, z.bstart + 2, t, color = cClear)
+    z.lab = label.new(z.bstart, math.avg(t, b), "", style = label.style_none, textcolor = cClear)
+    zones.push(z)
+
+if barstate.isconfirmed and bar_index > 2
+    bool bullGap = low > high[2]
+    bool bearGap = high < low[2]
+    float gapSize = bullGap ? low - high[2] : bearGap ? low[2] - high : 0.0
+    bool bigEnough = minGapAtr <= 0 or na(atrv) or gapSize >= minGapAtr * atrv
+    if bigEnough
+        if bullGap
+            addZone(low, high[2], true)
+        else if bearGap
+            addZone(low[2], high, false)
+
+// ── Retests and invalidation ─────────────────────────────────────────────────
+// Runs live so a zone reacts inside the current candle; only the creation of a
+// zone waits for the close.
+if zones.size() > 0
+    for z in zones
+        if not z.dead and bar_index > z.bstart + 1
+            // Deepest penetration, clamped to the zone so the connector stays inside it.
+            if z.bull
+                if low < z.top
+                    float p = math.max(low, z.bot)
+                    if not z.tested or p < z.deep
+                        z.deep := p
+                        z.deepBar := bar_index
+                    z.tested := true
+            else
+                if high > z.bot
+                    float p = math.min(high, z.top)
+                    if not z.tested or p > z.deep
+                        z.deep := p
+                        z.deepBar := bar_index
+                    z.tested := true
+
+            float probe = mitRule == "Wick" ? (z.bull ? low : high) : close
+            bool  broke = z.bull ? probe < z.bot : probe > z.top
+            if broke
+                if not z.inv and showIfvg
+                    // Flip: same band, opposite side, retest history reset.
+                    z.inv     := true
+                    z.bull    := not z.bull
+                    z.tested  := false
+                    z.deep    := na
+                    z.deepBar := na
+                else
+                    z.dead := true
+                    z.bend := bar_index
+
+// ── Pruning ──────────────────────────────────────────────────────────────────
+if hideDead and zones.size() > 0
+    for i = zones.size() - 1 to 0
+        Zone z = zones.get(i)
+        if z.dead
+            dropZone(z)
+            zones.remove(i)
+
+while zones.size() > maxZones
+    dropZone(zones.shift())
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+if zones.size() > 0
+    for z in zones
+        bool   vis   = visibleOf(z)
+        int    r     = rightOf(z)
+        color  base  = baseOf(z)
+        int    fade  = z.tested ? 0 : fadeU
+        string stStr = z.tested ? stTst : stUnt
+        color  fc    = vis ? color.new(base, math.min(100, fillT + fade)) : cClear
+        color  bc    = vis and stStr != "None" ? color.new(base, math.min(100, bordT + fade)) : cClear
+
+        box.set_lefttop(z.bx, z.bstart, z.top)
+        box.set_rightbottom(z.bx, r, z.bot)
+        box.set_bgcolor(z.bx, fc)
+
+        line.set_xy1(z.lt, z.bstart, z.top)
+        line.set_xy2(z.lt, r, z.top)
+        line.set_xy1(z.lb, z.bstart, z.bot)
+        line.set_xy2(z.lb, r, z.bot)
+        string ls = styleOf(stStr)
+        line.set_color(z.lt, bc)
+        line.set_style(z.lt, ls)
+        line.set_width(z.lt, bWid)
+        line.set_color(z.lb, bc)
+        line.set_style(z.lb, ls)
+        line.set_width(z.lb, bWid)
+
+        // Connector: entry edge at the candle that opened the gap, down (or up)
+        // to the deepest point of the retest.
+        bool drawConn = showConn and vis and z.tested and not na(z.deep)
+        line.set_xy1(z.lc, z.bstart + 1, z.bull ? z.top : z.bot)
+        line.set_xy2(z.lc, drawConn ? z.deepBar : z.bstart + 1, drawConn ? z.deep : (z.bull ? z.top : z.bot))
+        line.set_color(z.lc, drawConn ? color.new(base, math.min(100, bordT + fade)) : cClear)
+        line.set_width(z.lc, 1)
+
+        // A callout style with a transparent background leaves bare text anchored
+        // flush to the chosen edge, rather than straddling it the way style_none does.
+        int labX = switch labPos
+            "Left"   => z.bstart
+            "Centre" => z.bstart + int((r - z.bstart) / 2)
+            => r
+        string labStyle = switch labPos
+            "Left"   => label.style_label_left
+            "Centre" => label.style_none
+            => label.style_label_right
+        label.set_xy(z.lab, labX, math.avg(z.top, z.bot))
+        label.set_text(z.lab, (z.bull ? "+" : "−") + (z.inv ? " IFVG" : " FVG"))
+        label.set_style(z.lab, labStyle)
+        label.set_color(z.lab, cClear)
+        label.set_textcolor(z.lab, showLab and vis ? color.new(base, math.min(100, bordT + fade)) : cClear)
+        label.set_size(z.lab, labSize)
+
+// ── Overlap zones ────────────────────────────────────────────────────────────
+// Rebuilt wholesale on the last bar, after every zone has been drawn, so the
+// intersections always sit on top of the zones they belong to.
+if barstate.islast
+    if ovBoxes.size() > 0
+        for b in ovBoxes
+            box.delete(b)
+        ovBoxes.clear()
+
+    if showOv and maxOv > 0 and zones.size() > 1
+        int n = zones.size()
+        for i = 0 to n - 2
+            Zone za = zones.get(i)
+            if visibleOf(za)
+                for j = i + 1 to n - 1
+                    Zone zb = zones.get(j)
+                    // One side of the pair must be an inverse gap, the other a plain one.
+                    if ovBoxes.size() < maxOv and za.inv != zb.inv and visibleOf(zb)
+                        float ovTop = math.min(za.top, zb.top)
+                        float ovBot = math.max(za.bot, zb.bot)
+                        int   ovL   = math.max(za.bstart, zb.bstart)
+                        int   ovR   = math.min(rightOf(za), rightOf(zb))
+                        if ovTop > ovBot and ovR > ovL
+                            box ob = box.new(ovL, ovTop, ovR, ovBot,
+                                 border_color = color.new(cOv, ovBordT),
+                                 border_width = bWid,
+                                 bgcolor      = color.new(cOv, ovFillT))
+                            ovBoxes.push(ob)
