@@ -90,21 +90,21 @@ G_HTF = "HTF Candles"
 htfCount    = input.int(4, "HTF Candles", minval=1, maxval=40, group=G_HTF, tooltip="How many higher timeframe candles to display to the right of price.")
 htfSizeOpt  = input.string("Normal", "Size", options=["Hidden", "Small", "Normal", "Large"], group=G_HTF)
 htfOffset   = input.int(10, "Offset", minval=1, maxval=300, group=G_HTF, tooltip="Pushes the HTF candles further right. Running two copies of this indicator at once? Offset one of them by 17 or more so they don't stack.")
-bullBody    = input.color(#26a69a, "Body",   group=G_HTF, inline="body")
-bearBody    = input.color(#ef5350, "",       group=G_HTF, inline="body")
-bullBorder  = input.color(#26a69a, "Border", group=G_HTF, inline="border")
-bearBorder  = input.color(#ef5350, "",       group=G_HTF, inline="border")
-bullWick    = input.color(#26a69a, "Wick",   group=G_HTF, inline="wick")
-bearWick    = input.color(#ef5350, "",       group=G_HTF, inline="wick")
+bullBody    = input.color(#70a880, "Body",   group=G_HTF, inline="body")
+bearBody    = input.color(#1e1e1e, "",       group=G_HTF, inline="body")
+bullBorder  = input.color(#4a7a58, "Border", group=G_HTF, inline="border")
+bearBorder  = input.color(#1e1e1e, "",       group=G_HTF, inline="border")
+bullWick    = input.color(#3d3d3d, "Wick",   group=G_HTF, inline="wick")
+bearWick    = input.color(#3d3d3d, "",       group=G_HTF, inline="wick")
 
 showHtfOpen  = input.bool(true,  "HTF Open", group=G_HTF, inline="op", tooltip="The opening price of the higher timeframe candle your chart sits inside.")
 htfOpenColor = input.color(color.new(#787b86, 0), "", group=G_HTF, inline="op")
 htfOpenStyle = input.string("Dashed", "", options=["Solid", "Dotted", "Dashed"], group=G_HTF, inline="op")
 htfOpenWidth = input.int(1, "W", minval=1, maxval=5, group=G_HTF, inline="op")
 
-showVLines  = input.bool(false, "Vertical Lines", group=G_HTF, inline="vl", tooltip="Marks where each new higher timeframe period begins.")
-vLineColor  = input.color(color.new(#787b86, 55), "", group=G_HTF, inline="vl")
-vLineStyle  = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], group=G_HTF, inline="vl")
+showVLines  = input.bool(true, "Vertical Lines", group=G_HTF, inline="vl", tooltip="Marks where each new higher timeframe period begins.")
+vLineColor  = input.color(color.new(#9598a1, 55), "", group=G_HTF, inline="vl")
+vLineStyle  = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], group=G_HTF, inline="vl")
 vLineWidth  = input.int(1, "W", minval=1, maxval=5, group=G_HTF, inline="vl")
 
 showLHLines = input.bool(false, "L/H Lines", group=G_HTF, inline="lh", tooltip="The previous higher timeframe candle's high and low — resting liquidity. Off by default.")
@@ -131,13 +131,18 @@ customTZ       = input.string("America/New_York", "", group=G_TL, inline="tz")
 // --- Model Style ------------------------------------------------------------
 G_MS = "Model Style"
 showLabels   = input.bool(true, "Show TTFM Labels?", group=G_MS, inline="lb", tooltip="The C2 / C3 / C4 tags on the model.")
-labelColor   = input.color(color.new(#787b86, 0), "", group=G_MS, inline="lb")
+labelColor   = input.color(color.new(#6f7580, 0), "", group=G_MS, inline="lb")
 labelSizeOpt = input.string("Small", "", options=["Tiny", "Small", "Normal", "Large"], group=G_MS, inline="lb")
 
 showSweep    = input.bool(true, "Candle 1 Sweep", group=G_MS, inline="sw", tooltip="The Candle 1 high or low that Candle 2 ran.")
-sweepColor   = input.color(#ff7b16, "", group=G_MS, inline="sw")
+sweepColor   = input.color(#1e1e1e, "", group=G_MS, inline="sw")
 sweepStyle   = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], group=G_MS, inline="sw")
 sweepWidth   = input.int(1, "W", minval=1, maxval=5, group=G_MS, inline="sw")
+
+showLeg      = input.bool(true, "Manipulation Leg", group=G_MS, inline="lg", tooltip="The diagonal from the high that made the low to the low itself (inverted for a bearish model). This is the leg the standard-deviation projections are struck from.")
+legColor     = input.color(#ff9500, "", group=G_MS, inline="lg")
+legStyleIn   = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], group=G_MS, inline="lg")
+legWidth     = input.int(1, "W", minval=1, maxval=5, group=G_MS, inline="lg")
 
 showBullCISD  = input.bool(true, "Bullish CISD", group=G_MS, inline="bu", tooltip="Change In State Of Delivery: the open of the first candle of the bearish run that price closed back above.")
 bullCISDColor = input.color(#035fff, "", group=G_MS, inline="bu")
@@ -149,14 +154,16 @@ bearCISDColor = input.color(#035fff, "", group=G_MS, inline="be")
 bearCISDStyle = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], group=G_MS, inline="be")
 bearCISDWidth = input.int(1, "W", minval=1, maxval=5, group=G_MS, inline="be")
 
+showCISDLabel = input.bool(false, "CISD Labels", group=G_MS, tooltip="Adds a +CISD / -CISD tag beside the line. The reference charts run without it.")
+
 showEQ       = input.bool(true, "Candle Equilibrium", group=G_MS, inline="ceq", tooltip="The midpoint of the closure candle, wick to wick. Price should hold the half that agrees with the model.")
 eqColor      = input.color(color.new(#787b86, 15), "", group=G_MS, inline="ceq")
 eqStyle      = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], group=G_MS, inline="ceq")
 eqWidth      = input.int(1, "W", minval=1, maxval=5, group=G_MS, inline="ceq")
 
 showTSpot    = input.bool(true, "T-Spot", group=G_MS, inline="ts", tooltip="The zone between the HTF open and the previous candle's equilibrium. Support in a bullish model, resistance in a bearish one.")
-tSpotBull    = input.color(color.new(#26a69a, 82), "", group=G_MS, inline="ts")
-tSpotBear    = input.color(color.new(#ef5350, 82), "", group=G_MS, inline="ts")
+tSpotBull    = input.color(color.new(#70a880, 88), "", group=G_MS, inline="ts")
+tSpotBear    = input.color(color.new(#c0504d, 88), "", group=G_MS, inline="ts")
 
 showEarlyCISD  = input.bool(false, "Show Early C2 CISD", group=G_MS, inline="ec", tooltip="Plots the CISD before the higher timeframe candle closes. A heads-up, not a completed model — it can still un-form.")
 earlyCISDColor = input.color(color.new(#035fff, 45), "", group=G_MS, inline="ec")
@@ -187,16 +194,16 @@ showProj     = input.bool(true, "Enable Projections", group=G_STD, tooltip="Targ
 showProjLbl  = input.bool(true, "Labels", group=G_STD, inline="pl")
 projLblSize  = input.string("Tiny", "", options=["Tiny", "Small", "Normal"], group=G_STD, inline="pl")
 projType     = input.string("Wick", "Type", options=["Wick", "Body"], group=G_STD, tooltip="Whether the manipulation leg is measured wick to wick or body to body.")
-projLevelsIn = input.string("-1,-2,-2.5,-4", "Levels", group=G_STD, tooltip="Use negative numbers. An average leg tends to deliver -2 to -2.5; an expanding leg can reach -4 to -4.5; a very large leg should be held to -1.")
-projColor    = input.color(color.new(#787b86, 20), "", group=G_STD, inline="ps")
-projStyle    = input.string("Dashed", "", options=["Solid", "Dotted", "Dashed"], group=G_STD, inline="ps")
+projLevelsIn = input.string("-1,-2,-2.5,-4,-4.5", "Levels", group=G_STD, tooltip="Use negative numbers. An average leg tends to deliver -2 to -2.5; an expanding leg can reach -4 to -4.5; a very large leg should be held to -1.")
+projColor    = input.color(color.new(#1e1e1e, 15), "", group=G_STD, inline="ps")
+projStyle    = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], group=G_STD, inline="ps")
 projWidth    = input.int(1, "W", minval=1, maxval=5, group=G_STD, inline="ps")
 
 // --- Formation Liquidity ----------------------------------------------------
 G_LQ = "Formation Liquidity"
-showLiq   = input.bool(true, "Enable Formation Liquidity", group=G_LQ, tooltip="Previous higher timeframe highs and lows sitting in front of the model — where the liquidity rests, and the first place price is likely to deliver.")
-liqLookbk = input.int(6, "Lookback (HTF candles)", minval=1, maxval=40, group=G_LQ)
-liqColor  = input.color(color.new(#f5b041, 10), "", group=G_LQ, inline="lq")
+showLiq   = input.bool(false, "Enable Formation Liquidity", group=G_LQ, tooltip="Previous higher timeframe highs and lows sitting in front of the model — where the liquidity rests, and the first place price is likely to deliver.")
+liqLookbk = input.int(2, "Lookback (HTF candles)", minval=1, maxval=40, group=G_LQ, tooltip="Each candle in the lookback contributes a line. Past two or three these stop reading as targets and start reading as noise.")
+liqColor  = input.color(color.new(#c99a3b, 25), "", group=G_LQ, inline="lq")
 liqStyle  = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], group=G_LQ, inline="lq")
 liqWidth  = input.int(1, "W", minval=1, maxval=5, group=G_LQ, inline="lq")
 
@@ -282,10 +289,19 @@ type Model
     float  legStart
     float  legEnd
     int    legBar
+    // Bar the leg starts from, so the manipulation leg can be drawn as the
+    // diagonal it actually is rather than a horizontal level.
+    int    legStartBar
     int    startIdx
+    // Projections are tracked apart from the other lines: each one extends only
+    // until price reaches it, then freezes and dims, so the ladder shows at a
+    // glance which targets are spent and which are still live.
+    array<line>  projLines
+    array<label> projLabels
+    array<float> projPx
+    array<bool>  projHit
     array<line>  liveLines
     array<label> labels
-    array<label> edgeLabels
     array<box>   boxes
 
 // =============================================================================
@@ -628,6 +644,14 @@ var array<Model> models = array.new<Model>()
 // Free every drawing a model owns.
 method wipe(Model m) =>
     if not na(m)
+        if array.size(m.projLines) > 0
+            for i = 0 to array.size(m.projLines) - 1
+                line.delete(array.get(m.projLines, i))
+            array.clear(m.projLines)
+        if array.size(m.projLabels) > 0
+            for i = 0 to array.size(m.projLabels) - 1
+                label.delete(array.get(m.projLabels, i))
+            array.clear(m.projLabels)
         if array.size(m.liveLines) > 0
             for i = 0 to array.size(m.liveLines) - 1
                 line.delete(array.get(m.liveLines, i))
@@ -636,10 +660,6 @@ method wipe(Model m) =>
             for i = 0 to array.size(m.labels) - 1
                 label.delete(array.get(m.labels, i))
             array.clear(m.labels)
-        if array.size(m.edgeLabels) > 0
-            for i = 0 to array.size(m.edgeLabels) - 1
-                label.delete(array.get(m.edgeLabels, i))
-            array.clear(m.edgeLabels)
         if array.size(m.boxes) > 0
             for i = 0 to array.size(m.boxes) - 1
                 box.delete(array.get(m.boxes, i))
@@ -675,9 +695,13 @@ legFor(int dir, HtfBar c1, HtfBar c2) =>
     float hi   = projType == "Wick" ? c2.h : math.max(c2.o, c2.c)
     float c1hi = projType == "Wick" ? c1.h : math.max(c1.o, c1.c)
     float c1lo = projType == "Wick" ? c1.l : math.min(c1.o, c1.c)
-    float ls = dir == 1 ? math.max(hi, c1hi) : math.min(lo, c1lo)
-    float le = dir == 1 ? lo : hi
-    [ls, le]
+    // Whichever candle actually printed the extreme also supplies the bar it
+    // printed on, so the leg can be drawn as a diagonal between two real points.
+    bool  fromC1 = dir == 1 ? c1hi >= hi : c1lo <= lo
+    float ls  = dir == 1 ? math.max(hi, c1hi) : math.min(lo, c1lo)
+    float le  = dir == 1 ? lo : hi
+    int   lsb = fromC1 ? (dir == 1 ? c1.hIdx : c1.lIdx) : (dir == 1 ? c2.hIdx : c2.lIdx)
+    [ls, le, lsb]
 
 // --- Closure detection, on HTF candle close ---------------------------------
 // Evaluated when a new HTF candle opens, which is the first bar on which the
@@ -768,13 +792,17 @@ if newHtf and array.size(bars) >= 3 and inCalcWindow
                 m.c4Tagged := false
                 m.age      := 0
                 m.startIdx := turn.startIdx
-                [ls, le]   = legFor(newDir, anchor, turn)
-                m.legStart := ls
-                m.legEnd   := le
-                m.legBar   := newDir == 1 ? turn.lIdx : turn.hIdx
+                [ls, le, lsb] = legFor(newDir, anchor, turn)
+                m.legStart    := ls
+                m.legEnd      := le
+                m.legStartBar := lsb
+                m.legBar      := newDir == 1 ? turn.lIdx : turn.hIdx
+                m.projLines  := array.new<line>()
+                m.projLabels := array.new<label>()
+                m.projPx     := array.new<float>()
+                m.projHit    := array.new<bool>()
                 m.liveLines  := array.new<line>()
                 m.labels     := array.new<label>()
-                m.edgeLabels := array.new<label>()
                 m.boxes      := array.new<box>()
                 array.unshift(models, m)
                 trimModels()
@@ -941,23 +969,33 @@ drawModel(Model m) =>
         if showEQ
             array.push(m.liveLines, line.new(x1, m.eqLvl, x2, m.eqLvl, color=eqColor, width=eqWidth, style=lineStyleOf(eqStyle)))
 
-        // T-Spot: the new candle's open to the closure candle's equilibrium
-        if showTSpot and not na(m.tsOpen)
-            array.push(m.boxes, box.new(x1, math.max(m.tsOpen, m.eqLvl), x2, math.min(m.tsOpen, m.eqLvl), border_color=color.new(color.black, 100), bgcolor=m.dir == 1 ? tSpotBull : tSpotBear))
+        // The manipulation leg, drawn as the diagonal it is: from the high that
+        // made the low, down to the low (inverted for a bearish model). This is
+        // the leg every projection below is struck from, so showing it makes
+        // the ladder legible rather than arbitrary.
+        if showLeg and not na(m.legStart) and not na(m.legEnd)
+            array.push(m.liveLines, line.new(m.legStartBar, m.legStart, m.legBar, m.legEnd, color=legColor, width=legWidth, style=lineStyleOf(legStyleIn)))
 
-        // Model tag, on the candle whose close confirmed it
+        // Model tag: plain text under the swing, no pointer or bubble.
         if showLabels
-            array.push(m.labels, label.new(m.lblIdx, m.dir == 1 ? m.c2Low : m.c2High, m.kind, color=color.new(color.black, 100), textcolor=labelColor, style=m.dir == 1 ? label.style_label_up : label.style_label_down, size=textSizeOf(labelSizeOpt)))
+            float pad = math.max(m.c2High - m.c2Low, syminfo.mintick * 10) * 0.35
+            array.push(m.labels, label.new(m.lblIdx, m.dir == 1 ? m.c2Low - pad : m.c2High + pad, m.kind, color=color.new(color.black, 100), textcolor=labelColor, style=label.style_none, size=textSizeOf(labelSizeOpt)))
 
-        // Standard-deviation projections off the manipulation leg
+        // Standard-deviation projections off the manipulation leg. Each line is
+        // tracked individually so it can stop at the bar price reaches it.
         if showProj and array.size(projLevels) > 0 and not na(m.legStart) and not na(m.legEnd)
             float span = m.legEnd - m.legStart
+            // The number sits in a fixed column just past the closure rather
+            // than riding the right edge, which is where the reference puts it.
+            int lblX = m.lblIdx + 2
             for i = 0 to array.size(projLevels) - 1
                 float lvl = array.get(projLevels, i)
                 float px  = m.legStart + span * lvl
-                array.push(m.liveLines, line.new(m.legBar, px, x2, px, color=projColor, width=projWidth, style=lineStyleOf(projStyle)))
+                array.push(m.projLines, line.new(m.legBar, px, x2, px, color=projColor, width=projWidth, style=lineStyleOf(projStyle)))
+                array.push(m.projPx, px)
+                array.push(m.projHit, false)
                 if showProjLbl
-                    array.push(m.edgeLabels, label.new(x2, px, str.tostring(lvl), color=color.new(color.black, 100), textcolor=projColor, style=label.style_label_left, size=textSizeOf(projLblSize)))
+                    array.push(m.projLabels, label.new(lblX, px, str.tostring(lvl), color=color.new(color.black, 100), textcolor=projColor, style=label.style_none, size=textSizeOf(projLblSize)))
 
         // Formation liquidity — prior HTF extremes sitting in front of price
         if showLiq
@@ -980,13 +1018,36 @@ drawCISD(Model m) =>
         if want
             col = m.dir == 1 ? bullCISDColor : bearCISDColor
             array.push(m.liveLines, line.new(m.cisdBar, m.cisdLvl, bar_index + RIGHT_PAD, m.cisdLvl, color=col, width=m.dir == 1 ? bullCISDWidth : bearCISDWidth, style=lineStyleOf(m.dir == 1 ? bullCISDStyle : bearCISDStyle)))
-            if showLabels
+            if showCISDLabel
                 array.push(m.labels, label.new(m.cisdBar, m.cisdLvl, m.dir == 1 ? "+CISD" : "-CISD", color=color.new(color.black, 100), textcolor=col, style=label.style_label_right, size=textSizeOf(labelSizeOpt)))
 
 if inCalcWindow and array.size(models) > 0
     m0 = array.get(models, 0)
     drawModel(m0)
     drawCISD(m0)
+
+// --- T-Spot, one zone per HTF candle ----------------------------------------
+// The reference draws a fresh zone on each candle of the continuation, not one
+// zone stretched across the whole move: each candle opens and the zone between
+// that open and the previous candle's equilibrium is where a continuation is
+// expected to find support (or resistance). The box spans just that candle.
+
+var box tsLive = na
+
+if drawOnChart and showTSpot and inCalcWindow
+    if newHtf
+        tsLive := na
+        if array.size(models) > 0
+            mt = array.get(models, 0)
+            HtfBar tsNew  = getBar(0)
+            HtfBar tsPrev = getBar(1)
+            if not mt.invalid and not mt.done and not na(tsNew) and not na(tsPrev)
+                float tsEq = (tsPrev.h + tsPrev.l) / 2.0
+                tsLive := box.new(bar_index, math.max(tsNew.o, tsEq), bar_index + 1, math.min(tsNew.o, tsEq), border_color=color.new(#1e1e1e, 55), border_width=1, border_style=line.style_dotted, bgcolor=mt.dir == 1 ? tSpotBull : tSpotBear)
+                array.push(mt.boxes, tsLive)
+    else
+        if not na(tsLive)
+            box.set_right(tsLive, bar_index)
 
 // Walk the right edge of everything still running.
 if inCalcWindow and array.size(models) > 0
@@ -996,12 +1057,21 @@ if inCalcWindow and array.size(models) > 0
             if array.size(mm.liveLines) > 0
                 for j = 0 to array.size(mm.liveLines) - 1
                     line.set_x2(array.get(mm.liveLines, j), bar_index + RIGHT_PAD)
-            if array.size(mm.boxes) > 0
-                for j = 0 to array.size(mm.boxes) - 1
-                    box.set_right(array.get(mm.boxes, j), bar_index + RIGHT_PAD)
-            if array.size(mm.edgeLabels) > 0
-                for j = 0 to array.size(mm.edgeLabels) - 1
-                    label.set_x(array.get(mm.edgeLabels, j), bar_index + RIGHT_PAD)
+
+            // A projection extends only until price reaches it. Once tagged it
+            // freezes where it was hit and the number dims, so the ladder shows
+            // which targets are spent and which are still in front of price.
+            if array.size(mm.projLines) > 0
+                for j = 0 to array.size(mm.projLines) - 1
+                    if not array.get(mm.projHit, j)
+                        float px = array.get(mm.projPx, j)
+                        bool reached = mm.dir == 1 ? high >= px : low <= px
+                        if reached
+                            array.set(mm.projHit, j, true)
+                            if array.size(mm.projLabels) > j
+                                label.set_textcolor(array.get(mm.projLabels, j), color.new(projColor, 65))
+                        if not reached
+                            line.set_x2(array.get(mm.projLines, j), bar_index + RIGHT_PAD)
 
 // The continuation tag: the expansion candle that follows the closure. After a
 // C2 closure that is Candle 3; after a C3 closure it is Candle 4.
