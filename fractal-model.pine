@@ -172,10 +172,13 @@ smtWidth     = input.int(1, "W", minval=1, maxval=5, group=G_SMT, inline="smtc")
 showSMTLabel = input.bool(true, "Labels", group=G_SMT, inline="sl")
 smtLabelSize = input.string("Tiny", "", options=["Tiny", "Small", "Normal"], group=G_SMT, inline="sl")
 smtMode      = input.string("Automatic", "SMT Mode", options=["Automatic", "Custom"], group=G_SMT, tooltip="Automatic pairs the common correlated markets. Custom lets you name the symbols yourself.")
-smtSym1In    = input.symbol("CME_MINI:NQ1!", "Custom Symbol 1", group=G_SMT)
+// Defaults are deliberately US equity ETFs rather than index futures: they are
+// the closest thing to universally available on a TradingView account, and a
+// symbol input's default is resolved whether or not SMT is ever switched on.
+smtSym1In    = input.symbol("AMEX:SPY", "Custom Symbol 1", group=G_SMT)
 smtSym1Inv   = input.bool(false, "Inverse", group=G_SMT, inline="i1", tooltip="For inversely correlated markets — a low on one pairs with a high on the other.")
 smtSym2On    = input.bool(false, "Secondary Pair", group=G_SMT, inline="s2")
-smtSym2In    = input.symbol("CBOT_MINI:YM1!", "", group=G_SMT, inline="s2")
+smtSym2In    = input.symbol("NASDAQ:QQQ", "", group=G_SMT, inline="s2")
 smtSym2Inv   = input.bool(false, "Inverse", group=G_SMT, inline="i2")
 
 // --- Standard Deviation Projections -----------------------------------------
@@ -528,16 +531,21 @@ bool          smtInv1 = smtMode == "Automatic" ? false : smtSym1Inv
 // Pulled on the chart timeframe so the series lines up bar for bar with the
 // main symbol, then aggregated into the same HTF buckets below. Requesting the
 // HTF directly would need lookahead to be useful, and that repaints.
-// ignore_invalid_symbol keeps an unreachable correlate — wrong exchange, or a
-// feed this account is not entitled to — from erroring the whole script. It
-// comes back na and SMT simply does not plot; the info table says so.
-[smt1H, smt1L] = request.security(smtSym1, timeframe.period, [high, low], lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+// Reaching for another symbol is the ONLY thing in this script that can fail on
+// a feed the account cannot reach, so it is gated on the feature being switched
+// on. request.security must stay at global scope and run on every bar, so
+// "off" cannot mean skipping the call — instead it requests the chart's own
+// symbol, which is by definition always resolvable. That makes "Enable SMT?"
+// genuinely disable all external symbol resolution; gating only the drawing
+// code, as this previously did, left the request firing regardless.
+//
+// ignore_invalid_symbol then keeps an unreachable correlate from erroring the
+// script: it comes back na, SMT does not plot, and the info table says so.
+simple string smtReq1 = showSMT ? smtSym1 : syminfo.tickerid
+simple string smtReq2 = showSMT and smtSym2On ? smtSym2In : syminfo.tickerid
 
-// Never ask for the secondary symbol unless it is switched on: it defaults off,
-// and requesting it anyway makes its default a live failure point for every
-// user regardless of whether they wanted a second pair.
-simple string smtSym2 = smtSym2On ? smtSym2In : smtSym1
-[smt2H, smt2L] = request.security(smtSym2, timeframe.period, [high, low], lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[smt1H, smt1L] = request.security(smtReq1, timeframe.period, [high, low], lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[smt2H, smt2L] = request.security(smtReq2, timeframe.period, [high, low], lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
 
 // =============================================================================
 // HTF AGGREGATION
