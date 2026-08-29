@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STATIC MODEL — Screener — Deon20</title>
+<meta name="description" content="Scan up to forty symbols for STATIC MODEL C2 setups from one TradingView chart, with forming and confirmed stages bundled into a single alert per bar.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&display=swap">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body style="--sig:var(--c-teal)">
+<header class="masthead">
+  <div class="container">
+    <a class="logo" href="../index.html"><b>Deon20</b><span>Indicators</span></a>
+    <button class="navtoggle" aria-expanded="false" aria-controls="mainnav">Menu</button>
+    <nav class="mainnav" id="mainnav" aria-label="Main">
+      <div class="dropdown">
+        <button aria-expanded="false">Indicators <span class="caret">&#9660;</span></button>
+        <div class="dropmenu">
+          <a href="static-model.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC MODEL<small>sweep · reclaim · CISD</small></span></a>
+          <a href="static-model-screener.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC Screener<small>40 symbols · one alert</small></span></a>
+          <a href="unicorn-model.html" style="--sig:var(--c-violet)"><i class="bullet"></i><span>Unicorn Model<small>breaker + FVG · R targets</small></span></a>
+          <a href="ohlc-projection-levels.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Crypto<small>manipulation / distribution</small></span></a>
+          <a href="ohlc-projection-levels-stocks.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Stocks<small>equity feeds · gap aware</small></span></a>
+          <a href="liquidity-sweep-probability.html" style="--sig:var(--c-blue)"><i class="bullet"></i><span>Liquidity Sweep Probability<small>measured hit rates</small></span></a>
+          <a href="strat-scanner.html" style="--sig:var(--c-rose)"><i class="bullet"></i><span>Strat Scanner<small>app + alert server</small></span></a>
+        </div>
+      </div>
+      <a href="../how-it-works.html">How it works</a>
+      <a href="../get-started.html">Get started</a>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/jfreezy24-del/Deon20/blob/HEAD/static-model-screener.pine">Source &#8599;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="pagehead">
+    <div class="container">
+      <p class="crumbs"><a href="../index.html">Home</a> &nbsp;/&nbsp; Indicators &nbsp;/&nbsp; STATIC MODEL — Screener</p>
+      <div class="stack gap-20">
+        <span class="eyebrow sig">Pine v6 · separate pane · 129 lines</span>
+        <h1>STATIC MODEL — Screener</h1>
+        <p class="lede">The same setup logic pointed at up to forty symbols at once, from a single chart, with one alert per bar no matter how many of them fire.</p>
+        <div class="btnrow"><a class="btn btn-primary" href="../get-started.html">How to install</a><a class="btn btn-ghost" href="https://github.com/jfreezy24-del/Deon20/blob/HEAD/static-model-screener.pine">Read the source ↗</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <figure class="figure">
+        <svg viewBox="0 0 900 400" role="img" aria-label="A scanner pane listing symbols with their timeframe, direction and stage: some confirmed, some still forming.">
+          <rect width="900" height="400" fill="var(--panel)"/>
+          <rect x="40" y="30" width="820" height="36" fill="var(--panel-2)"/>
+          <g font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="1.2" fill="var(--muted)">
+            <text x="64" y="53">SYMBOL</text><text x="300" y="53">TF</text>
+            <text x="400" y="53">SIDE</text><text x="540" y="53">STAGE</text><text x="740" y="53">SINCE</text>
+          </g>
+          <line x1="40" y1="66" x2="860" y2="66" stroke="var(--line)"/>
+
+          <g font-family="IBM Plex Mono, monospace" font-size="13" fill="var(--ink)">
+            <text x="64" y="102">BINANCE:BTCUSDT</text><text x="300" y="102">4H</text>
+            <text x="400" y="102" fill="var(--c-teal)">BUY</text>
+            <circle cx="548" cy="98" r="4.5" fill="var(--c-teal)"/><text x="564" y="102" fill="var(--c-teal)" font-size="11.5">CONFIRMED</text>
+            <text x="740" y="102" fill="var(--muted)" font-size="11.5">12m</text>
+
+            <text x="64" y="146">NASDAQ:NVDA</text><text x="300" y="146">4H</text>
+            <text x="400" y="146" fill="var(--c-rose)">SELL</text>
+            <circle cx="548" cy="142" r="4.5" fill="var(--c-amber)"/><text x="564" y="146" fill="var(--c-amber)" font-size="11.5">FORMING</text>
+            <text x="740" y="146" fill="var(--muted)" font-size="11.5">3m</text>
+
+            <text x="64" y="190">AMEX:SPY</text><text x="300" y="190">4H</text>
+            <text x="400" y="190" fill="var(--c-teal)">BUY</text>
+            <circle cx="548" cy="186" r="4.5" fill="var(--c-teal)"/><text x="564" y="190" fill="var(--c-teal)" font-size="11.5">CONFIRMED</text>
+            <text x="740" y="190" fill="var(--muted)" font-size="11.5">1h 04m</text>
+
+            <text x="64" y="234">BINANCE:SOLUSDT</text><text x="300" y="234">4H</text>
+            <text x="400" y="234" fill="var(--c-rose)">SELL</text>
+            <circle cx="548" cy="230" r="4.5" fill="var(--c-amber)"/><text x="564" y="234" fill="var(--c-amber)" font-size="11.5">FORMING</text>
+            <text x="740" y="234" fill="var(--muted)" font-size="11.5">just now</text>
+
+            <text x="64" y="278" fill="var(--muted)">NASDAQ:AAPL</text><text x="300" y="278" fill="var(--muted)">4H</text>
+            <text x="400" y="278" fill="var(--muted)">—</text>
+            <text x="564" y="278" fill="var(--muted)" font-size="11.5">no setup</text>
+          </g>
+          <g stroke="var(--line-soft)">
+            <line x1="40" y1="118" x2="860" y2="118"/><line x1="40" y1="162" x2="860" y2="162"/>
+            <line x1="40" y1="206" x2="860" y2="206"/><line x1="40" y1="250" x2="860" y2="250"/>
+          </g>
+
+          <rect x="40" y="310" width="820" height="56" rx="4" fill="var(--panel-2)" stroke="var(--line)"/>
+          <circle cx="76" cy="338" r="10" fill="var(--c-teal)"/>
+          <text x="102" y="333" font-family="IBM Plex Sans, sans-serif" font-size="13.5" font-weight="600" fill="var(--ink)">1 alert, 4 lines</text>
+          <text x="102" y="353" font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="var(--muted)">Everything this chart bar produced, bundled into a single push notification.</text>
+        </svg>
+        <figcaption>One chart, forty symbols, two stages — and exactly one notification per bar.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">Two stages</span>
+        <h2>An early warning and a signal, kept separate.</h2>
+        <p class="lede">
+          A setup that is still forming can un-form. The screener never pretends otherwise.
+        </p>
+      </div>
+
+      <div class="grid g2">
+        <div class="tile" style="--sig:var(--c-amber)">
+          <span class="mark">~</span>
+          <h3>Forming</h3>
+          <p>
+            The live higher-timeframe candle has swept the prior candle's low or high and is
+            trading back inside it. This is the heads-up: it can still un-form before the close,
+            and the alert says so.
+          </p>
+        </div>
+        <div class="tile" style="--sig:var(--c-teal)">
+          <span class="mark">✓</span>
+          <h3>Confirmed</h3>
+          <p>
+            The candle closed back above the swept low, or below the swept high. A valid C2.
+            For the CISD confirmation and the entry itself, open the full
+            <a href="static-model.html">STATIC MODEL</a> on that symbol's chart.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled">
+    <div class="container">
+      <div class="feature">
+        <div class="copy stack gap-20">
+          <span class="eyebrow">Alert design</span>
+          <h2>TradingView throttles noisy scripts. This one never gets close.</h2>
+          <p class="lede">
+            Every signal a chart bar produces is bundled into a single
+            <span class="mono">alert()</span> message, one line per signal. The alert fires at
+            most once per bar. Each stage also fires at most once per higher-timeframe candle
+            per symbol, so a setup flickering in and out of "forming" doesn't spam you.
+          </p>
+          <ul class="checks">
+            <li>One alert on one chart covers the whole watchlist</li>
+            <li>Forming and confirmed can be toggled independently</li>
+            <li>The bias filter narrows the scan to one direction</li>
+          </ul>
+        </div>
+        <div class="stack gap-16">
+          <pre><span class="c">// one notification, four signals</span>
+STATIC C2 — 4H
+
+BTCUSDT   BUY   CONFIRMED
+SOLUSDT   SELL  FORMING
+SPY       BUY   CONFIRMED
+NVDA      SELL  FORMING</pre>
+          <div class="callout">
+            <span class="eyebrow">Chart timeframe</span>
+            <p>
+              The chart must sit at or below the scan timeframe — the script raises a runtime
+              error otherwise. A 1–5 minute chart gives the fastest updates.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container narrow">
+      <div class="sectionhead">
+        <span class="eyebrow">Setup</span>
+        <h2>Three steps, one alert.</h2>
+      </div>
+      <ol class="steps">
+        <li>
+          <h4>Add it to a fast chart</h4>
+          <p>Any liquid symbol on a 1–5 minute chart. The symbol itself doesn't matter — the screener requests every symbol in your list independently.</p>
+        </li>
+        <li>
+          <h4>Paste your list</h4>
+          <p>Comma or newline separated, up to forty. Defaults ship with BTC, ETH, SOL, XRP, the Mag 7, SPY and QQQ. Set the scan timeframe — 4H by default.</p>
+        </li>
+        <li>
+          <h4>Create one alert</h4>
+          <p>Condition <span class="mono">Any alert() function call</span>, push notifications on. That single alert now covers the entire list.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <div class="pager">
+        <a href="static-model.html"><span class="dir">&#8592; Previous</span><span class="name">STATIC MODEL</span></a>
+        <a class="next" href="unicorn-model.html"><span class="dir">Next &#8594;</span><span class="name">Unicorn Model</span></a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="sitefoot">
+  <div class="container">
+    <div class="footgrid">
+      <div>
+        <a class="logo" href="../index.html"><b>Deon20</b><span>Indicators</span></a>
+        <p class="small muted" style="margin-top:12px;max-width:34ch">
+          Pine Script tools for measuring liquidity, sweeps and the moves that follow them.
+        </p>
+      </div>
+      <div>
+        <h4>Indicators</h4>
+        <ul>
+          <li><a href="static-model.html">STATIC MODEL</a></li>
+          <li><a href="static-model-screener.html">STATIC Screener</a></li>
+          <li><a href="unicorn-model.html">Unicorn Model</a></li>
+          <li><a href="liquidity-sweep-probability.html">Liquidity Sweep Probability</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Projection</h4>
+        <ul>
+          <li><a href="ohlc-projection-levels.html">OHLC Projection &middot; Crypto</a></li>
+          <li><a href="ohlc-projection-levels-stocks.html">OHLC Projection &middot; Stocks</a></li>
+          <li><a href="strat-scanner.html">Strat Scanner</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../how-it-works.html">How it works</a></li>
+          <li><a href="../get-started.html">Get started</a></li>
+          <li><a href="https://github.com/jfreezy24-del/Deon20">GitHub repository &#8599;</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footbottom">
+      <span>Analysis and research tools. Not financial advice.</span>
+      <span>Pine Script v6 &middot; built for TradingView</span>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/site.js"></script>
+</body>
+</html>

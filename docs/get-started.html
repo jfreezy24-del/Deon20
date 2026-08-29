@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get started — Deon20</title>
+<meta name="description" content="Install the Deon20 Pine indicators in TradingView and run the Strat Scanner locally. No build step, no API keys.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&display=swap">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body style="--sig:var(--accent)">
+<header class="masthead">
+  <div class="container">
+    <a class="logo" href="index.html"><b>Deon20</b><span>Indicators</span></a>
+    <button class="navtoggle" aria-expanded="false" aria-controls="mainnav">Menu</button>
+    <nav class="mainnav" id="mainnav" aria-label="Main">
+      <div class="dropdown">
+        <button aria-expanded="false">Indicators <span class="caret">&#9660;</span></button>
+        <div class="dropmenu">
+          <a href="indicators/static-model.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC MODEL<small>sweep · reclaim · CISD</small></span></a>
+          <a href="indicators/static-model-screener.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC Screener<small>40 symbols · one alert</small></span></a>
+          <a href="indicators/unicorn-model.html" style="--sig:var(--c-violet)"><i class="bullet"></i><span>Unicorn Model<small>breaker + FVG · R targets</small></span></a>
+          <a href="indicators/ohlc-projection-levels.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Crypto<small>manipulation / distribution</small></span></a>
+          <a href="indicators/ohlc-projection-levels-stocks.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Stocks<small>equity feeds · gap aware</small></span></a>
+          <a href="indicators/liquidity-sweep-probability.html" style="--sig:var(--c-blue)"><i class="bullet"></i><span>Liquidity Sweep Probability<small>measured hit rates</small></span></a>
+          <a href="indicators/strat-scanner.html" style="--sig:var(--c-rose)"><i class="bullet"></i><span>Strat Scanner<small>app + alert server</small></span></a>
+        </div>
+      </div>
+      <a href="how-it-works.html">How it works</a>
+      <a href="get-started.html" aria-current="page">Get started</a>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/jfreezy24-del/Deon20">GitHub &#8599;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="pagehead">
+    <div class="container">
+      <p class="crumbs"><a href="index.html">Home</a> &nbsp;/&nbsp; Get started</p>
+      <div class="stack gap-20">
+        <span class="eyebrow sig">Installation</span>
+        <h1>Two minutes, no dependencies</h1>
+        <p class="lede">Every indicator is a single self-contained Pine script. There is nothing to build, no API key to obtain and no account to create anywhere.</p>
+        <div class="btnrow"><a class="btn btn-primary" href="https://github.com/jfreezy24-del/Deon20">Open the repository ↗</a><a class="btn btn-ghost" href="index.html#suite">Pick an indicator</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="feature">
+        <div class="copy stack gap-28">
+          <div class="stack gap-14">
+            <span class="eyebrow">Pine indicators</span>
+            <h2>Copy one file into Pine Editor.</h2>
+          </div>
+          <ol class="steps">
+            <li>
+              <h4>Copy the script</h4>
+              <p>Open the <span class="mono">.pine</span> file you want from the repository and copy its whole contents.</p>
+            </li>
+            <li>
+              <h4>Paste and add</h4>
+              <p>In TradingView, open <strong>Pine Editor</strong>, paste over the default script, and press <strong>Add to chart</strong>.</p>
+            </li>
+            <li>
+              <h4>Set the timeframe</h4>
+              <p>Choose the projection or HTF timeframe in the settings, then check the chart-timeframe rule for that indicator in the table below.</p>
+            </li>
+            <li>
+              <h4>Add one alert</h4>
+              <p>For anything that notifies, create a single alert on the indicator with the condition <span class="mono">Any alert() function call</span>.</p>
+            </li>
+          </ol>
+        </div>
+
+        <div class="stack gap-16">
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th>Indicator</th><th>Chart timeframe rule</th></tr></thead>
+              <tbody>
+                <tr><td><a href="indicators/static-model.html">STATIC MODEL</a></td><td>At or below the HTF you select.</td></tr>
+                <tr><td><a href="indicators/static-model-screener.html">STATIC Screener</a></td><td>1–5m, and never above the scan timeframe.</td></tr>
+                <tr><td><a href="indicators/unicorn-model.html">Unicorn Model</a></td><td>Your execution timeframe; the three sources run above it.</td></tr>
+                <tr><td><a href="indicators/ohlc-projection-levels.html">OHLC Projection · Crypto</a></td><td>Equal to or finer than the projection timeframe.</td></tr>
+                <tr><td><a href="indicators/ohlc-projection-levels-stocks.html">OHLC Projection · Stocks</a></td><td>Equal to or finer; prefer 1D and above.</td></tr>
+                <tr><td><a href="indicators/liquidity-sweep-probability.html">Liquidity Sweep Probability</a></td><td>Strictly finer than the levels you display.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout">
+            <span class="eyebrow">If load time suffers</span>
+            <p>
+              Every pooled data feed and every extra confluence timeframe costs one
+              <span class="mono">request.security</span> call, and Pine executes all of them
+              whether or not you use the result. Turn off pooling and extra timeframes first.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled">
+    <div class="container">
+      <div class="feature flip">
+        <div class="copy stack gap-20">
+          <span class="eyebrow">Strat Scanner</span>
+          <h2>Node 18+ and a phone.</h2>
+          <p class="lede">
+            The app runs through Expo Go — scan the QR code and tap <strong>Scan markets</strong>.
+            The same engine runs headless for alerts, locally or on GitHub Actions.
+          </p>
+          <ul class="checks" style="--sig:var(--c-rose)">
+            <li>No API keys — Yahoo Finance for most markets, Alpaca for crypto bars</li>
+            <li>Push notifications through ntfy.sh: pick a secret topic, set <span class="mono">NTFY_TOPIC</span></li>
+            <li>Optional email copies via <span class="mono">ALERT_EMAIL</span>, forwarded by ntfy's bridge</li>
+          </ul>
+          <a class="textlink" style="--sig:var(--c-rose)" href="indicators/strat-scanner.html">More about the scanner <span class="arrow">→</span></a>
+        </div>
+        <pre>git clone https://github.com/jfreezy24-del/Deon20
+cd Deon20/strat-scanner
+npm install
+
+npx expo start        <span class="c"># the app, via Expo Go</span>
+npm test              <span class="c"># engine unit tests</span>
+NTFY_TOPIC=... npm run alert</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">This site</span>
+        <h2>Static files, served from the repository.</h2>
+      </div>
+      <div class="grid g2">
+        <div class="stack gap-16">
+          <p class="lede">
+            The site lives in <span class="mono">docs/</span> — plain HTML with one stylesheet
+            and one small script, no build step and no dependencies beyond a web font.
+          </p>
+          <pre>cd docs
+python3 -m http.server 8000
+<span class="c"># http://localhost:8000</span></pre>
+        </div>
+        <div class="callout">
+          <span class="eyebrow">Publishing</span>
+          <p>
+            GitHub Pages needs no workflow: repository → Settings → Pages → <em>Deploy from a
+            branch</em>, then set the folder to <span class="mono">/docs</span>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <div class="cta">
+        <span class="eyebrow">One more thing</span>
+        <h2>These describe the past. They do not predict the next candle.</h2>
+        <p class="lede" style="text-align:center">
+          Every measured probability is a record of how a market has behaved, printed with the
+          sample size behind it precisely so you can judge how much weight it deserves. Nothing
+          here is financial advice.
+        </p>
+        <div class="btnrow">
+          <a class="btn btn-primary" href="index.html#suite">Browse the suite</a>
+          <a class="btn btn-ghost" href="how-it-works.html">How it works</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="sitefoot">
+  <div class="container">
+    <div class="footgrid">
+      <div>
+        <a class="logo" href="index.html"><b>Deon20</b><span>Indicators</span></a>
+        <p class="small muted" style="margin-top:12px;max-width:34ch">
+          Pine Script tools for measuring liquidity, sweeps and the moves that follow them.
+        </p>
+      </div>
+      <div>
+        <h4>Indicators</h4>
+        <ul>
+          <li><a href="indicators/static-model.html">STATIC MODEL</a></li>
+          <li><a href="indicators/static-model-screener.html">STATIC Screener</a></li>
+          <li><a href="indicators/unicorn-model.html">Unicorn Model</a></li>
+          <li><a href="indicators/liquidity-sweep-probability.html">Liquidity Sweep Probability</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Projection</h4>
+        <ul>
+          <li><a href="indicators/ohlc-projection-levels.html">OHLC Projection &middot; Crypto</a></li>
+          <li><a href="indicators/ohlc-projection-levels-stocks.html">OHLC Projection &middot; Stocks</a></li>
+          <li><a href="indicators/strat-scanner.html">Strat Scanner</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="how-it-works.html">How it works</a></li>
+          <li><a href="get-started.html">Get started</a></li>
+          <li><a href="https://github.com/jfreezy24-del/Deon20">GitHub repository &#8599;</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footbottom">
+      <span>Analysis and research tools. Not financial advice.</span>
+      <span>Pine Script v6 &middot; built for TradingView</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

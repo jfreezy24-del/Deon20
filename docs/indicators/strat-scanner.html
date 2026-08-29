@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strat Scanner — Deon20</title>
+<meta name="description" content="A React Native app and headless alert server that scan for unresolved Strat forks, score them 0-100, and push complete trade plans to your phone.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&display=swap">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body style="--sig:var(--c-rose)">
+<header class="masthead">
+  <div class="container">
+    <a class="logo" href="../index.html"><b>Deon20</b><span>Indicators</span></a>
+    <button class="navtoggle" aria-expanded="false" aria-controls="mainnav">Menu</button>
+    <nav class="mainnav" id="mainnav" aria-label="Main">
+      <div class="dropdown">
+        <button aria-expanded="false">Indicators <span class="caret">&#9660;</span></button>
+        <div class="dropmenu">
+          <a href="static-model.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC MODEL<small>sweep · reclaim · CISD</small></span></a>
+          <a href="static-model-screener.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC Screener<small>40 symbols · one alert</small></span></a>
+          <a href="unicorn-model.html" style="--sig:var(--c-violet)"><i class="bullet"></i><span>Unicorn Model<small>breaker + FVG · R targets</small></span></a>
+          <a href="ohlc-projection-levels.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Crypto<small>manipulation / distribution</small></span></a>
+          <a href="ohlc-projection-levels-stocks.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Stocks<small>equity feeds · gap aware</small></span></a>
+          <a href="liquidity-sweep-probability.html" style="--sig:var(--c-blue)"><i class="bullet"></i><span>Liquidity Sweep Probability<small>measured hit rates</small></span></a>
+          <a href="strat-scanner.html" style="--sig:var(--c-rose)"><i class="bullet"></i><span>Strat Scanner<small>app + alert server</small></span></a>
+        </div>
+      </div>
+      <a href="../how-it-works.html">How it works</a>
+      <a href="../get-started.html">Get started</a>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/jfreezy24-del/Deon20/tree/HEAD/strat-scanner">Source &#8599;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="pagehead">
+    <div class="container">
+      <p class="crumbs"><a href="../index.html">Home</a> &nbsp;/&nbsp; Indicators &nbsp;/&nbsp; Strat Scanner</p>
+      <div class="stack gap-20">
+        <span class="eyebrow sig">React Native · Expo · TypeScript</span>
+        <h1>Strat Scanner</h1>
+        <p class="lede">An app that scans the market for unresolved Strat forks — the ones where the next bar decides — plus a headless version of the same engine that runs on a schedule and pushes complete trade plans to your phone.</p>
+        <div class="btnrow"><a class="btn btn-primary" href="#install">Run it locally</a><a class="btn btn-ghost" href="https://github.com/jfreezy24-del/Deon20/tree/HEAD/strat-scanner">Read the source ↗</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <figure class="figure">
+        <svg viewBox="0 0 900 330" role="img" aria-label="A signal card for QQQ showing a 2-1-2 long setup, confidence 74, a four-timeframe continuity strip with three aligned, and entry, stop and target levels.">
+          <rect width="900" height="330" fill="var(--panel)"/>
+          <rect x="40" y="28" width="820" height="274" rx="5" fill="var(--panel-2)" stroke="var(--line)"/>
+
+          <text x="72" y="80" font-family="IBM Plex Mono, monospace" font-size="26" font-weight="600" fill="var(--ink)">QQQ</text>
+          <rect x="176" y="56" width="150" height="30" rx="3" fill="var(--c-rose)" fill-opacity=".16"/>
+          <text x="251" y="77" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="13" fill="var(--c-rose)">2-1-2 LONG · D</text>
+          <rect x="340" y="56" width="140" height="30" rx="3" fill="var(--c-teal)" fill-opacity=".16"/>
+          <text x="410" y="77" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="13" fill="var(--c-teal)">TRIGGERED</text>
+
+          <text x="72" y="126" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="1.3" fill="var(--muted)">CONFIDENCE</text>
+          <text x="828" y="126" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="16" font-weight="600" fill="var(--ink)">74</text>
+          <rect x="72" y="138" width="756" height="8" rx="4" fill="var(--panel)"/>
+          <rect x="72" y="138" width="560" height="8" rx="4" fill="var(--c-rose)"/>
+
+          <text x="72" y="184" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="1.3" fill="var(--muted)">FULL TIMEFRAME CONTINUITY</text>
+          <g font-family="IBM Plex Mono, monospace" font-size="12.5" text-anchor="middle">
+            <rect x="72"  y="196" width="180" height="32" rx="3" fill="var(--c-teal)" fill-opacity=".2"/><text x="162" y="217" fill="var(--c-teal)">4H ▲</text>
+            <rect x="262" y="196" width="180" height="32" rx="3" fill="var(--c-teal)" fill-opacity=".2"/><text x="352" y="217" fill="var(--c-teal)">DAILY ▲</text>
+            <rect x="452" y="196" width="180" height="32" rx="3" fill="var(--c-teal)" fill-opacity=".2"/><text x="542" y="217" fill="var(--c-teal)">WEEKLY ▲</text>
+            <rect x="642" y="196" width="186" height="32" rx="3" fill="var(--muted)" fill-opacity=".16"/><text x="735" y="217" fill="var(--muted)">MONTHLY ▼</text>
+          </g>
+
+          <g font-family="IBM Plex Mono, monospace" font-size="12.5">
+            <text x="72"  y="272" fill="var(--muted)">ENTRY</text><text x="72"  y="290" fill="var(--ink)">486.20</text>
+            <text x="262" y="272" fill="var(--muted)">RISK LINE</text><text x="262" y="290" fill="var(--c-rose)">481.90</text>
+            <text x="452" y="272" fill="var(--muted)">TARGET 1</text><text x="452" y="290" fill="var(--c-teal)">494.60 · 2.0R</text>
+            <text x="642" y="272" fill="var(--muted)">TARGET 2</text><text x="642" y="290" fill="var(--c-teal)">503.10 · 3.9R</text>
+          </g>
+        </svg>
+        <figcaption>Every signal is a complete plan, with the reasoning behind the score shown on the card.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">The scanner</span>
+        <h2>Potential setups, not finished ones.</h2>
+        <p class="lede">
+          Most scanners find sequences that have already completed. This one finds unresolved
+          <span class="mono">X-1-?</span> forks and lays out both branches before either happens.
+        </p>
+      </div>
+
+      <div class="grid g3">
+        <div class="tile">
+          <span class="mark">?</span>
+          <h3>The fork</h3>
+          <p>A directional bar followed by an inside bar (<span class="mono">2u-1-?</span>): break its high and the move continues, break its low and it reverses. Both are laid out in advance.</p>
+        </div>
+        <div class="tile">
+          <span class="mark">↕</span>
+          <h3>Compression</h3>
+          <p>Inside-bar forks are flagged separately — the tightest risk and a genuinely undecided direction, which is what makes them the cleanest of the potential setups.</p>
+        </div>
+        <div class="tile">
+          <span class="mark">!</span>
+          <h3>Triggered vs potential</h3>
+          <p>If the forming candle has already taken a trigger out, the signal is marked TRIGGERED — in force — rather than POTENTIAL. No pretending a resolved fork is still pending.</p>
+        </div>
+      </div>
+
+      <div class="tablewrap" style="margin-top:28px">
+        <table>
+          <thead><tr><th>Each signal carries</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Confidence</td><td>A transparent 0–100 score with every contributing factor listed: pattern quality, timeframe continuity, reward-to-risk, trigger-bar close location, volume expansion, in-force bonus.</td></tr>
+            <tr><td>Why it is valid</td><td>Plain English — the candle sequence, the trapped participants, the continuity picture, the magnitude logic.</td></tr>
+            <tr><td>Levels</td><td>Entry one tick past the trigger, stop the other side of the actionable bar, Target 1 the nearest prior pivot in the trade direction, Target 2 the farther pivot or a 2.5R projection.</td></tr>
+            <tr><td>Timeframe</td><td>Every setup tagged 4H, Daily, Weekly or Monthly. 4H is the lowest scanned, by design.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled">
+    <div class="container">
+      <div class="feature">
+        <div class="copy stack gap-20">
+          <span class="eyebrow">Algo Alerts mode</span>
+          <h2>A fixed universe, confirmed triggers only.</h2>
+          <p class="lede">
+            The second mode drops your watchlist and watches the Mag 7 plus the most liquid US
+            ETFs — SPY, QQQ, IWM, DIA, SMH, the sector SPDRs, GLD, TLT. No penny stocks, no
+            lottery tickets. Only confirmed triggers on daily, weekly and monthly structure.
+          </p>
+          <ul class="checks">
+            <li>When a sector ETF fires, it lists same-direction setups in its heavy constituents</li>
+            <li>When a stock fires, it shows the sector ETFs confirming the move</li>
+            <li>Expect a handful of names on a good day and zero on most — it never forces a setup</li>
+          </ul>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Workflow</th><th>Cadence</th><th>Sends</th></tr></thead>
+            <tbody>
+              <tr><td>Market Scan Alerts</td><td>Every 15 min, US market hours</td><td>New high-confidence setups and firing triggers from your watchlist file.</td></tr>
+              <tr><td>Strat Algo Alerts</td><td>Every 15 min, US market hours</td><td>Mag 7 and liquid ETFs, confirmed D/W/M triggers only. One to five a week, sometimes zero.</td></tr>
+              <tr><td>Crypto Weekly</td><td>Mondays 01:00 UTC</td><td>Accumulation ladders from weekly and monthly structure. The only thing that posts to Discord.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="feature flip">
+        <div class="copy stack gap-20">
+          <span class="eyebrow">Weekly crypto ladders</span>
+          <h2>Accumulation, not triggers.</h2>
+          <p class="lede">
+            Entries already arrive in real time from the two alerters. What a weekly cadence is
+            good for is the slower question: where the resting bids go, and how much size sits
+            on each one. Every rung is higher-timeframe structure rather than a round number.
+          </p>
+          <ul class="checks">
+            <li>Size skewed by tier — majors front-load the shallow rungs, high-beta names back-load the deep ones</li>
+            <li>Rungs never more than 35–65% below price; deeper "structure" is a wish, not a bid</li>
+            <li>Assets ordered closest-to-filling first, each with a stance: <span class="mono">ACCUMULATE</span>, <span class="mono">NEUTRAL</span> or <span class="mono">DEFENSIVE</span></li>
+          </ul>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Rung</th><th>Why it is a level</th></tr></thead>
+            <tbody>
+              <tr><td>Prior week low</td><td>Below it the week is 2-down — where weekly stops sit and where failed breakdowns form.</td></tr>
+              <tr><td>Weekly pivot low</td><td>The last point weekly buyers actually defended; magnitude from above measures down to it.</td></tr>
+              <tr><td>Prior month low</td><td>The monthly actionable level — below it the monthly sequence is on the back foot.</td></tr>
+              <tr><td>Monthly pivot low</td><td>Deepest structure in the plan. Holding it keeps the monthly sequence intact.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled" id="install">
+    <div class="container">
+      <div class="feature">
+        <div class="copy stack gap-20">
+          <span class="eyebrow">Does it actually work?</span>
+          <h2>The repo carries the tooling to answer that, not just assert it.</h2>
+          <p class="lede">
+            A forward-walk outcome resolver, a record of every published signal, historical
+            replay with no look-ahead, an exit-policy grid with walk-forward validation, regime
+            labelling from a benchmark, and a target-quality diagnostic asking whether Target 1
+            is real structure. Entry refinement uses 60-minute bars for timing only — never for
+            selection.
+          </p>
+        </div>
+        <div class="stack gap-16">
+          <pre><span class="c"># the app</span>
+cd strat-scanner
+npm install
+npx expo start        <span class="c"># scan the QR with Expo Go</span>
+
+<span class="c"># the engine, headless</span>
+npm test              <span class="c"># unit tests</span>
+npm run alert         <span class="c"># needs NTFY_TOPIC</span>
+npm run ladder-backtest</pre>
+          <div class="callout">
+            <span class="eyebrow">No API keys</span>
+            <p>
+              Market data comes from Yahoo Finance's public chart API, with Alpaca for crypto
+              bars. Yahoo has no native 4H interval, so 1H bars are aggregated into 4H buckets
+              anchored to each session's first bar.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <div class="pager">
+        <a href="liquidity-sweep-probability.html"><span class="dir">&#8592; Previous</span><span class="name">Liquidity Sweep Probability</span></a>
+        <a class="next" href="../get-started.html"><span class="dir">Next &#8594;</span><span class="name">Get started</span></a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="sitefoot">
+  <div class="container">
+    <div class="footgrid">
+      <div>
+        <a class="logo" href="../index.html"><b>Deon20</b><span>Indicators</span></a>
+        <p class="small muted" style="margin-top:12px;max-width:34ch">
+          Pine Script tools for measuring liquidity, sweeps and the moves that follow them.
+        </p>
+      </div>
+      <div>
+        <h4>Indicators</h4>
+        <ul>
+          <li><a href="static-model.html">STATIC MODEL</a></li>
+          <li><a href="static-model-screener.html">STATIC Screener</a></li>
+          <li><a href="unicorn-model.html">Unicorn Model</a></li>
+          <li><a href="liquidity-sweep-probability.html">Liquidity Sweep Probability</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Projection</h4>
+        <ul>
+          <li><a href="ohlc-projection-levels.html">OHLC Projection &middot; Crypto</a></li>
+          <li><a href="ohlc-projection-levels-stocks.html">OHLC Projection &middot; Stocks</a></li>
+          <li><a href="strat-scanner.html">Strat Scanner</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../how-it-works.html">How it works</a></li>
+          <li><a href="../get-started.html">Get started</a></li>
+          <li><a href="https://github.com/jfreezy24-del/Deon20">GitHub repository &#8599;</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footbottom">
+      <span>Analysis and research tools. Not financial advice.</span>
+      <span>Pine Script v6 &middot; built for TradingView</span>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/site.js"></script>
+</body>
+</html>

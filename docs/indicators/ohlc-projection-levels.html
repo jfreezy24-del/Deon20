@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OHLC Projection Levels — Deon20</title>
+<meta name="description" content="A TradingView indicator projecting volatility-normalised manipulation and distribution levels from each period's open, with percentiles, recency weighting and walk-forward reach rates.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&display=swap">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body style="--sig:var(--c-amber)">
+<header class="masthead">
+  <div class="container">
+    <a class="logo" href="../index.html"><b>Deon20</b><span>Indicators</span></a>
+    <button class="navtoggle" aria-expanded="false" aria-controls="mainnav">Menu</button>
+    <nav class="mainnav" id="mainnav" aria-label="Main">
+      <div class="dropdown">
+        <button aria-expanded="false">Indicators <span class="caret">&#9660;</span></button>
+        <div class="dropmenu">
+          <a href="static-model.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC MODEL<small>sweep · reclaim · CISD</small></span></a>
+          <a href="static-model-screener.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC Screener<small>40 symbols · one alert</small></span></a>
+          <a href="unicorn-model.html" style="--sig:var(--c-violet)"><i class="bullet"></i><span>Unicorn Model<small>breaker + FVG · R targets</small></span></a>
+          <a href="ohlc-projection-levels.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Crypto<small>manipulation / distribution</small></span></a>
+          <a href="ohlc-projection-levels-stocks.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Stocks<small>equity feeds · gap aware</small></span></a>
+          <a href="liquidity-sweep-probability.html" style="--sig:var(--c-blue)"><i class="bullet"></i><span>Liquidity Sweep Probability<small>measured hit rates</small></span></a>
+          <a href="strat-scanner.html" style="--sig:var(--c-rose)"><i class="bullet"></i><span>Strat Scanner<small>app + alert server</small></span></a>
+        </div>
+      </div>
+      <a href="../how-it-works.html">How it works</a>
+      <a href="../get-started.html">Get started</a>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/jfreezy24-del/Deon20/blob/HEAD/ohlc-projection-levels.pine">Source &#8599;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="pagehead">
+    <div class="container">
+      <p class="crumbs"><a href="../index.html">Home</a> &nbsp;/&nbsp; Indicators &nbsp;/&nbsp; OHLC Projection Levels — Crypto</p>
+      <div class="stack gap-20">
+        <span class="eyebrow sig">Pine v6 · overlay · crypto edition</span>
+        <h1>OHLC Projection Levels</h1>
+        <p class="lede">Anchors to each period's open and projects two statistical levels around it: how far price usually wicks against the move, and how far it usually expands with it — measured across thousands of periods and rescaled to today's volatility.</p>
+        <div class="btnrow"><a class="btn btn-primary" href="../get-started.html">How to install</a><a class="btn btn-ghost" href="https://github.com/jfreezy24-del/Deon20/blob/HEAD/ohlc-projection-levels.pine">Read the source ↗</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <figure class="figure">
+        <svg viewBox="0 0 900 420" role="img" aria-label="A period open drawn as a solid anchor line with projected distribution levels above and manipulation levels below, and a density curve on the right showing which percentile each level sits at.">
+          <rect width="900" height="420" fill="var(--panel)"/>
+
+          <line x1="40" y1="66" x2="600" y2="66" stroke="var(--c-amber)" stroke-width="1.4" stroke-dasharray="3 5"/>
+          <rect x="612" y="53" width="190" height="26" rx="2" fill="var(--c-amber)"/>
+          <text x="624" y="71" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="500" fill="var(--panel)">+D · 80th pct</text>
+
+          <line x1="40" y1="140" x2="600" y2="140" stroke="var(--c-amber)" stroke-width="1.2" stroke-dasharray="3 5" opacity=".6"/>
+          <rect x="612" y="127" width="190" height="26" rx="2" fill="none" stroke="var(--c-amber)" stroke-width="1.2" opacity=".8"/>
+          <text x="624" y="145" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--c-amber)">+M · median wick</text>
+
+          <line x1="40" y1="210" x2="600" y2="210" stroke="var(--c-amber)" stroke-width="2"/>
+          <rect x="612" y="197" width="190" height="26" rx="2" fill="none" stroke="var(--c-amber)" stroke-width="1.6"/>
+          <text x="624" y="215" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="500" fill="var(--c-amber)">OPEN · the anchor</text>
+
+          <line x1="40" y1="284" x2="600" y2="284" stroke="var(--c-amber)" stroke-width="1.2" stroke-dasharray="3 5" opacity=".6"/>
+          <rect x="612" y="271" width="190" height="26" rx="2" fill="none" stroke="var(--c-amber)" stroke-width="1.2" opacity=".8"/>
+          <text x="624" y="289" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--c-amber)">−M · median wick</text>
+
+          <line x1="40" y1="356" x2="600" y2="356" stroke="var(--c-amber)" stroke-width="1.4" stroke-dasharray="3 5"/>
+          <rect x="612" y="343" width="190" height="26" rx="2" fill="var(--c-amber)"/>
+          <text x="624" y="361" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="500" fill="var(--panel)">−D · 80th pct</text>
+
+          <g stroke="var(--muted)" stroke-width="1.5" fill="var(--panel-2)">
+            <line x1="120" y1="196" x2="120" y2="268"/> <rect x="112" y="206" width="16" height="44"/>
+            <line x1="176" y1="160" x2="176" y2="240"/> <rect x="168" y="172" width="16" height="52"/>
+            <line x1="232" y1="130" x2="232" y2="212"/> <rect x="224" y="142" width="16" height="54"/>
+            <line x1="288" y1="98"  x2="288" y2="180"/> <rect x="280" y="112" width="16" height="50"/>
+          </g>
+          <g stroke="var(--muted)" stroke-width="1.5" fill="var(--ink-2)" fill-opacity=".45">
+            <line x1="344" y1="86"  x2="344" y2="176"/> <rect x="336" y="96"  width="16" height="62"/>
+            <line x1="400" y1="120" x2="400" y2="216"/> <rect x="392" y="132" width="16" height="70"/>
+            <line x1="456" y1="176" x2="456" y2="268"/> <rect x="448" y="186" width="16" height="66"/>
+            <line x1="512" y1="216" x2="512" y2="300"/> <rect x="504" y="226" width="16" height="58"/>
+          </g>
+
+          <!-- density curve: the distribution these percentiles are read from -->
+          <path d="M838 66 C 812 110, 862 150, 836 210 C 812 268, 862 310, 838 356"
+                fill="none" stroke="var(--muted)" stroke-width="1.3" opacity=".55"/>
+          <line x1="826" y1="66"  x2="856" y2="66"  stroke="var(--c-amber)" stroke-width="1.6"/>
+          <line x1="826" y1="356" x2="856" y2="356" stroke="var(--c-amber)" stroke-width="1.6"/>
+          <text x="884" y="212" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" letter-spacing="1" fill="var(--muted)" transform="rotate(-90 884 212)">EXCURSION DISTRIBUTION</text>
+        </svg>
+        <figcaption>
+          Manipulation is the wick against the move; distribution is the expansion with it. Each
+          level is a percentile of its own measured distribution, not an average.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">Two levels, four statistics</span>
+        <h2>Up and down are not mirror images, so they aren't modelled as one.</h2>
+        <p class="lede">
+          The indicator tracks +M, −M, +D and −D separately. Nothing is derived by flipping a
+          sign.
+        </p>
+      </div>
+      <div class="grid g2">
+        <div class="tile">
+          <span class="mark">M</span>
+          <h3>Manipulation</h3>
+          <p>The counter-trend excursion — the liquidity grab before the move. Drawn at the median by default, so half of periods wick further and half don't.</p>
+        </div>
+        <div class="tile">
+          <span class="mark">D</span>
+          <h3>Distribution</h3>
+          <p>The in-trend expansion — where profit gets taken. Drawn at the 80th percentile by default: only one period in five extends past it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">Why "adaptive"</span>
+        <h2>Six things that separate this from averaging raw percentages.</h2>
+      </div>
+      <ol class="steps">
+        <li>
+          <h4>Volatility normalisation</h4>
+          <p>Raw percentages mix regimes — 2011 BTC wicked over 10% a day, 2024 BTC wicks around 2%. Averaging them describes the regime mix, not tomorrow. In <span class="mono">Log + ATR</span> mode each period is stored as its log excursion divided by the ATR% prevailing at the time, then projected with today's ATR%. This is what makes a 5,000-period sample usable rather than merely large.</p>
+        </li>
+        <li>
+          <h4>Asymmetry</h4>
+          <p>Four separate distributions instead of one number mirrored across the open.</p>
+        </li>
+        <li>
+          <h4>Percentiles, not averages</h4>
+          <p>Mean and median answer "what is typical". A percentile answers "only 20% of periods extend past here" — a target with a stated probability.</p>
+        </li>
+        <li>
+          <h4>Recency weighting</h4>
+          <p>An optional exponential half-life, so recent periods dominate without discarding the tail. It trims the effective sample to about six half-lives, since older data then carries under 2% weight.</p>
+        </li>
+        <li>
+          <h4>Context conditioning</h4>
+          <p>Restrict the sample to periods sharing today's context — same weekday, similar prior-period range, similar opening gap. Range expansion clusters, so this is not cosmetic. It also splits the sample, so watch the <span class="mono">n</span> column.</p>
+        </li>
+        <li>
+          <h4>Honest sampling</h4>
+          <p>Standard errors beside every ratio, an amber table below your minimum sample, and reach/hold rates measured strictly walk-forward: each period judged only against estimates built from periods before it.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">Key inputs</span>
+        <h2>What to change, and what it does.</h2>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Input</th><th>Default</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td>Projection timeframe</td><td><code>1D</code></td><td>4H, 1D, 1W, 1M or 1Y. Run the chart at or below it.</td></tr>
+            <tr><td>Sample size</td><td><code>2000</code></td><td>Rolling window of completed periods behind every statistic, reach and hold rates included.</td></tr>
+            <tr><td>Excursion measure</td><td><code>Log + ATR</code></td><td>Percent, log, or log normalised by prevailing ATR% — the recommended setting.</td></tr>
+            <tr><td>Manipulation percentile</td><td><code>50</code></td><td>Median wick. Read it as: exceeded by (100 − p)% of periods.</td></tr>
+            <tr><td>Distribution percentile</td><td><code>80</code></td><td>Only 20% of periods extend beyond this level.</td></tr>
+            <tr><td>Unconditional mode</td><td>Off</td><td>Off samples manipulation from periods that closed against that side. On lets every period contribute both excursions, removing a dependency on a close you don't know at the open.</td></tr>
+            <tr><td>Condition sample on</td><td><code>None</code></td><td>Weekday, prior-range tercile, or gap direction.</td></tr>
+            <tr><td>Minimum sample</td><td><code>30</code></td><td>Below it the table turns amber and reach/hold stays in burn-in. A 1Y projection will often sit under it permanently.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled">
+    <div class="container">
+      <div class="feature">
+        <div class="copy stack gap-20">
+          <span class="eyebrow">Data sources</span>
+          <h2>Works on any exchange with zero setup.</h2>
+          <p class="lede">
+            By default the statistics come from your own chart symbol, requested at the
+            projection timeframe — identical behaviour on OKX, Kraken, MEXC, Coinbase or
+            Bitstamp. Where a listing is too young, override with a deeper feed and pool up to
+            two more.
+          </p>
+          <ul class="checks">
+            <li><span class="mono">BITSTAMP:BTCUSD</span> — 2011 onward</li>
+            <li><span class="mono">KRAKEN:BTCUSD</span> — 2013 onward</li>
+            <li><span class="mono">COINBASE:BTCUSD</span> — 2015 onward, or the <span class="mono">CRYPTO:BTCUSD</span> index</li>
+          </ul>
+          <p class="small muted">
+            Ratios are dimensionless or percentage-based, so whichever feed supplies them they
+            are always applied to your chart symbol's open.
+          </p>
+        </div>
+        <div class="stack gap-16">
+          <div class="callout">
+            <span class="eyebrow">Performance</span>
+            <p>
+              Every enabled feed and every extra confluence timeframe costs a
+              <span class="mono">request.security</span> call, and Pine executes all of them
+              whether or not you use the result. If load time suffers, turn off pooling and
+              extra timeframes first.
+            </p>
+          </div>
+          <div class="callout">
+            <span class="eyebrow">Chart timeframe</span>
+            <p>
+              Run this at or below the projection timeframe — view 5m, 15m or 1H while
+              projecting 1D or 1W.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <div class="pager">
+        <a href="unicorn-model.html"><span class="dir">&#8592; Previous</span><span class="name">Unicorn Model</span></a>
+        <a class="next" href="ohlc-projection-levels-stocks.html"><span class="dir">Next &#8594;</span><span class="name">OHLC Projection · Stocks</span></a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="sitefoot">
+  <div class="container">
+    <div class="footgrid">
+      <div>
+        <a class="logo" href="../index.html"><b>Deon20</b><span>Indicators</span></a>
+        <p class="small muted" style="margin-top:12px;max-width:34ch">
+          Pine Script tools for measuring liquidity, sweeps and the moves that follow them.
+        </p>
+      </div>
+      <div>
+        <h4>Indicators</h4>
+        <ul>
+          <li><a href="static-model.html">STATIC MODEL</a></li>
+          <li><a href="static-model-screener.html">STATIC Screener</a></li>
+          <li><a href="unicorn-model.html">Unicorn Model</a></li>
+          <li><a href="liquidity-sweep-probability.html">Liquidity Sweep Probability</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Projection</h4>
+        <ul>
+          <li><a href="ohlc-projection-levels.html">OHLC Projection &middot; Crypto</a></li>
+          <li><a href="ohlc-projection-levels-stocks.html">OHLC Projection &middot; Stocks</a></li>
+          <li><a href="strat-scanner.html">Strat Scanner</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../how-it-works.html">How it works</a></li>
+          <li><a href="../get-started.html">Get started</a></li>
+          <li><a href="https://github.com/jfreezy24-del/Deon20">GitHub repository &#8599;</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footbottom">
+      <span>Analysis and research tools. Not financial advice.</span>
+      <span>Pine Script v6 &middot; built for TradingView</span>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/site.js"></script>
+</body>
+</html>

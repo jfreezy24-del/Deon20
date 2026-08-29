@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works — Deon20</title>
+<meta name="description" content="How the Deon20 indicators fit together: find the liquidity, size the range, wait for the turn, and know where you are wrong.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&display=swap">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body style="--sig:var(--accent)">
+<header class="masthead">
+  <div class="container">
+    <a class="logo" href="index.html"><b>Deon20</b><span>Indicators</span></a>
+    <button class="navtoggle" aria-expanded="false" aria-controls="mainnav">Menu</button>
+    <nav class="mainnav" id="mainnav" aria-label="Main">
+      <div class="dropdown">
+        <button aria-expanded="false">Indicators <span class="caret">&#9660;</span></button>
+        <div class="dropmenu">
+          <a href="indicators/static-model.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC MODEL<small>sweep · reclaim · CISD</small></span></a>
+          <a href="indicators/static-model-screener.html" style="--sig:var(--c-teal)"><i class="bullet"></i><span>STATIC Screener<small>40 symbols · one alert</small></span></a>
+          <a href="indicators/unicorn-model.html" style="--sig:var(--c-violet)"><i class="bullet"></i><span>Unicorn Model<small>breaker + FVG · R targets</small></span></a>
+          <a href="indicators/ohlc-projection-levels.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Crypto<small>manipulation / distribution</small></span></a>
+          <a href="indicators/ohlc-projection-levels-stocks.html" style="--sig:var(--c-amber)"><i class="bullet"></i><span>OHLC Projection · Stocks<small>equity feeds · gap aware</small></span></a>
+          <a href="indicators/liquidity-sweep-probability.html" style="--sig:var(--c-blue)"><i class="bullet"></i><span>Liquidity Sweep Probability<small>measured hit rates</small></span></a>
+          <a href="indicators/strat-scanner.html" style="--sig:var(--c-rose)"><i class="bullet"></i><span>Strat Scanner<small>app + alert server</small></span></a>
+        </div>
+      </div>
+      <a href="how-it-works.html" aria-current="page">How it works</a>
+      <a href="get-started.html">Get started</a>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/jfreezy24-del/Deon20">GitHub &#8599;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="pagehead">
+    <div class="container">
+      <p class="crumbs"><a href="index.html">Home</a> &nbsp;/&nbsp; How it works</p>
+      <div class="stack gap-20">
+        <span class="eyebrow sig">The method</span>
+        <h1>One sequence, measured from six angles</h1>
+        <p class="lede">The tools look different on a chart because they answer different questions. Read in order, they are a single workflow: find the liquidity, size the range, wait for the turn, and know where you are wrong.</p>
+        <div class="btnrow"><a class="btn btn-primary" href="index.html#suite">See the tools</a><a class="btn btn-ghost" href="get-started.html">Get started</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="feature">
+        <div class="copy stack gap-28">
+          <ol class="steps">
+            <li>
+              <h4>Where is the liquidity, and how often does it get taken?</h4>
+              <p>
+                Previous-period highs and lows are where stops and pending orders accumulate.
+                <a href="indicators/liquidity-sweep-probability.html">Liquidity Sweep Probability</a>
+                marks them and puts a measured share on each: swept on 63% of days, reversed on
+                41% of those.
+              </p>
+            </li>
+            <li>
+              <h4>How far does this market usually travel from the open?</h4>
+              <p>
+                <a href="indicators/ohlc-projection-levels.html">OHLC Projection Levels</a>
+                anchors to the period open and projects two distributions — the counter-trend
+                wick and the in-trend expansion — at a percentile you choose, so a target
+                arrives with a probability attached.
+              </p>
+            </li>
+            <li>
+              <h4>Has the sweep actually turned?</h4>
+              <p>
+                <a href="indicators/static-model.html">STATIC MODEL</a> waits for the
+                higher-timeframe candle to take the prior candle's extreme and close back
+                inside, then looks for a change in state of delivery to confirm.
+                <a href="indicators/unicorn-model.html">Unicorn</a> takes the same sweep into a
+                breaker, and prefers the case where a fair value gap overlaps it.
+              </p>
+            </li>
+            <li>
+              <h4>Where does it go, and when do I stop caring?</h4>
+              <p>
+                Both models project targets from the structure that produced the setup — the
+                swept candle's equilibrium and far side, or R multiples off the confirmation
+                close — and both place invalidation at the wick that did the sweeping.
+              </p>
+            </li>
+          </ol>
+        </div>
+
+        <figure class="figure">
+          <svg viewBox="0 0 620 400" role="img" aria-label="Four stacked stages: a level with its sweep probability, the sweep itself, the reclaim, and the projected target with its hit rate.">
+            <rect width="620" height="400" fill="var(--panel)"/>
+            <g font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="1.2">
+              <rect x="36" y="34" width="548" height="72" rx="3" fill="var(--panel-2)" stroke="var(--line)"/>
+              <text x="56" y="60" fill="var(--c-blue)">01 · LEVEL</text>
+              <line x1="56" y1="82" x2="420" y2="82" stroke="var(--c-blue)" stroke-width="1.5" stroke-dasharray="6 4"/>
+              <rect x="440" y="70" width="120" height="24" rx="2" fill="var(--c-blue)"/>
+              <text x="500" y="87" text-anchor="middle" font-size="11" fill="var(--panel)">63% SWEPT</text>
+
+              <rect x="36" y="120" width="548" height="72" rx="3" fill="var(--panel-2)" stroke="var(--line)"/>
+              <text x="56" y="146" fill="var(--c-rose)">02 · SWEEP</text>
+              <line x1="56" y1="168" x2="560" y2="168" stroke="var(--line)" stroke-width="1"/>
+              <g stroke="var(--c-rose)" stroke-width="1.8">
+                <line x1="300" y1="150" x2="300" y2="184"/>
+                <rect x="292" y="162" width="16" height="16" fill="var(--c-rose)" fill-opacity=".22"/>
+              </g>
+
+              <rect x="36" y="206" width="548" height="72" rx="3" fill="var(--panel-2)" stroke="var(--line)"/>
+              <text x="56" y="232" fill="var(--c-teal)">03 · RECLAIM</text>
+              <path d="M56 268 C 180 268, 240 236, 300 240 S 460 254, 560 248" fill="none" stroke="var(--c-teal)" stroke-width="1.8"/>
+
+              <rect x="36" y="292" width="548" height="72" rx="3" fill="var(--panel-2)" stroke="var(--line)"/>
+              <text x="56" y="318" fill="var(--c-amber)">04 · TARGET</text>
+              <line x1="56" y1="340" x2="420" y2="340" stroke="var(--c-amber)" stroke-width="1.5" stroke-dasharray="6 4"/>
+              <rect x="440" y="328" width="120" height="24" rx="2" fill="var(--c-amber)"/>
+              <text x="500" y="345" text-anchor="middle" font-size="11" fill="var(--panel)">T1 · 41%</text>
+            </g>
+          </svg>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">Vocabulary</span>
+        <h2>The words these tools use, and exactly what they mean here.</h2>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+          <tbody>
+            <tr><td>Sweep</td><td>Price trades through a level, wick included. Liquidity taken is liquidity taken, whether or not the candle closed beyond it.</td></tr>
+            <tr><td>C1 / C2</td><td>The prior higher-timeframe candle and the current one. A C2 setup is the current candle sweeping C1's high or low and trading back inside it.</td></tr>
+            <tr><td>CISD</td><td>Change in state of delivery — the level whose break says the previous delivery direction has ended. STATIC MODEL uses it as confirmation.</td></tr>
+            <tr><td>Breaker</td><td>The candle whose structure gets broken after a sweep. Price returning into it is the entry zone.</td></tr>
+            <tr><td>Unicorn</td><td>A breaker with a fair value gap sitting on top of it — two reasons for the same zone.</td></tr>
+            <tr><td>Manipulation (M)</td><td>The excursion against the period's eventual direction: the wick that hunts stops before the move.</td></tr>
+            <tr><td>Distribution (D)</td><td>The excursion with the period's direction: the expansion you take profit into.</td></tr>
+            <tr><td>Equilibrium (EQ)</td><td>The 50% level of a range. A swept candle's EQ is the first target in STATIC MODEL.</td></tr>
+            <tr><td>FTFC</td><td>Full timeframe continuity — 4H, daily, weekly and monthly candles all on the same side of their opens.</td></tr>
+            <tr><td>Walk-forward</td><td>Each period judged only against estimates built from periods before it. The only honest way to state a hit rate.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">Choosing</span>
+        <h2>Which one do I open?</h2>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>If you want…</th><th>Open</th></tr></thead>
+          <tbody>
+            <tr><td>A bias before the session</td><td><a href="indicators/ohlc-projection-levels.html">OHLC Projection Levels</a> and <a href="indicators/liquidity-sweep-probability.html">Liquidity Sweep Probability</a></td></tr>
+            <tr><td>An entry model with a stop and targets</td><td><a href="indicators/static-model.html">STATIC MODEL</a> or <a href="indicators/unicorn-model.html">Unicorn Model</a></td></tr>
+            <tr><td>To be told when a setup appears anywhere</td><td><a href="indicators/static-model-screener.html">STATIC Screener</a>, or the <a href="indicators/strat-scanner.html">Strat Scanner</a> alert server</td></tr>
+            <tr><td>Slow accumulation levels rather than trades</td><td><a href="indicators/strat-scanner.html">Strat Scanner</a> weekly crypto ladders</td></tr>
+            <tr><td>To know whether any of this has an edge</td><td><a href="indicators/strat-scanner.html">Strat Scanner</a> backtest, policy sweep and calibration tooling</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt ruled">
+    <div class="container">
+      <div class="sectionhead">
+        <span class="eyebrow">House rules</span>
+        <h2>Constraints every one of these scripts is held to.</h2>
+      </div>
+      <div class="grid g2">
+        <div class="tile"><h3>Nothing repaints</h3><p>Every statistic is built from completed, confirmed periods. A number that changes after the fact is not a number.</p></div>
+        <div class="tile"><h3>Sample size is stated</h3><p>Tables carry an <span class="mono">n</span> column and turn amber under your minimum. A thin sample says so rather than averaging into false confidence.</p></div>
+        <div class="tile"><h3>No mirrored statistics</h3><p>Buy-side and sell-side are measured separately, always. No figure is produced by flipping the sign of another.</p></div>
+        <div class="tile"><h3>Levels are anchored to their source</h3><p>A line starts at the candle that produced it, so you can always see where a level came from.</p></div>
+        <div class="tile"><h3>Limitations are written down</h3><p>Where a measurement overstates its case, the script's own header says so — and so does this site.</p></div>
+        <div class="tile"><h3>One file, no dependencies</h3><p>Every indicator is a single self-contained Pine script. Nothing to build, no libraries to trust.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tight">
+    <div class="container">
+      <div class="cta">
+        <span class="eyebrow">Start here</span>
+        <h2>Liquidity Sweep Probability needs no configuration.</h2>
+        <p class="lede" style="text-align:center">
+          Add it to any chart and it immediately tells you something you did not know: how often
+          this market actually takes the level you were about to trade.
+        </p>
+        <div class="btnrow">
+          <a class="btn btn-primary" href="indicators/liquidity-sweep-probability.html">Open the indicator</a>
+          <a class="btn btn-ghost" href="get-started.html">Installation steps</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="sitefoot">
+  <div class="container">
+    <div class="footgrid">
+      <div>
+        <a class="logo" href="index.html"><b>Deon20</b><span>Indicators</span></a>
+        <p class="small muted" style="margin-top:12px;max-width:34ch">
+          Pine Script tools for measuring liquidity, sweeps and the moves that follow them.
+        </p>
+      </div>
+      <div>
+        <h4>Indicators</h4>
+        <ul>
+          <li><a href="indicators/static-model.html">STATIC MODEL</a></li>
+          <li><a href="indicators/static-model-screener.html">STATIC Screener</a></li>
+          <li><a href="indicators/unicorn-model.html">Unicorn Model</a></li>
+          <li><a href="indicators/liquidity-sweep-probability.html">Liquidity Sweep Probability</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Projection</h4>
+        <ul>
+          <li><a href="indicators/ohlc-projection-levels.html">OHLC Projection &middot; Crypto</a></li>
+          <li><a href="indicators/ohlc-projection-levels-stocks.html">OHLC Projection &middot; Stocks</a></li>
+          <li><a href="indicators/strat-scanner.html">Strat Scanner</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="how-it-works.html">How it works</a></li>
+          <li><a href="get-started.html">Get started</a></li>
+          <li><a href="https://github.com/jfreezy24-del/Deon20">GitHub repository &#8599;</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footbottom">
+      <span>Analysis and research tools. Not financial advice.</span>
+      <span>Pine Script v6 &middot; built for TradingView</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
