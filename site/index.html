@@ -1,0 +1,1048 @@
+<title>Static Suite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+/* ============================== tokens: light ============================== */
+:root{
+  --ground:#EFF2F6;
+  --ground-2:#E4E9F0;
+  --panel:#FFFFFF;
+  --panel-2:#F7F9FC;
+  --ink:#0E1620;
+  --ink-2:#4B5A6C;
+  --ink-3:#7C8B9E;
+  --rule:#D3DAE4;
+  --rule-soft:#E4E9F0;
+  --accent:#0B4FE0;
+  --accent-soft:rgba(11,79,224,.10);
+  --teal:#0A7F73;
+  --teal-soft:rgba(10,127,115,.12);
+  --amber:#9E5E00;
+  --amber-soft:rgba(158,94,0,.13);
+  --chart-ink:#5A6B7F;
+  --chart-grid:rgba(90,107,127,.14);
+  --shadow:0 1px 2px rgba(14,22,32,.05),0 12px 32px -18px rgba(14,22,32,.28);
+  --ring:rgba(11,79,224,.42);
+  color-scheme:light;
+}
+/* ============================== tokens: dark =============================== */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0C1117;
+    --ground-2:#0A0E14;
+    --panel:#131B25;
+    --panel-2:#18212C;
+    --ink:#E7EDF5;
+    --ink-2:#94A3B6;
+    --ink-3:#6B7C91;
+    --rule:#26313E;
+    --rule-soft:#1D2733;
+    --accent:#5793FF;
+    --accent-soft:rgba(87,147,255,.16);
+    --teal:#3BC3B1;
+    --teal-soft:rgba(59,195,177,.15);
+    --amber:#E2A34A;
+    --amber-soft:rgba(226,163,74,.16);
+    --chart-ink:#8496AB;
+    --chart-grid:rgba(132,150,171,.16);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -20px rgba(0,0,0,.7);
+    --ring:rgba(87,147,255,.5);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0C1117;
+  --ground-2:#0A0E14;
+  --panel:#131B25;
+  --panel-2:#18212C;
+  --ink:#E7EDF5;
+  --ink-2:#94A3B6;
+  --ink-3:#6B7C91;
+  --rule:#26313E;
+  --rule-soft:#1D2733;
+  --accent:#5793FF;
+  --accent-soft:rgba(87,147,255,.16);
+  --teal:#3BC3B1;
+  --teal-soft:rgba(59,195,177,.15);
+  --amber:#E2A34A;
+  --amber-soft:rgba(226,163,74,.16);
+  --chart-ink:#8496AB;
+  --chart-grid:rgba(132,150,171,.16);
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -20px rgba(0,0,0,.7);
+  --ring:rgba(87,147,255,.5);
+  color-scheme:dark;
+}
+
+/* ================================= base =================================== */
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:Archivo,"Helvetica Neue",Arial,sans-serif;
+  font-size:16px;
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit}
+h1,h2,h3,h4{margin:0;text-wrap:balance;font-weight:600;letter-spacing:-.018em;line-height:1.1}
+p{margin:0}
+:focus-visible{outline:2px solid var(--ring);outline-offset:3px;border-radius:3px}
+
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+
+.eyebrow{
+  font-family:"JetBrains Mono",ui-monospace,monospace;
+  font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);margin:0;
+}
+.prose{font-family:Newsreader,Georgia,serif;font-size:18.5px;line-height:1.62;color:var(--ink-2);max-width:62ch}
+.prose em{color:var(--ink)}
+
+/* ================================= nav ==================================== */
+.nav{
+  position:sticky;top:0;z-index:40;
+  background:color-mix(in srgb,var(--ground) 88%,transparent);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--rule-soft);
+}
+.nav-in{display:flex;align-items:center;gap:26px;height:58px}
+.mark{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.02em;font-size:15px;text-decoration:none}
+.mark .glyph{width:19px;height:19px;flex:none}
+.nav-links{display:flex;gap:22px;margin-left:auto;align-items:center}
+.nav-links a{
+  font-size:13.5px;color:var(--ink-2);text-decoration:none;
+}
+.nav-links a:hover{color:var(--ink)}
+.theme-btn{
+  border:1px solid var(--rule);background:var(--panel);color:var(--ink-2);
+  border-radius:6px;height:30px;width:34px;display:grid;place-items:center;cursor:pointer;
+}
+.theme-btn:hover{color:var(--ink);border-color:var(--ink-3)}
+@media(max-width:720px){.nav-links a:not(.nav-cta){display:none}}
+
+/* ================================= hero =================================== */
+.hero{padding:76px 0 20px;position:relative;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:34px}
+.hero-top{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,.65fr);gap:56px;align-items:end}
+.index{border-top:1px solid var(--rule);padding-top:4px}
+.index a{
+  display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid var(--rule-soft);text-decoration:none;
+}
+.index a:hover .ix-name{color:var(--accent)}
+.index .ix-n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:10px;color:var(--ink-3)}
+.index .ix-name{font-size:13.5px;font-weight:500;color:var(--ink);letter-spacing:-.01em}
+.index .ix-k{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:9.5px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase}
+@media(max-width:960px){.hero-top{grid-template-columns:1fr;gap:34px;align-items:start}}
+.hero h1{
+  font-size:clamp(38px,6.2vw,68px);
+  letter-spacing:-.038em;line-height:1.02;max-width:16ch;margin:16px 0 0;
+}
+.hero h1 .hl{
+  color:var(--accent);
+  background:linear-gradient(transparent 68%,var(--accent-soft) 68%);
+}
+.hero-sub{margin-top:20px;font-size:19px;line-height:1.55;color:var(--ink-2);max-width:56ch;font-family:Newsreader,Georgia,serif}
+.hero-cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px;align-items:center}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:14px;font-weight:600;text-decoration:none;
+  padding:11px 18px;border-radius:7px;border:1px solid transparent;
+}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-ghost{border-color:var(--rule);color:var(--ink);background:var(--panel)}
+.btn-ghost:hover{border-color:var(--ink-3)}
+.hero-note{font-size:12.5px;color:var(--ink-3);margin-top:14px}
+
+/* ============================== chart panel =============================== */
+.panel{
+  min-width:0;
+  background:var(--panel);
+  border:1px solid var(--rule);
+  border-radius:10px;
+  box-shadow:var(--shadow);
+  overflow:hidden;
+}
+.panel-bar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:9px 13px;border-bottom:1px solid var(--rule-soft);
+  background:var(--panel-2);
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11.5px;color:var(--ink-2);
+}
+.panel-bar .sym{color:var(--ink);font-weight:700}
+.panel-bar .dot{width:4px;height:4px;border-radius:50%;background:var(--ink-3);flex:none}
+.panel-bar .ind{
+  margin-left:auto;padding:2px 7px;border-radius:4px;
+  background:var(--accent-soft);color:var(--accent);font-weight:500;
+}
+.panel svg{display:block;width:100%;height:auto}
+.panel-foot{
+  padding:8px 13px;border-top:1px solid var(--rule-soft);
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:10.5px;color:var(--ink-3);
+  letter-spacing:.02em;
+}
+
+/* ================================ strip =================================== */
+.strip{border-top:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft);margin-top:64px;background:var(--ground-2)}
+.strip-in{display:grid;grid-template-columns:repeat(3,1fr);gap:0}
+.strip-cell{padding:30px 30px 32px;border-left:1px solid var(--rule-soft)}
+.strip-cell:first-child{border-left:0;padding-left:0}
+.strip-cell h3{font-size:16.5px;margin:12px 0 8px}
+.strip-cell p{font-size:14.5px;color:var(--ink-2);line-height:1.55}
+@media(max-width:820px){
+  .strip-in{grid-template-columns:1fr}
+  .strip-cell{border-left:0;border-top:1px solid var(--rule-soft);padding-left:0;padding-right:0}
+  .strip-cell:first-child{border-top:0}
+}
+
+/* =============================== sections ================================= */
+.sec{padding:82px 0 0}
+.sec-head{max-width:60ch}
+.sec-head h2{font-size:clamp(26px,3.4vw,38px);letter-spacing:-.03em;margin:12px 0 0}
+.sec-head p{margin-top:14px}
+
+.rows{display:flex;flex-direction:column;gap:78px;margin-top:52px}
+.row-art,.row-txt{min-width:0}
+.row{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,.88fr);gap:44px;align-items:center}
+.row.flip .row-art{order:2}
+.row-txt h3{font-size:26px;letter-spacing:-.028em}
+.row-kicker{
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:10px;
+}
+.row-txt .prose{margin-top:14px;font-size:17.5px}
+.spec{
+  margin-top:22px;border-top:1px solid var(--rule-soft);
+  display:grid;grid-template-columns:auto 1fr;gap:0 18px;
+}
+.spec dt{
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);padding:11px 0 0;
+  border-top:1px solid var(--rule-soft);
+}
+.spec dd{margin:0;padding:11px 0;font-size:14.5px;color:var(--ink-2);border-top:1px solid var(--rule-soft)}
+.spec dt:first-of-type,.spec dd:first-of-type{border-top:0}
+.spec dd code{
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;
+  background:var(--panel-2);border:1px solid var(--rule-soft);border-radius:4px;padding:1px 5px;color:var(--ink);
+}
+/* The flagship row: the stats table needs the full measure to stay unclipped. */
+.row.wide{grid-template-columns:minmax(0,1fr);gap:30px}
+.row.wide .row-txt{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:44px;align-items:start}
+.row.wide .spec{margin-top:0;border-top:0}
+@media(max-width:900px){
+  .row{grid-template-columns:1fr;gap:26px}
+  .row.flip .row-art{order:0}
+  .row.wide .row-txt{grid-template-columns:1fr;gap:22px}
+}
+
+/* ============================= screener table ============================= */
+.tbl-wrap{overflow-x:auto;max-width:100%;min-width:0}
+table.scr{
+  width:100%;border-collapse:collapse;
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11.5px;
+  font-variant-numeric:tabular-nums;
+}
+table.scr th{
+  text-align:left;font-weight:500;color:var(--ink-2);
+  padding:8px 10px;border-bottom:1px solid var(--rule);background:var(--panel-2);
+  white-space:nowrap;
+}
+table.scr td{padding:7px 10px;border-bottom:1px solid var(--rule-soft);white-space:nowrap;color:var(--ink)}
+table.scr tr:last-child td{border-bottom:0}
+.cellpill{display:inline-block;padding:1px 7px;border-radius:4px;font-weight:500}
+.p-buy{background:var(--teal-soft);color:var(--teal)}
+.p-sell{background:var(--amber-soft);color:var(--amber)}
+.p-sweep{background:var(--accent-soft);color:var(--accent)}
+.p-none{color:var(--ink-3)}
+.alertline{
+  padding:10px 13px;border-top:1px solid var(--rule-soft);background:var(--panel-2);
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-2);
+  display:flex;gap:9px;align-items:flex-start;
+}
+.alertline .bell{color:var(--accent);flex:none}
+
+/* ============================== phone card =============================== */
+.phone{
+  max-width:340px;margin:0 auto;background:var(--panel);
+  border:1px solid var(--rule);border-radius:22px;box-shadow:var(--shadow);
+  padding:12px;
+}
+.phone-top{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:4px 8px 12px;font-family:"JetBrains Mono",ui-monospace,monospace;
+  font-size:10.5px;color:var(--ink-3);
+}
+.sig-card{border:1px solid var(--rule);border-radius:13px;overflow:hidden;background:var(--panel-2)}
+.sig-head{display:flex;align-items:baseline;gap:9px;padding:12px 14px 10px}
+.sig-head .tkr{font-size:19px;font-weight:700;letter-spacing:-.02em}
+.sig-head .dir{
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:10.5px;font-weight:700;
+  letter-spacing:.08em;color:var(--teal);background:var(--teal-soft);padding:2px 7px;border-radius:4px;
+}
+.sig-head .tf{margin-left:auto;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-3)}
+.sig-setup{
+  padding:0 14px 12px;display:flex;align-items:center;gap:8px;
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:15px;font-weight:700;color:var(--ink);
+}
+.sig-setup .state{
+  font-size:9.5px;letter-spacing:.1em;font-weight:700;padding:2px 6px;border-radius:4px;
+  background:var(--amber-soft);color:var(--amber);
+}
+.conf{padding:11px 14px;border-top:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft)}
+.conf-top{display:flex;justify-content:space-between;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:10.5px;color:var(--ink-3);margin-bottom:7px}
+.conf-top b{color:var(--ink);font-size:12px}
+.conf-bar{height:5px;border-radius:3px;background:var(--rule-soft);overflow:hidden}
+.conf-fill{height:100%;width:78%;background:var(--teal);border-radius:3px}
+.ftfc{display:flex;gap:6px;padding:11px 14px;border-bottom:1px solid var(--rule-soft)}
+.ftfc span{
+  flex:1;text-align:center;font-family:"JetBrains Mono",ui-monospace,monospace;
+  font-size:10px;font-weight:700;padding:5px 0;border-radius:5px;letter-spacing:.04em;
+}
+.ftfc .u{background:var(--teal-soft);color:var(--teal)}
+.ftfc .d{background:var(--amber-soft);color:var(--amber)}
+.lvls{padding:10px 14px 13px;display:grid;grid-template-columns:auto 1fr;gap:3px 14px;
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11.5px;font-variant-numeric:tabular-nums}
+.lvls dt{color:var(--ink-3)}
+.lvls dd{margin:0;text-align:right;color:var(--ink)}
+.lvls dd.t{color:var(--teal)}
+.lvls dd.s{color:var(--amber)}
+
+/* =============================== method ================================== */
+.method{margin-top:88px;border-top:1px solid var(--rule);background:var(--ground-2);padding:70px 0 76px}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:44px;background:var(--rule);border:1px solid var(--rule)}
+.step{background:var(--ground-2);padding:24px 22px 26px}
+.step .n{
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;font-weight:700;
+  color:var(--accent);letter-spacing:.1em;
+}
+.step h4{font-size:15.5px;margin:10px 0 8px;letter-spacing:-.015em}
+.step p{font-size:13.5px;color:var(--ink-2);line-height:1.55}
+@media(max-width:900px){.steps{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.steps{grid-template-columns:1fr}}
+
+.caveat{
+  margin-top:40px;border-left:2px solid var(--amber);background:var(--amber-soft);
+  padding:16px 20px;border-radius:0 7px 7px 0;max-width:74ch;
+}
+.caveat h4{font-size:14px;margin-bottom:6px;color:var(--ink)}
+.caveat p{font-size:14px;color:var(--ink-2);line-height:1.55}
+
+/* ================================ start =================================== */
+.start{padding:80px 0 90px}
+.start-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:44px;align-items:start;margin-top:40px}
+.codeblock{
+  background:var(--panel);border:1px solid var(--rule);border-radius:9px;overflow:hidden;box-shadow:var(--shadow);
+}
+.codeblock .cb-bar{
+  padding:8px 13px;border-bottom:1px solid var(--rule-soft);background:var(--panel-2);
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-3);
+}
+.codeblock ol{margin:0;padding:16px 20px 18px 34px;display:flex;flex-direction:column;gap:9px}
+.codeblock li{font-size:14px;color:var(--ink-2);line-height:1.5}
+.codeblock li b{color:var(--ink);font-weight:600}
+.codeblock code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;color:var(--accent)}
+.matrix{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+.mrow{display:grid;grid-template-columns:1fr auto;background:var(--panel);padding:12px 16px;gap:16px;align-items:center}
+.mrow span:first-child{font-size:14px}
+.mrow span:last-child{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11.5px;color:var(--ink-3);text-align:right}
+.mrow.h{background:var(--panel-2);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.mrow.h span:first-child{font-size:10.5px}
+@media(max-width:820px){.start-grid{grid-template-columns:1fr}}
+
+/* ================================ footer ================================== */
+.foot{border-top:1px solid var(--rule);padding:34px 0 46px;background:var(--ground-2)}
+.foot-in{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.foot p{font-size:12.5px;color:var(--ink-3);max-width:70ch;line-height:1.6}
+.foot .fmark{font-weight:700;font-size:14px;letter-spacing:-.02em;color:var(--ink)}
+
+/* =============================== reveal ================================== */
+.rv{opacity:0;transform:translateY(14px)}
+.rv.in{opacity:1;transform:none;transition:opacity .6s ease,transform .6s cubic-bezier(.22,.7,.3,1)}
+@media (prefers-reduced-motion:reduce){
+  .rv{opacity:1;transform:none;transition:none}
+  .cndl,.zone,.wipe{animation:none!important;opacity:1!important;transform:none!important}
+}
+/* chart draw-on. The level wipe is done with a clip rect, never with
+   stroke-dasharray — the dash pattern carries meaning here
+   (solid = mean, dashed = median, dotted = percentile). */
+.anim .cndl{opacity:0;animation:pop .38s ease forwards;animation-delay:var(--d)}
+.anim .zone{opacity:0;animation:fadein .5s ease forwards;animation-delay:var(--d)}
+.anim .wipe{transform:scaleX(0);transform-origin:left center;animation:wipe .95s cubic-bezier(.25,.8,.3,1) forwards;animation-delay:var(--wd)}
+@keyframes pop{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@keyframes fadein{to{opacity:1}}
+@keyframes wipe{to{transform:scaleX(1)}}
+</style>
+
+<nav class="nav">
+  <div class="wrap nav-in">
+    <a class="mark" href="#top">
+      <svg class="glyph" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M1 13h4M15 13h4M1 7h4M15 7h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity=".45"/>
+        <rect x="7" y="3" width="6" height="14" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M10 0v3M10 17v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Static&nbsp;Suite
+    </a>
+    <div class="nav-links">
+      <a href="#tools">Tools</a>
+      <a href="#method">Method</a>
+      <a href="#start">Get started</a>
+      <button class="theme-btn" id="themeBtn" type="button" aria-label="Switch colour theme">
+        <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M8 1.8a6.2 6.2 0 000 12.4z" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div class="hero-top">
+      <div>
+        <p class="eyebrow">Pine Script v6 · TradingView · React Native</p>
+        <h1>Levels you can put a <span class="hl">number</span> on.</h1>
+        <p class="hero-sub">Six tools that measure what price has actually done at a level across every period the data provider will give up &mdash; then draw the level with that probability attached to it.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#tools">See the six tools</a>
+          <a class="btn btn-ghost" href="#method">How the numbers are built</a>
+        </div>
+        <p class="hero-note">Nothing repaints. Every statistic is computed from confirmed, completed periods only.</p>
+      </div>
+      <nav class="index" aria-label="The six tools">
+        <a href="#tools"><span class="ix-n">01</span><span class="ix-name">Liquidity Sweep Probability</span><span class="ix-k">levels</span></a>
+        <a href="#tools"><span class="ix-n">02</span><span class="ix-name">OHLC Projection Levels</span><span class="ix-k">crypto&nbsp;/&nbsp;stocks</span></a>
+        <a href="#tools"><span class="ix-n">03</span><span class="ix-name">Static Model</span><span class="ix-k">c2&nbsp;·&nbsp;cisd</span></a>
+        <a href="#tools"><span class="ix-n">04</span><span class="ix-name">Static Model Screener</span><span class="ix-k">40&nbsp;symbols</span></a>
+        <a href="#tools"><span class="ix-n">05</span><span class="ix-name">Unicorn Model</span><span class="ix-k">breaker&nbsp;+&nbsp;fvg</span></a>
+        <a href="#tools"><span class="ix-n">06</span><span class="ix-name">Strat Scanner</span><span class="ix-k">ios&nbsp;/&nbsp;android</span></a>
+      </nav>
+    </div>
+
+    <div class="panel rv" id="heroPanel">
+      <div class="panel-bar">
+        <span class="sym">BINANCE:BTCUSDT</span><span class="dot"></span><span>15m</span>
+        <span class="dot"></span><span>Continuation mode</span>
+        <span class="ind">Liquidity Sweep Probability</span>
+      </div>
+      <div id="chart-liq"></div>
+      <div class="panel-foot">PDH swept on bar 16 &middot; T1 tagged &middot; T2 open &mdash; every level carries its own sample count</div>
+    </div>
+  </div>
+</header>
+
+<section class="strip">
+  <div class="wrap strip-in">
+    <div class="strip-cell">
+      <p class="eyebrow">Measured, not drawn</p>
+      <h3>A level without a hit rate is a guess</h3>
+      <p>Anyone can mark yesterday&rsquo;s high. These tools tell you how often that line has actually been traded through, how often price closed back inside it, and how far it went when it didn&rsquo;t.</p>
+    </div>
+    <div class="strip-cell">
+      <p class="eyebrow">Walk-forward</p>
+      <h3>Scored only against its own past</h3>
+      <p>Reach and hold rates judge each period using estimates built strictly from periods before it. No statistic on screen has seen the bar it is being graded on.</p>
+    </div>
+    <div class="strip-cell">
+      <p class="eyebrow">Honest sampling</p>
+      <h3>The sample size is on the table</h3>
+      <p>Standard errors sit beside every ratio, and the table turns amber the moment a level drops below the minimum sample you set. Thin data announces itself.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="tools">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The suite</p>
+      <h2>Six tools, one premise</h2>
+      <p class="prose">Four TradingView indicators, one multi-symbol scanner and a mobile app. Each panel below is a faithful rendering of what the tool actually draws &mdash; the same labels, the same table columns, the same status strings.</p>
+    </div>
+
+    <div class="rows">
+
+      <!-- 1. Liquidity Sweep Probability -->
+      <div class="row wide">
+        <div class="row-art rv">
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="sym">Level statistics</span><span class="dot"></span><span>all available history</span>
+              <span class="ind">LiqSweep</span>
+            </div>
+            <div class="tbl-wrap">
+              <table class="scr">
+                <thead><tr>
+                  <th>Level</th><th>Price</th><th>Sweep</th><th>Recent</th><th>Rev</th>
+                  <th>T1</th><th>T1 hit</th><th>T2</th><th>T2 hit</th><th>n</th><th>Status</th>
+                </tr></thead>
+                <tbody>
+                  <tr><td style="color:var(--accent)">PDH</td><td>67850.0</td><td>63%</td><td>58%</td><td>44%</td><td style="color:var(--teal)">68420.0</td><td>41%</td><td style="color:var(--teal)">69050.0</td><td>19%</td><td>4812</td><td><span class="cellpill p-buy">T1 HIT</span></td></tr>
+                  <tr><td style="color:var(--accent)">PDL</td><td>66410.0</td><td>59%</td><td>64%</td><td>51%</td><td style="color:var(--teal)">65780.0</td><td>37%</td><td style="color:var(--teal)">65120.0</td><td>16%</td><td>4812</td><td><span class="cellpill p-none">open</span></td></tr>
+                  <tr><td style="color:var(--accent)">PWH</td><td>69240.0</td><td>71%</td><td>66%</td><td>39%</td><td style="color:var(--teal)">70880.0</td><td>46%</td><td class="p-none">none</td><td>&mdash;</td><td>687</td><td><span class="cellpill p-none">open</span></td></tr>
+                  <tr><td style="color:var(--accent)">PWL</td><td>64980.0</td><td>68%</td><td>72%</td><td>47%</td><td style="color:var(--teal)">63410.0</td><td>43%</td><td style="color:var(--teal)">62200.0</td><td>21%</td><td>687</td><td><span class="cellpill p-none">open</span></td></tr>
+                  <tr><td style="color:var(--accent)">PMH</td><td>71500.0</td><td>74%</td><td>69%</td><td>36%</td><td style="color:var(--teal)">74310.0</td><td>49%</td><td style="color:var(--teal)">76900.0</td><td>24%</td><td style="color:var(--amber)">158</td><td><span class="cellpill p-none">open</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel-foot">Rev = of the times it was swept, how often price closed back inside &middot; n below threshold turns amber</div>
+          </div>
+        </div>
+        <div class="row-txt">
+          <div>
+            <p class="row-kicker">Indicator 01</p>
+            <h3>Liquidity Sweep Probability</h3>
+            <p class="prose">The previous period&rsquo;s high and low is where resting stops pile up. This marks those levels for the day, week, month and year, and puts a historically measured probability on each one &mdash; <em>the previous day&rsquo;s high has been swept on 63% of days over 4,812 days, and when it was, price reached Target&nbsp;1 on 41% of them.</em></p>
+          </div>
+          <dl class="spec">
+            <dt>Sweep</dt><dd>Wick counts. Liquidity taken is liquidity taken, whether or not price closed beyond.</dd>
+            <dt>Reversal</dt><dd>High reversal rate = classic stop hunt. Low = the level breaks and price runs.</dd>
+            <dt>Targets</dt><dd>Two modes. <code>Continuation</code> targets the same side as the swept liquidity; <code>Reversal</code> targets the far side of the swept candle. Each carries its own hit rate, so running both tells you which this asset does.</dd>
+            <dt>Nesting</dt><dd>T2 always sits beyond T1, so T2&nbsp;hit can never exceed T1&nbsp;hit. The gap between the two columns is how often a move that reaches T1 keeps going.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- 2. OHLC Projection Levels -->
+      <div class="row flip">
+        <div class="row-art rv">
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="sym">BINANCE:BTCUSDT</span><span class="dot"></span><span>1D projection</span>
+              <span class="dot"></span><span>Log&nbsp;+&nbsp;ATR</span>
+              <span class="ind">OHLC Proj+</span>
+            </div>
+            <div id="chart-ohlc"></div>
+            <div class="tbl-wrap">
+              <table class="scr">
+                <thead><tr><th>1D</th><th>Mean ±SE</th><th>Median</th><th>Pctile</th><th>Reach</th><th>Hold</th><th>n</th></tr></thead>
+                <tbody>
+                  <tr><td style="color:var(--amber)">+M</td><td>0.61 ±0.02</td><td>0.55</td><td>1.04</td><td>73%</td><td>41%</td><td>4812</td></tr>
+                  <tr><td style="color:var(--amber)">-M</td><td>0.68 ±0.02</td><td>0.59</td><td>1.17</td><td>76%</td><td>38%</td><td>4812</td></tr>
+                  <tr><td style="color:var(--teal)">+D</td><td>1.24 ±0.03</td><td>1.09</td><td>2.02</td><td>52%</td><td>29%</td><td>4812</td></tr>
+                  <tr><td style="color:var(--teal)">-D</td><td>1.31 ±0.04</td><td>1.14</td><td>2.18</td><td>49%</td><td>27%</td><td>4812</td></tr>
+                  <tr><td class="p-none">Open</td><td>67100.0</td><td class="p-none">both-side</td><td>22%</td><td class="p-none">vol</td><td>1.84%</td><td></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel-foot">Source: Chart &middot; +2 pooled &middot; scored 4812 periods walk-forward</div>
+          </div>
+        </div>
+        <div class="row-txt">
+          <p class="row-kicker">Indicator 02 &mdash; crypto &amp; stocks editions</p>
+          <h3>OHLC Projection Levels &mdash; Adaptive</h3>
+          <p class="prose">Anchors to each period&rsquo;s open and projects two families of level around it: <em>manipulation</em>, the counter-trend excursion where stops get taken, and <em>distribution</em>, the in-trend expansion where targets sit.</p>
+          <dl class="spec">
+            <dt>Adaptive</dt><dd>Raw percentages mix regimes &mdash; 2011 BTC wicked 10% a day, 2024 BTC wicks 2%. Each period is stored as excursion ÷ the ATR% prevailing at the time, then projected with today&rsquo;s ATR%. That is what makes a 5,000-period sample usable rather than merely large.</dd>
+            <dt>Asymmetric</dt><dd>Four separate statistics (<code>+M</code> <code>-M</code> <code>+D</code> <code>-D</code>), never one number mirrored.</dd>
+            <dt>Conditioned</dt><dd>Optionally restrict the sample to periods sharing today&rsquo;s context &mdash; same weekday, similar prior range, similar opening gap. Range expansion clusters, so this is not cosmetic.</dd>
+            <dt>Both-side</dt><dd>The whipsaw rate: how often <em>both</em> manipulation levels were tagged in the same period. It is the rate at which this model&rsquo;s own premise fails, and it is on the table.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- 3. Static Model -->
+      <div class="row">
+        <div class="row-art rv">
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="sym">BINANCE:BTCUSDT</span><span class="dot"></span><span>15m</span>
+              <span class="dot"></span><span>HTF 4H</span>
+              <span class="ind">STATIC MODEL</span>
+            </div>
+            <div id="chart-static"></div>
+            <div class="panel-foot">C2 confirmed on close back above the swept C1 low &middot; +CISD broken &middot; TGT 50% (C1 EQ) reached</div>
+          </div>
+        </div>
+        <div class="row-txt">
+          <p class="row-kicker">Indicator 03</p>
+          <h3>Static Model</h3>
+          <p class="prose">The higher-timeframe candle sweeps the prior candle&rsquo;s low and closes back above it &mdash; a <em>C2</em>. From there the model projects the swept candle&rsquo;s equilibrium and its far side as targets, and waits on a change in state of delivery to confirm the entry.</p>
+          <dl class="spec">
+            <dt>Context</dt><dd>HTF open and HTF EQ drawn as lines, with the trading zone between them shaded.</dd>
+            <dt>CISD</dt><dd><code>+CISD</code> / <code>-CISD</code> levels in two modes &mdash; <code>Confirmed</code> and <code>Hybrid</code> &mdash; with pending, faded and confirmed states each carrying their own colour.</dd>
+            <dt>Targets</dt><dd><code>TGT 50%</code> is the swept candle&rsquo;s equilibrium; <code>TGT 100%</code> is its opposite side. Lines extend until hit, or until the setup expires or invalidates.</dd>
+            <dt>Extras</dt><dd>Market-structure markers, first-FVG labelling, C4 continuation, deviation counts and a bias filter that suppresses one side entirely.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- 4. Screener -->
+      <div class="row flip">
+        <div class="row-art rv">
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="sym">STATIC MODEL — Screener</span><span class="dot"></span><span>scan 240</span>
+              <span class="dot"></span><span>bias: Neutral</span>
+              <span class="ind">40 symbols</span>
+            </div>
+            <div class="tbl-wrap">
+              <table class="scr">
+                <thead><tr><th>Symbol</th><th>Forming (240)</th><th>Confirmed (last close)</th></tr></thead>
+                <tbody>
+                  <tr><td>BINANCE:BTCUSDT</td><td><span class="cellpill p-buy">C2 Buy</span></td><td><span class="cellpill p-none">&mdash;</span></td></tr>
+                  <tr><td>BINANCE:ETHUSDT</td><td><span class="cellpill p-sweep">Sweep ↓</span></td><td><span class="cellpill p-none">&mdash;</span></td></tr>
+                  <tr><td>BINANCE:SOLUSDT</td><td><span class="cellpill p-none">&mdash;</span></td><td><span class="cellpill p-buy">C2 Buy ✓</span></td></tr>
+                  <tr><td>BINANCE:XRPUSDT</td><td><span class="cellpill p-none">&mdash;</span></td><td><span class="cellpill p-none">&mdash;</span></td></tr>
+                  <tr><td>NASDAQ:NVDA</td><td><span class="cellpill p-sell">C2 Sell</span></td><td><span class="cellpill p-none">&mdash;</span></td></tr>
+                  <tr><td>NASDAQ:AAPL</td><td><span class="cellpill p-sweep">Sweep ↑</span></td><td><span class="cellpill p-none">&mdash;</span></td></tr>
+                  <tr><td>AMEX:SPY</td><td><span class="cellpill p-none">&mdash;</span></td><td><span class="cellpill p-sell">C2 Sell ✓</span></td></tr>
+                  <tr><td>NASDAQ:QQQ</td><td><span class="cellpill p-none">&mdash;</span></td><td><span class="cellpill p-none">&mdash;</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="alertline">
+              <svg class="bell" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a4 4 0 00-4 4v3l-1.2 2h10.4L12 8.5v-3a4 4 0 00-4-4zM6.4 12.5a1.6 1.6 0 003.2 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+              <span>BINANCE:SOLUSDT&nbsp;·&nbsp;240&nbsp;·&nbsp;C2 BUY confirmed — closed back above swept low<br>AMEX:SPY&nbsp;·&nbsp;240&nbsp;·&nbsp;C2 SELL confirmed — closed back below swept high</span>
+            </div>
+          </div>
+        </div>
+        <div class="row-txt">
+          <p class="row-kicker">Indicator 04</p>
+          <h3>Static Model Screener</h3>
+          <p class="prose">One chart, forty symbols. It watches every one of them for the same C2 the main indicator draws, in two stages: <em>forming</em>, while the live candle has swept and is trading back inside, and <em>confirmed</em>, once it closes back through.</p>
+          <dl class="spec">
+            <dt>Setup</dt><dd>Add it to a 1&ndash;5m chart, create one alert with condition <code>Any alert() function call</code>, enable push. That is the whole configuration.</dd>
+            <dt>Bundling</dt><dd>Every signal from a chart bar is packed into a single alert message, one line each &mdash; so it fires at most once per bar and stays inside TradingView&rsquo;s trigger-frequency limits.</dd>
+            <dt>De-duplication</dt><dd>Alerts are written on the confirmed tick only. Realtime ticks roll back state, so mid-bar writes would let the same signal re-fire on every tick.</dd>
+            <dt>Forming states</dt><dd><code>C2 Buy</code> · <code>C2 Sell</code> · <code>Sweep ↑</code> · <code>Sweep ↓</code> &mdash; a forming signal can still un-form before the close, and the table says so.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- 5. Unicorn Model -->
+      <div class="row">
+        <div class="row-art rv">
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="sym">BINANCE:BTCUSDT</span><span class="dot"></span><span>15m</span>
+              <span class="dot"></span><span>Mode: Unicorn</span>
+              <span class="ind">Unicorn</span>
+            </div>
+            <div id="chart-unicorn"></div>
+            <div class="tbl-wrap">
+              <table class="scr">
+                <thead><tr><th>Month</th><th>T</th><th>W</th><th>L</th><th>BE</th><th>Win%</th></tr></thead>
+                <tbody>
+                  <tr><td>2026-06</td><td>14</td><td>7</td><td>4</td><td>3</td><td>50.0</td></tr>
+                  <tr><td>2026-07</td><td>11</td><td>6</td><td>3</td><td>2</td><td>54.5</td></tr>
+                  <tr><td>2026-08</td><td>9</td><td>4</td><td>3</td><td>2</td><td>44.4</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel-foot">Breaker body overlapped by the displacement FVG = the unicorn zone &middot; BE armed at 50% to target</div>
+          </div>
+        </div>
+        <div class="row-txt">
+          <p class="row-kicker">Indicator 05</p>
+          <h3>Unicorn Model</h3>
+          <p class="prose">A sweep of resting liquidity, then the breaker it leaves behind. When the displacement away from that breaker also leaves a fair value gap <em>on top of it</em>, the overlap is the unicorn &mdash; and only that overlap is traded.</p>
+          <dl class="spec">
+            <dt>Modes</dt><dd><code>Breaker</code>, <code>Unicorn</code>, or both. In Unicorn mode a setup is only shown once an FVG actually overlaps the breaker.</dd>
+            <dt>Risk</dt><dd>Invalidation at the sweep (or the swing behind it), R multiples projected from the entry, and a break-even trigger that arms at the 50% mark and moves the stop for you.</dd>
+            <dt>Context</dt><dd>Session filters, higher-timeframe FVG overlay, and SMT divergence against a paired symbol.</dd>
+            <dt>Ledger</dt><dd>A month-by-month table of taken, won, lost, broken even and win rate &mdash; from the setups the indicator itself marked, on your chart, in front of you.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- 6. Strat Scanner -->
+      <div class="row flip">
+        <div class="row-art rv">
+          <div class="phone">
+            <div class="phone-top"><span>STRAT SCANNER</span><span>4H · D · W · M</span></div>
+            <div class="sig-card">
+              <div class="sig-head">
+                <span class="tkr">NVDA</span>
+                <span class="dir">LONG</span>
+                <span class="tf">Daily</span>
+              </div>
+              <div class="sig-setup"><span>2u-1-?</span><span class="state">POTENTIAL</span><span style="font-family:Archivo,sans-serif;font-size:11px;font-weight:500;color:var(--ink-3);letter-spacing:0">compression</span></div>
+              <div class="conf">
+                <div class="conf-top"><span>CONFIDENCE</span><span><b>78</b> / 100 · High</span></div>
+                <div class="conf-bar"><div class="conf-fill"></div></div>
+              </div>
+              <div class="ftfc">
+                <span class="u">4H ↑</span><span class="u">D ↑</span><span class="u">W ↑</span><span class="d">M ↓</span>
+              </div>
+              <dl class="lvls">
+                <dt>Entry (break of 1)</dt><dd>184.62</dd>
+                <dt>Stop (inside-bar low)</dt><dd class="s">180.15</dd>
+                <dt>Target 1 · magnitude</dt><dd class="t">193.40</dd>
+                <dt>Target 2 · 2.5R</dt><dd class="t">201.80</dd>
+                <dt>Reward : risk</dt><dd>1.96R / 3.84R</dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+        <div class="row-txt">
+          <p class="row-kicker">App 06 &mdash; React Native / Expo</p>
+          <h3>Strat Scanner</h3>
+          <p class="prose">Every other Strat screener shows you sequences that already completed. This one scans for the <em>unresolved fork</em> &mdash; the setups where the next bar is still the question mark &mdash; and lays out both branches before either happens.</p>
+          <dl class="spec">
+            <dt>The fork</dt><dd>The last completed candle is the actionable bar; its high and low are the triggers. Break one way and it is a continuation, the other and it is a reversal. Both are priced up front.</dd>
+            <dt>Compression</dt><dd>Inside-bar forks (<code>X-1-?</code>) are flagged separately &mdash; tightest risk, genuinely undecided direction.</dd>
+            <dt>Continuity</dt><dd>The 4H / D / W / M strip checks each live candle against its open. Alignment adds confidence, conflict subtracts it, and the arithmetic is printed on the card.</dd>
+            <dt>Data</dt><dd>No API keys. Yahoo&rsquo;s public chart API covers stocks, ETFs, indices, crypto, forex and futures; 1H bars are aggregated into session-anchored 4H buckets because Yahoo has no native 4H.</dd>
+          </dl>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section class="method" id="method">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Method</p>
+      <h2>How a number gets onto the chart</h2>
+      <p class="prose">The same four stages run behind every level in the suite. They are stated here because the order is what makes the figure trustworthy &mdash; and because most of the ways to get this wrong look identical from the outside.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <p class="n">STAGE 01</p>
+        <h4>Pull the deepest history there is</h4>
+        <p>Statistics come from the chart symbol&rsquo;s own higher-timeframe history, requested per timeframe. Optionally override with a longer-history feed and pool up to two more &mdash; ratios are dimensionless, so whichever provider supplies them they land on your symbol&rsquo;s open.</p>
+      </div>
+      <div class="step">
+        <p class="n">STAGE 02</p>
+        <h4>Normalise away the regime</h4>
+        <p>Each period is stored relative to the volatility prevailing when it happened, not as a raw percentage. Averaging raw percentages describes the regime mix in your sample; it does not describe tomorrow.</p>
+      </div>
+      <div class="step">
+        <p class="n">STAGE 03</p>
+        <h4>Score it walk-forward</h4>
+        <p>Reach and hold rates judge each period only against estimates built from periods before it, over the same rolling window as the ratios. A statistic that has seen its own answer is not a statistic.</p>
+      </div>
+      <div class="step">
+        <p class="n">STAGE 04</p>
+        <h4>Publish the uncertainty with it</h4>
+        <p>Standard error beside every ratio, sample count in its own column, and an amber table the moment a level falls under the minimum sample. The warning is part of the output, not a footnote.</p>
+      </div>
+    </div>
+
+    <div class="caveat">
+      <h4>One limitation stated plainly</h4>
+      <p>A single higher-timeframe candle records a high and a low but not the order they arrived in. So the historical target figure is strictly &ldquo;this period swept the level <em>and</em> traded to the target&rdquo;, which slightly overstates &ldquo;reached the target <em>after</em> sweeping&rdquo;. Live tracking on your chart does respect the order &mdash; a target only counts once its level has already been taken &mdash; so the live marker is stricter than the historical percentage printed beside it.</p>
+    </div>
+  </div>
+</section>
+
+<section class="start" id="start">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Get started</p>
+      <h2>Four minutes to first level</h2>
+    </div>
+    <div class="start-grid">
+      <div class="codeblock">
+        <div class="cb-bar">TradingView &mdash; Pine Editor</div>
+        <ol>
+          <li>Open the <b>Pine Editor</b> and paste the indicator source.</li>
+          <li>Hit <b>Add to chart</b>. Defaults use your chart symbol, so there is nothing to configure to see the first levels.</li>
+          <li>Run it on a chart timeframe <b>at or finer than</b> the levels you are projecting &mdash; a weekly chart cannot resolve daily sweeps, and the table will tell you so with <code>CHART &gt; PROJ TF</code>.</li>
+          <li>For the screener: a 1&ndash;5m chart, one alert on <code>Any alert() function call</code>, push notifications on.</li>
+          <li>For Strat Scanner: <code>npm install</code>, <code>npx expo start</code>, scan the QR with Expo Go.</li>
+        </ol>
+      </div>
+      <div class="matrix">
+        <div class="mrow h"><span>Tool</span><span>Runs on</span></div>
+        <div class="mrow"><span>Liquidity Sweep Probability</span><span>any symbol · zero config</span></div>
+        <div class="mrow"><span>OHLC Projection Levels &mdash; Crypto</span><span>OKX · Kraken · MEXC · Coinbase</span></div>
+        <div class="mrow"><span>OHLC Projection Levels &mdash; Stocks</span><span>NASDAQ · NYSE · AMEX · OTC · intl</span></div>
+        <div class="mrow"><span>Static Model</span><span>auto or manual HTF</span></div>
+        <div class="mrow"><span>Static Model Screener</span><span>up to 40 symbols per chart</span></div>
+        <div class="mrow"><span>Unicorn Model</span><span>sessions · HTF FVG · SMT pair</span></div>
+        <div class="mrow"><span>Strat Scanner</span><span>iOS · Android via Expo Go</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div style="flex:1;min-width:240px">
+      <p class="fmark">Static Suite</p>
+      <p style="margin-top:8px">Pine Script&reg; v6 &middot; Mozilla Public License 2.0 &middot; &copy; staticdotsol</p>
+    </div>
+    <div style="flex:2;min-width:280px">
+      <p><strong style="color:var(--ink-2)">Illustrative renderings.</strong> The charts and tables on this page reproduce what each tool draws, using representative values. They are not a track record, a backtest result, or a claim about any specific market.</p>
+      <p style="margin-top:10px">These are analysis tools, not investment advice. Historical frequencies describe what has already happened and carry no guarantee about what happens next. Trading involves risk of loss.</p>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ============================ theme toggle ============================== */
+(function(){
+  var btn=document.getElementById('themeBtn'),root=document.documentElement;
+  try{var s=localStorage.getItem('ss-theme');if(s)root.setAttribute('data-theme',s);}catch(e){}
+  btn.addEventListener('click',function(){
+    var dark=getComputedStyle(root).getPropertyValue('color-scheme').trim()==='dark';
+    var next=dark?'light':'dark';
+    root.setAttribute('data-theme',next);
+    try{localStorage.setItem('ss-theme',next);}catch(e){}
+  });
+})();
+
+/* ========================= chart panel renderer =========================
+   Draws what the indicators draw: candles, horizontal levels with the
+   indicator's own right-edge label chips, and shaded zones/boxes.
+   ====================================================================== */
+(function(){
+  var W=760, PADL=10, PADR=206, PADT=18, PADB=18;
+
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+  function render(spec){
+    var H=spec.h||360;
+    var top=PADT, bot=H-PADB, plotW=W-PADL-PADR;
+    var min=spec.min, max=spec.max, span=max-min;
+    function y(p){ return bot-((p-min)/span)*(bot-top); }
+    var n=spec.bars.length, step=plotW/n, bw=Math.min(step*0.62,11);
+    function x(i){ return PADL+i*step+step/2; }
+
+    var s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(spec.alt)+'">';
+
+    /* faint horizontal guides */
+    for(var g=0;g<=4;g++){
+      var gy=top+(bot-top)*g/4;
+      s+='<line x1="'+PADL+'" x2="'+(W-PADR+6)+'" y1="'+gy.toFixed(1)+'" y2="'+gy.toFixed(1)+'" stroke="var(--chart-grid)" stroke-width="1"/>';
+    }
+
+    var delay=0;
+
+    /* zones / boxes behind the candles */
+    (spec.boxes||[]).forEach(function(b){
+      var x1=x(b.from)-bw, x2=(b.to==null? W-PADR+6 : x(b.to)+bw);
+      var yt=y(b.top), yb=y(b.bot);
+      var col=b.color||'var(--accent)';
+      s+='<g class="zone" style="--d:'+(delay+=40)+'ms">'
+       + '<rect x="'+x1.toFixed(1)+'" y="'+yt.toFixed(1)+'" width="'+(x2-x1).toFixed(1)+'" height="'+Math.max(2,yb-yt).toFixed(1)+'" fill="'+col+'" opacity="'+(b.op||0.13)+'"'+(b.dash?' stroke="'+col+'" stroke-width="1" stroke-dasharray="3 3" opacity="'+(b.op||0.13)+'"':'')+'/>';
+      s+='</g>';
+    });
+
+    /* candles */
+    spec.bars.forEach(function(b,i){
+      var o=b[0],hi=b[1],lo=b[2],c=b[3];
+      var up=c>=o, cx=x(i);
+      var col = (spec.hot&&spec.hot.indexOf(i)>-1) ? 'var(--amber)' : 'var(--chart-ink)';
+      var yo=y(o), yc=y(c), bt=Math.min(yo,yc), bh=Math.max(1.5,Math.abs(yc-yo));
+      s+='<g class="cndl" style="--d:'+(delay+=14)+'ms">'
+       + '<line x1="'+cx.toFixed(1)+'" x2="'+cx.toFixed(1)+'" y1="'+y(hi).toFixed(1)+'" y2="'+y(lo).toFixed(1)+'" stroke="'+col+'" stroke-width="1.1"/>'
+       + '<rect x="'+(cx-bw/2).toFixed(1)+'" y="'+bt.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" '
+       + (up? 'fill="var(--panel)" stroke="'+col+'" stroke-width="1.2"' : 'fill="'+col+'"')+'/>'
+       + '</g>';
+    });
+
+    /* markers pinned to a bar (C2, SSL …) */
+    (spec.marks||[]).forEach(function(m){
+      var cx=x(m.bar), py=y(m.p), dy=m.dir==='up'?-9:15;
+      s+='<g class="zone" style="--d:'+(delay+=50)+'ms">'
+       + '<text x="'+cx.toFixed(1)+'" y="'+(py+dy).toFixed(1)+'" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12.5" font-weight="700" fill="'+(m.color||'var(--accent)')+'">'+esc(m.text)+'</text>'
+       + '</g>';
+    });
+
+    /* Levels + right-gutter label chips, revealed by a single left-to-right
+       clip wipe so each line keeps its own dash pattern. */
+    var cid='wipe-'+(spec.id||Math.random().toString(36).slice(2));
+    s+='<defs><clipPath id="'+cid+'">'
+     + '<rect class="wipe" style="--wd:'+(delay+120)+'ms" x="0" y="0" width="'+W+'" height="'+H+'"/>'
+     + '</clipPath></defs><g clip-path="url(#'+cid+')">';
+
+    var gx=W-PADR, chips=[];
+    function chip(py,label,col,bold){ chips.push({py:py,label:label,col:col,bold:bold}); }
+
+    (spec.levels||[]).forEach(function(L){
+      var py=y(L.p), x1=(L.from!=null? x(L.from)-bw : PADL);
+      var col=L.color||'var(--accent)';
+      var dash = L.style==='dotted' ? '1.5 3.5' : L.style==='dashed' ? '6 4' : '';
+      s+='<line x1="'+x1.toFixed(1)+'" x2="'+gx.toFixed(1)+'" y1="'+py.toFixed(1)+'" y2="'+py.toFixed(1)+'" stroke="'+col+'" stroke-width="'+(L.w||1.3)+'"'+(dash?' stroke-dasharray="'+dash+'"':'')+' stroke-linecap="butt"/>';
+      chip(py,L.label,col,false);
+    });
+
+    /* Zones are labelled in the same gutter, with a bracket at the box edge. */
+    (spec.boxes||[]).forEach(function(b){
+      if(!b.label) return;
+      var col=b.color||'var(--accent)', yt=y(b.top), yb=y(b.bot);
+      var bx=(b.to==null? gx+6 : x(b.to)+bw);
+      s+='<path d="M'+(bx-4).toFixed(1)+' '+yt.toFixed(1)+' H'+bx.toFixed(1)+' V'+yb.toFixed(1)+' H'+(bx-4).toFixed(1)+'" fill="none" stroke="'+col+'" stroke-width="1.2" opacity=".8"/>'
+       + '<line x1="'+bx.toFixed(1)+'" x2="'+gx.toFixed(1)+'" y1="'+((yt+yb)/2).toFixed(1)+'" y2="'+((yt+yb)/2).toFixed(1)+'" stroke="'+col+'" stroke-width="1" stroke-dasharray="2 3" opacity=".5"/>';
+      chip((yt+yb)/2,b.label,col,true);
+    });
+
+    /* Lay the gutter out in one pass: sort by anchor price, stack downward at
+       a fixed pitch, then lift the whole column if it ran off the bottom. */
+    var PITCH=22;
+    chips.sort(function(a,b){return a.py-b.py;});
+    var prev=-1e9;
+    chips.forEach(function(c){ c.ly=Math.max(c.py,prev+PITCH); prev=c.ly; });
+    var over=prev-(H-12);
+    if(over>0) chips.forEach(function(c){ c.ly-=over; });
+
+    chips.forEach(function(c){
+      var tw=(c.label.length*6.9)+16;
+      s+='<g>'
+       + '<line x1="'+gx.toFixed(1)+'" x2="'+(gx+7).toFixed(1)+'" y1="'+c.py.toFixed(1)+'" y2="'+c.ly.toFixed(1)+'" stroke="'+c.col+'" stroke-width="1" opacity=".5"/>'
+       + '<rect x="'+(gx+7).toFixed(1)+'" y="'+(c.ly-9.5).toFixed(1)+'" width="'+tw.toFixed(1)+'" height="19" rx="3" fill="'+c.col+'" opacity="'+(c.bold?.22:.12)+'"/>'
+       + '<text x="'+(gx+15).toFixed(1)+'" y="'+(c.ly+4).toFixed(1)+'" font-family="JetBrains Mono, monospace" font-size="11.8"'
+       + (c.bold?' font-weight="700" letter-spacing=".07em"':' letter-spacing=".01em"')
+       + ' fill="'+c.col+'">'+esc(c.label)+'</text>'
+       + '</g>';
+    });
+
+    return s+'</g></svg>';
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 01 · Liquidity Sweep Probability                                     */
+  var liq={
+    id:'liq',
+    alt:'Chart showing the previous day high swept, with target 1 reached and target 2 still open.',
+    h:400, min:66200, max:69200,
+    bars:[
+      [67280,67420,67150,67360],[67360,67480,67280,67310],[67310,67400,67120,67180],
+      [67180,67340,67090,67300],[67300,67520,67260,67470],[67470,67600,67380,67420],
+      [67420,67510,67230,67280],[67280,67390,67150,67350],[67350,67620,67310,67560],
+      [67560,67700,67480,67520],[67520,67640,67340,67390],[67390,67480,67210,67260],
+      [67260,67440,67180,67420],[67420,67690,67390,67640],[67640,67810,67560,67590],
+      [67590,68010,67550,67960],[67960,68180,67880,68120],[68120,68300,68020,68260],
+      [68260,68460,68190,68410],[68410,68520,68240,68300],[68300,68390,68110,68180],
+      [68180,68340,68060,68290],[68290,68470,68210,68380],[68380,68540,68300,68440]
+    ],
+    hot:[15,18],
+    levels:[
+      {p:67850,label:'PDH  67850.0  63%  SWEPT',color:'var(--amber)',style:'dotted',w:1.5},
+      {p:66410,label:'PDL  66410.0  59%',color:'var(--accent)',style:'solid'},
+      {p:68420,label:'PDH T1  68420.0  41%',color:'var(--teal)',style:'dashed',from:12},
+      {p:69050,label:'PDH T2  69050.0  19%',color:'var(--teal)',style:'dashed',from:9,w:1}
+    ]
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* 02 · OHLC Projection Levels — open-anchored M/D ladder                */
+  var ohlc={
+    id:'ohlc',
+    alt:'Statistical manipulation and distribution levels projected above and below the period open.',
+    h:430, min:65100, max:69100,
+    bars:[
+      [67100,67240,66980,67190],[67190,67380,67150,67320],[67320,67410,67160,67210],
+      [67210,67290,66940,67010],[67010,67120,66790,66850],[66850,66980,66660,66710],
+      [66710,67050,66690,67000],[67000,67260,66960,67210],[67210,67520,67180,67470],
+      [67470,67690,67400,67640],[67640,67880,67590,67810],[67810,68010,67740,67960],
+      [67960,68120,67880,68060],[68060,68260,67990,68210],[68210,68320,68080,68140],
+      [68140,68240,68010,68090]
+    ],
+    boxes:[
+      {top:67540,bot:67480,from:0,color:'var(--amber)',op:.14},
+      {top:66720,bot:66660,from:0,color:'var(--amber)',op:.14}
+    ],
+    levels:[
+      {p:67100,label:'Open  67100.0',color:'var(--ink-3)',style:'dotted',w:1.4},
+      {p:67540,label:'+M mu  67540.2',color:'var(--amber)',style:'solid'},
+      {p:67480,label:'+M ~  67480.0',color:'var(--amber)',style:'dashed',w:1},
+      {p:67890,label:'+M p80  67890.1',color:'var(--amber)',style:'dotted',w:1.8},
+      {p:66660,label:'-M mu  66660.4',color:'var(--amber)',style:'solid'},
+      {p:66310,label:'-M p80  66310.0',color:'var(--amber)',style:'dotted',w:1.8},
+      {p:68240,label:'+D mu  68240.6',color:'var(--teal)',style:'solid'},
+      {p:68760,label:'+D p80  68760.2',color:'var(--teal)',style:'dotted',w:1.8},
+      {p:65980,label:'-D mu  65980.1',color:'var(--teal)',style:'solid'},
+      {p:65440,label:'-D p80  65440.9',color:'var(--teal)',style:'dotted',w:1.8}
+    ]
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* 03 · Static Model — C1 swept, C2 confirmed, CISD broken, TGT run     */
+  var stat={
+    id:'stat',
+    alt:'Higher timeframe candle sweeps the prior low, closes back above it as a C2, then breaks the CISD level and runs to the 50 percent target.',
+    h:390, min:66600, max:68050,
+    bars:[
+      [67450,67620,67380,67560],[67560,67890,67520,67810],[67810,67860,67540,67600],
+      [67600,67680,67310,67380],[67380,67460,67140,67210],[67210,67290,66980,67040],
+      [67040,67120,66900,66960],[66960,67180,66930,67120],[67120,67190,66940,66980],
+      [66980,67020,66740,66790],[66790,66980,66760,66950],[66950,67140,66920,67110],
+      [67110,67260,67080,67220],[67220,67340,67160,67300],[67300,67420,67240,67390],
+      [67390,67510,67330,67470],[67470,67560,67390,67440],[67440,67610,67410,67580],
+      [67580,67700,67520,67660],[67660,67790,67610,67740]
+    ],
+    hot:[9,11],
+    boxes:[
+      {top:67395,bot:67120,from:8,color:'var(--ink-3)',op:.14,label:'TRADING ZONE'}
+    ],
+    marks:[
+      {bar:11,p:66740,text:'C2',dir:'down',color:'var(--accent)'}
+    ],
+    levels:[
+      {p:66900,label:'C1 low  66900.0',color:'var(--ink-3)',style:'dashed',from:6,w:1},
+      {p:66740,label:'Invalidation  66740.0',color:'var(--amber)',style:'solid',from:9},
+      {p:67120,label:'HTF Open  67120.0',color:'var(--ink-3)',style:'solid',from:8},
+      {p:67395,label:'HTF EQ / TGT 50%  67395.0',color:'var(--teal)',style:'dotted',from:8,w:1.6},
+      {p:67180,label:'+CISD  67180.0',color:'var(--accent)',style:'solid',from:11,w:1.6},
+      {p:67890,label:'TGT 100%  67890.0',color:'var(--teal)',style:'dashed',from:1}
+    ]
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* 05 · Unicorn Model — sweep, breaker, overlapping FVG, R ladder        */
+  var uni={
+    id:'uni',
+    alt:'Liquidity sweep leaves a breaker which the displacement fair value gap overlaps, forming the unicorn zone, with R targets projected above.',
+    h:410, min:66700, max:68000,
+    bars:[
+      [67420,67480,67300,67340],[67340,67380,67150,67200],[67200,67290,66850,66900],
+      [66900,67120,66880,67080],[67080,67260,67040,67230],[67240,67280,67090,67160],
+      [67160,67190,66830,66880],[66880,67020,66860,66990],[66990,67280,66970,67250],
+      [67250,67420,67190,67380],[67380,67440,67290,67320],[67320,67350,67140,67180],
+      [67180,67330,67150,67300],[67300,67490,67270,67460],[67460,67620,67420,67580],
+      [67580,67700,67520,67640],[67640,67830,67600,67790],[67790,67860,67720,67840]
+    ],
+    hot:[6,11],
+    boxes:[
+      {top:67160,bot:66880,from:6,to:9,color:'var(--ink-3)',op:.12,dash:true,label:'BREAKER'},
+      {top:67190,bot:67020,from:7,to:10,color:'var(--accent)',op:.12,dash:true,label:'FVG'},
+      {top:67160,bot:67020,from:6,to:14,color:'var(--teal)',op:.30,label:'+UNICORN'}
+    ],
+    marks:[
+      {bar:6,p:66830,text:'SSL',dir:'down',color:'var(--amber)'}
+    ],
+    levels:[
+      {p:66850,label:'SSL  66850.0',color:'var(--ink-3)',style:'dashed',from:2,w:1},
+      {p:66830,label:'Invalidation  66830.0',color:'var(--amber)',style:'solid',from:6},
+      {p:67160,label:'Entry  67160.0',color:'var(--accent)',style:'solid',from:6,w:1.6},
+      {p:67325,label:'BE Trigger (50%)  67325.0',color:'var(--ink-3)',style:'dotted',from:10},
+      {p:67490,label:'1R  67490.0',color:'var(--teal)',style:'dashed',from:10},
+      {p:67820,label:'2R  67820.0',color:'var(--teal)',style:'dashed',from:10}
+    ]
+  };
+
+  document.getElementById('chart-liq').innerHTML=render(liq);
+  document.getElementById('chart-ohlc').innerHTML=render(ohlc);
+  document.getElementById('chart-static').innerHTML=render(stat);
+  document.getElementById('chart-unicorn').innerHTML=render(uni);
+
+  /* -------------------- reveal + one draw-on sequence ------------------ */
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var hero=document.getElementById('heroPanel');
+  if(!reduce) hero.classList.add('anim');
+  requestAnimationFrame(function(){ hero.classList.add('in'); });
+
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    },{rootMargin:'0px 0px -12% 0px'});
+    document.querySelectorAll('.rv').forEach(function(el){ if(el!==hero) io.observe(el); });
+  }else{
+    document.querySelectorAll('.rv').forEach(function(el){ el.classList.add('in'); });
+  }
+})();
+</script>
