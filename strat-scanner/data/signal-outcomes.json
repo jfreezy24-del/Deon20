@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": "2026-08-28",
+  "lastCheckedOn": "2026-08-29",
   "signals": [
     {
       "key": "AAPL|M|bearish|2-1-2 Reversal|1785556800",
@@ -331,13 +331,13 @@
       "triggerBarEnd": 1787616000,
       "enrolledOn": "2026-08-25",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "OPEN",
         "triggeredAt": 1787616000,
         "fill": 79995,
         "mfeR": 0.4366,
-        "maeR": 0.7132,
-        "barsHeld": 4,
+        "maeR": 0.9351,
+        "barsHeld": 5,
         "reachedTarget2": false,
         "gappedEntry": false
       }
@@ -508,45 +508,6 @@
       }
     },
     {
-      "key": "DIA|W|bullish|Rev Strat (1-2-2) Reversal|1786939200",
-      "symbol": "DIA",
-      "symbolName": "State Street SPDR Dow Jones Ind",
-      "timeframe": "W",
-      "direction": "bullish",
-      "pattern": "Rev Strat (1-2-2) Reversal",
-      "sequence": "1-2d-?",
-      "scenario": "reversal",
-      "compression": false,
-      "isReversal": true,
-      "confidence": 54,
-      "confidenceLabel": "Medium",
-      "factorKeys": [
-        "base",
-        "ftfc-full",
-        "rr-poor",
-        "reversal-backed"
-      ],
-      "aligned": 4,
-      "opposed": 0,
-      "fullContinuity": true,
-      "status": "POTENTIAL",
-      "levels": {
-        "entry": 536.69,
-        "stop": 527.19,
-        "target1": 541.72,
-        "target2": 560.44,
-        "rr1": 0.53,
-        "rr2": 2.5
-      },
-      "setupBarTime": 1786939200,
-      "triggerBarEnd": 1787342400,
-      "enrolledOn": "2026-08-22",
-      "resolution": {
-        "lastBarTime": 1787837400,
-        "status": "PENDING"
-      }
-    },
-    {
       "key": "DOGE-USD|D|bearish|3-1-2 Reversal|1787443200",
       "symbol": "DOGE-USD",
       "timeframe": "D",
@@ -582,61 +543,13 @@
       "triggerBarEnd": 1787529600,
       "enrolledOn": "2026-08-24",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "OPEN",
         "triggeredAt": 1787529600,
         "fill": 0.0887,
-        "mfeR": 0.8041,
+        "mfeR": 0.8388,
         "maeR": 0.8294,
-        "barsHeld": 5,
-        "reachedTarget2": false,
-        "gappedEntry": false
-      }
-    },
-    {
-      "key": "DOGE-USD|D|bullish|2-2 Reversal|1787702400",
-      "symbol": "DOGE-USD",
-      "timeframe": "D",
-      "direction": "bullish",
-      "pattern": "2-2 Reversal",
-      "sequence": "2d-?",
-      "scenario": "reversal",
-      "compression": false,
-      "isReversal": true,
-      "confidence": 60,
-      "confidenceLabel": "Medium",
-      "factorKeys": [
-        "base",
-        "ftfc-aligned",
-        "ftfc-opposed",
-        "rr-ok",
-        "close-location",
-        "reversal-backed",
-        "in-force"
-      ],
-      "aligned": 3,
-      "opposed": 1,
-      "fullContinuity": false,
-      "status": "TRIGGERED",
-      "levels": {
-        "entry": 0.08791,
-        "stop": 0.08378,
-        "target1": 0.09302,
-        "target2": 0.10314,
-        "rr1": 1.23,
-        "rr2": 3.68
-      },
-      "setupBarTime": 1787702400,
-      "triggerBarEnd": 1787788800,
-      "enrolledOn": "2026-08-27",
-      "resolution": {
-        "lastBarTime": 1787875200,
-        "status": "OPEN",
-        "triggeredAt": 1787788800,
-        "fill": 0.0879,
-        "mfeR": 0.5796,
-        "maeR": 0.5072,
-        "barsHeld": 2,
+        "barsHeld": 6,
         "reachedTarget2": false,
         "gappedEntry": false
       }
@@ -677,7 +590,7 @@
       "triggerBarEnd": 1787529600,
       "enrolledOn": "2026-08-24",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -716,7 +629,7 @@
       "triggerBarEnd": 1787192456,
       "enrolledOn": "2026-08-20",
       "resolution": {
-        "lastBarTime": 1787920865,
+        "lastBarTime": 1787952545,
         "status": "PENDING"
       }
     },
@@ -756,48 +669,15 @@
       "triggerBarEnd": 1787711823,
       "enrolledOn": "2026-08-26",
       "resolution": {
-        "lastBarTime": 1787920865,
-        "status": "PENDING"
-      }
-    },
-    {
-      "key": "GC=F|D|bearish|2-1-2 Continuation|1787803200",
-      "symbol": "GC=F",
-      "symbolName": "Gold Dec 26",
-      "timeframe": "D",
-      "direction": "bearish",
-      "pattern": "2-1-2 Continuation",
-      "sequence": "2d-1-?",
-      "scenario": "continuation",
-      "compression": true,
-      "isReversal": false,
-      "confidence": 58,
-      "confidenceLabel": "Medium",
-      "factorKeys": [
-        "base",
-        "compression",
-        "ftfc-aligned",
-        "ftfc-opposed",
-        "rr-strong"
-      ],
-      "aligned": 3,
-      "opposed": 1,
-      "fullContinuity": false,
-      "status": "POTENTIAL",
-      "levels": {
-        "entry": 4609.6,
-        "stop": 4609.8,
-        "target1": 4598.2,
-        "target2": 4022.4,
-        "rr1": 57,
-        "rr2": 2936
-      },
-      "setupBarTime": 1787803200,
-      "triggerBarEnd": 1787889600,
-      "enrolledOn": "2026-08-28",
-      "resolution": {
-        "lastBarTime": 1787889600,
-        "status": "PENDING"
+        "lastBarTime": 1787952545,
+        "status": "OPEN",
+        "triggeredAt": 1787871600,
+        "fill": 1.16,
+        "mfeR": 0.0894,
+        "maeR": 0.2954,
+        "barsHeld": 2,
+        "reachedTarget2": false,
+        "gappedEntry": false
       }
     },
     {
@@ -835,7 +715,7 @@
       "triggerBarEnd": 1787018966,
       "enrolledOn": "2026-08-18",
       "resolution": {
-        "lastBarTime": 1787889600,
+        "lastBarTime": 1787803200,
         "status": "PENDING"
       }
     },
@@ -926,6 +806,45 @@
       }
     },
     {
+      "key": "GOOGL|D|bullish|2-2 Reversal|1787837400",
+      "symbol": "GOOGL",
+      "symbolName": "Alphabet Inc.",
+      "timeframe": "D",
+      "direction": "bullish",
+      "pattern": "2-2 Reversal",
+      "sequence": "2d-?",
+      "scenario": "reversal",
+      "compression": false,
+      "isReversal": true,
+      "confidence": 53,
+      "confidenceLabel": "Medium",
+      "factorKeys": [
+        "base",
+        "ftfc-full",
+        "rr-poor",
+        "close-location",
+        "reversal-backed"
+      ],
+      "aligned": 4,
+      "opposed": 0,
+      "fullContinuity": true,
+      "status": "POTENTIAL",
+      "levels": {
+        "entry": 341.7,
+        "stop": 338.51,
+        "target1": 343.9,
+        "target2": 384.48,
+        "rr1": 0.69,
+        "rr2": 13.41
+      },
+      "setupBarTime": 1787837400,
+      "triggerBarEnd": 1787923800,
+      "enrolledOn": "2026-08-29",
+      "resolution": {
+        "status": "PENDING"
+      }
+    },
+    {
       "key": "GOOGL|M|bearish|2-2 Reversal|1785556800",
       "symbol": "GOOGL",
       "symbolName": "Alphabet Inc.",
@@ -968,102 +887,6 @@
         "mfeR": 0.0539,
         "maeR": 0.246,
         "barsHeld": 8,
-        "reachedTarget2": false,
-        "gappedEntry": false
-      }
-    },
-    {
-      "key": "HYPE-USD|D|bullish|2-2 Continuation|1787702400",
-      "symbol": "HYPE-USD",
-      "timeframe": "D",
-      "direction": "bullish",
-      "pattern": "2-2 Continuation",
-      "sequence": "2u-?",
-      "scenario": "continuation",
-      "compression": false,
-      "isReversal": false,
-      "confidence": 58,
-      "confidenceLabel": "Medium",
-      "factorKeys": [
-        "base",
-        "ftfc-aligned",
-        "ftfc-opposed",
-        "rr-ok",
-        "close-location",
-        "volume",
-        "in-force"
-      ],
-      "aligned": 3,
-      "opposed": 1,
-      "fullContinuity": false,
-      "status": "TRIGGERED",
-      "levels": {
-        "entry": 83.69,
-        "stop": 79.46,
-        "target1": 90.03,
-        "target2": 94.27,
-        "rr1": 1.5,
-        "rr2": 2.5
-      },
-      "setupBarTime": 1787702400,
-      "triggerBarEnd": 1787788800,
-      "enrolledOn": "2026-08-27",
-      "resolution": {
-        "lastBarTime": 1787875200,
-        "status": "OPEN",
-        "triggeredAt": 1787788800,
-        "fill": 83.69,
-        "mfeR": 1.1679,
-        "maeR": 0.7511,
-        "barsHeld": 2,
-        "reachedTarget2": false,
-        "gappedEntry": false
-      }
-    },
-    {
-      "key": "HYPE-USD|D|bullish|2-2 Continuation|1787788800",
-      "symbol": "HYPE-USD",
-      "timeframe": "D",
-      "direction": "bullish",
-      "pattern": "2-2 Continuation",
-      "sequence": "2u-?",
-      "scenario": "continuation",
-      "compression": false,
-      "isReversal": false,
-      "confidence": 58,
-      "confidenceLabel": "Medium",
-      "factorKeys": [
-        "base",
-        "ftfc-aligned",
-        "ftfc-opposed",
-        "rr-ok",
-        "close-location",
-        "volume",
-        "in-force"
-      ],
-      "aligned": 3,
-      "opposed": 1,
-      "fullContinuity": false,
-      "status": "TRIGGERED",
-      "levels": {
-        "entry": 86.8,
-        "stop": 80.5,
-        "target1": 96.24,
-        "target2": 102.53,
-        "rr1": 1.5,
-        "rr2": 2.5
-      },
-      "setupBarTime": 1787788800,
-      "triggerBarEnd": 1787875200,
-      "enrolledOn": "2026-08-28",
-      "resolution": {
-        "lastBarTime": 1787875200,
-        "status": "OPEN",
-        "triggeredAt": 1787875200,
-        "fill": 86.8,
-        "mfeR": 0.2905,
-        "maeR": 0.7113,
-        "barsHeld": 1,
         "reachedTarget2": false,
         "gappedEntry": false
       }
@@ -1155,45 +978,6 @@
       }
     },
     {
-      "key": "JUP-USD|D|bullish|2-2 Continuation|1787788800",
-      "symbol": "JUP-USD",
-      "symbolName": "Jupiter USD",
-      "timeframe": "D",
-      "direction": "bullish",
-      "pattern": "2-2 Continuation",
-      "sequence": "2u-?",
-      "scenario": "continuation",
-      "compression": false,
-      "isReversal": false,
-      "confidence": 56,
-      "confidenceLabel": "Medium",
-      "factorKeys": [
-        "base",
-        "ftfc-full",
-        "rr-ok",
-        "close-location"
-      ],
-      "aligned": 4,
-      "opposed": 0,
-      "fullContinuity": true,
-      "status": "POTENTIAL",
-      "levels": {
-        "entry": 0.00053,
-        "stop": -0.00009,
-        "target1": 0.00147,
-        "target2": 0.00209,
-        "rr1": 1.5,
-        "rr2": 2.5
-      },
-      "setupBarTime": 1787788800,
-      "triggerBarEnd": 1787875200,
-      "enrolledOn": "2026-08-28",
-      "resolution": {
-        "lastBarTime": 1787875200,
-        "status": "PENDING"
-      }
-    },
-    {
       "key": "JUP-USD|M|bearish|2-1-2 Reversal|1785542400",
       "symbol": "JUP-USD",
       "symbolName": "Jupiter USD",
@@ -1229,7 +1013,7 @@
       "triggerBarEnd": 1787019482,
       "enrolledOn": "2026-08-18",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -1268,7 +1052,7 @@
       "triggerBarEnd": 1787624402,
       "enrolledOn": "2026-08-25",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -1308,7 +1092,7 @@
       "triggerBarEnd": 1786984444,
       "enrolledOn": "2026-08-17",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "OPEN",
         "triggeredAt": 1787788800,
         "fill": 0.0004,
@@ -1355,7 +1139,7 @@
       "triggerBarEnd": 1787711763,
       "enrolledOn": "2026-08-26",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -1394,7 +1178,7 @@
       "triggerBarEnd": 1787279580,
       "enrolledOn": "2026-08-21",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "OPEN",
         "triggeredAt": 1787788800,
         "fill": 0.0004,
@@ -1440,7 +1224,7 @@
       "triggerBarEnd": 1787828824,
       "enrolledOn": "2026-08-27",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -1479,7 +1263,7 @@
       "triggerBarEnd": 1787529600,
       "enrolledOn": "2026-08-24",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -1518,47 +1302,7 @@
       "triggerBarEnd": 1787529600,
       "enrolledOn": "2026-08-25",
       "resolution": {
-        "lastBarTime": 1787875200,
-        "status": "PENDING"
-      }
-    },
-    {
-      "key": "META|D|bearish|2-2 Reversal|1787751000",
-      "symbol": "META",
-      "symbolName": "Meta Platforms, Inc.",
-      "timeframe": "D",
-      "direction": "bearish",
-      "pattern": "2-2 Reversal",
-      "sequence": "2u-?",
-      "scenario": "reversal",
-      "compression": false,
-      "isReversal": true,
-      "confidence": 53,
-      "confidenceLabel": "Medium",
-      "factorKeys": [
-        "base",
-        "ftfc-full",
-        "rr-poor",
-        "volume",
-        "reversal-backed"
-      ],
-      "aligned": 4,
-      "opposed": 0,
-      "fullContinuity": true,
-      "status": "POTENTIAL",
-      "levels": {
-        "entry": 561.87,
-        "stop": 593.35,
-        "target1": 561.4,
-        "target2": 483.17,
-        "rr1": 0.01,
-        "rr2": 2.5
-      },
-      "setupBarTime": 1787751000,
-      "triggerBarEnd": 1787837400,
-      "enrolledOn": "2026-08-28",
-      "resolution": {
-        "lastBarTime": 1787837400,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -1893,13 +1637,13 @@
       "triggerBarEnd": 1787529600,
       "enrolledOn": "2026-08-25",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "OPEN",
         "triggeredAt": 1787616000,
         "fill": 102.79,
         "mfeR": 0.2663,
         "maeR": 0.2662,
-        "barsHeld": 4,
+        "barsHeld": 5,
         "reachedTarget2": false,
         "gappedEntry": false
       }
@@ -2420,6 +2164,45 @@
         "barsHeld": 1,
         "reachedTarget2": false,
         "gappedEntry": false
+      }
+    },
+    {
+      "key": "XLE|D|bullish|3-1-2 Reversal|1787837400",
+      "symbol": "XLE",
+      "symbolName": "State Street Energy Select Sect",
+      "timeframe": "D",
+      "direction": "bullish",
+      "pattern": "3-1-2 Reversal",
+      "sequence": "3-1-?",
+      "scenario": "reversal",
+      "compression": true,
+      "isReversal": true,
+      "confidence": 63,
+      "confidenceLabel": "Medium",
+      "factorKeys": [
+        "base",
+        "compression",
+        "ftfc-full",
+        "rr-poor",
+        "reversal-backed"
+      ],
+      "aligned": 4,
+      "opposed": 0,
+      "fullContinuity": true,
+      "status": "POTENTIAL",
+      "levels": {
+        "entry": 62.73,
+        "stop": 61.54,
+        "target1": 62.79,
+        "target2": 65.71,
+        "rr1": 0.05,
+        "rr2": 2.5
+      },
+      "setupBarTime": 1787837400,
+      "triggerBarEnd": 1787923800,
+      "enrolledOn": "2026-08-29",
+      "resolution": {
+        "status": "PENDING"
       }
     },
     {
@@ -3162,7 +2945,7 @@
       "triggerBarEnd": 1787529600,
       "enrolledOn": "2026-08-24",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     },
@@ -3201,7 +2984,7 @@
       "triggerBarEnd": 1787529600,
       "enrolledOn": "2026-08-25",
       "resolution": {
-        "lastBarTime": 1787875200,
+        "lastBarTime": 1787961600,
         "status": "PENDING"
       }
     }
