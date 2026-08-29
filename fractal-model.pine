@@ -175,7 +175,7 @@ smtMode      = input.string("Automatic", "SMT Mode", options=["Automatic", "Cust
 smtSym1In    = input.symbol("CME_MINI:NQ1!", "Custom Symbol 1", group=G_SMT)
 smtSym1Inv   = input.bool(false, "Inverse", group=G_SMT, inline="i1", tooltip="For inversely correlated markets — a low on one pairs with a high on the other.")
 smtSym2On    = input.bool(false, "Secondary Pair", group=G_SMT, inline="s2")
-smtSym2In    = input.symbol("CME_MINI:YM1!", "", group=G_SMT, inline="s2")
+smtSym2In    = input.symbol("CBOT_MINI:YM1!", "", group=G_SMT, inline="s2")
 smtSym2Inv   = input.bool(false, "Inverse", group=G_SMT, inline="i2")
 
 // --- Standard Deviation Projections -----------------------------------------
@@ -497,20 +497,30 @@ biasAllows(int d) =>
 
 // Written as one ternary chain rather than if/else assignment so the result
 // stays a *simple* string — request.security will not accept a series one.
+//
+// The index roots are matched with startswith AND gated on syminfo.type, because
+// bare substrings are far too greedy: "ES" is inside ESTC, "SI" inside SIRI. A
+// false match sends a stock chart off to request futures data the user may not
+// be entitled to. Anything unmatched falls through to the custom symbol.
 autoSMTPair() =>
-    str.contains(syminfo.ticker, "NQ")     ? "CME_MINI:ES1!"   :
-     str.contains(syminfo.ticker, "ES")    ? "CME_MINI:NQ1!"   :
-     str.contains(syminfo.ticker, "SPX")   ? "CME_MINI:NQ1!"   :
-     str.contains(syminfo.ticker, "SPY")   ? "CME_MINI:NQ1!"   :
-     str.contains(syminfo.ticker, "YM")    ? "CME_MINI:ES1!"   :
-     str.contains(syminfo.ticker, "RTY")   ? "CME_MINI:ES1!"   :
-     str.contains(syminfo.ticker, "M2K")   ? "CME_MINI:ES1!"   :
-     str.contains(syminfo.ticker, "BTC")   ? "BINANCE:ETHUSDT" :
-     str.contains(syminfo.ticker, "ETH")   ? "BINANCE:BTCUSDT" :
-     str.contains(syminfo.ticker, "XAU")   ? "COMEX:SI1!"      :
-     str.contains(syminfo.ticker, "XAG")   ? "COMEX:GC1!"      :
-     str.contains(syminfo.ticker, "EURUSD")? "FX:GBPUSD"       :
-     str.contains(syminfo.ticker, "GBPUSD")? "FX:EURUSD"       : smtSym1In
+    syminfo.type == "futures" and str.startswith(syminfo.ticker, "MNQ") ? "CME_MINI:ES1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "NQ") ? "CME_MINI:ES1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "MES")? "CME_MINI:NQ1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "ES") ? "CME_MINI:NQ1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "MYM")? "CME_MINI:ES1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "YM") ? "CME_MINI:ES1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "M2K")? "CME_MINI:ES1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "RTY")? "CME_MINI:ES1!"   :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "GC") ? "COMEX:SI1!"      :
+     syminfo.type == "futures" and str.startswith(syminfo.ticker, "SI") ? "COMEX:GC1!"      :
+     str.startswith(syminfo.ticker, "SPY")    ? "NASDAQ:QQQ"      :
+     str.startswith(syminfo.ticker, "QQQ")    ? "AMEX:SPY"        :
+     str.startswith(syminfo.ticker, "BTC")    ? "BINANCE:ETHUSDT" :
+     str.startswith(syminfo.ticker, "ETH")    ? "BINANCE:BTCUSDT" :
+     str.startswith(syminfo.ticker, "XAU")    ? "OANDA:XAGUSD"    :
+     str.startswith(syminfo.ticker, "XAG")    ? "OANDA:XAUUSD"    :
+     str.startswith(syminfo.ticker, "EURUSD") ? "FX:GBPUSD"       :
+     str.startswith(syminfo.ticker, "GBPUSD") ? "FX:EURUSD"       : smtSym1In
 
 simple string smtSym1 = smtMode == "Automatic" ? autoSMTPair() : smtSym1In
 bool          smtInv1 = smtMode == "Automatic" ? false : smtSym1Inv
@@ -518,8 +528,16 @@ bool          smtInv1 = smtMode == "Automatic" ? false : smtSym1Inv
 // Pulled on the chart timeframe so the series lines up bar for bar with the
 // main symbol, then aggregated into the same HTF buckets below. Requesting the
 // HTF directly would need lookahead to be useful, and that repaints.
+// ignore_invalid_symbol keeps an unreachable correlate — wrong exchange, or a
+// feed this account is not entitled to — from erroring the whole script. It
+// comes back na and SMT simply does not plot; the info table says so.
 [smt1H, smt1L] = request.security(smtSym1, timeframe.period, [high, low], lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
-[smt2H, smt2L] = request.security(smtSym2In, timeframe.period, [high, low], lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+
+// Never ask for the secondary symbol unless it is switched on: it defaults off,
+// and requesting it anyway makes its default a live failure point for every
+// user regardless of whether they wanted a second pair.
+simple string smtSym2 = smtSym2On ? smtSym2In : smtSym1
+[smt2H, smt2L] = request.security(smtSym2, timeframe.period, [high, low], lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
 
 // =============================================================================
 // HTF AGGREGATION
@@ -1203,8 +1221,11 @@ if showInfo and barstate.islast
         r += 1
 
     if infoSMT
+        // A correlate that returned no data is called out rather than left to
+        // look like "SMT is on and simply never diverges".
+        bool smtLive = not na(smt1H)
         table.cell(info, 0, r, "SMT", text_color=infoText, text_size=sz, text_halign=text.align_left)
-        table.cell(info, 1, r, showSMT ? smtSym1 : "Off", text_color=infoText, text_size=sz, text_halign=text.align_right)
+        table.cell(info, 1, r, not showSMT ? "Off" : smtLive ? smtSym1 : smtSym1 + " (no data)", text_color=not showSMT or smtLive ? infoText : color.orange, text_size=sz, text_halign=text.align_right)
         r += 1
 
     if showWarnings and str.length(warnMsg) > 0
