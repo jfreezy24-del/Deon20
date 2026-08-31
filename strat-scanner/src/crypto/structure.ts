@@ -70,9 +70,18 @@ export function buildStructure(
   const monthly = timeframeStructure(monthlyCompleted);
 
   // Targets are where price goes *after* the decision level breaks, so
-  // anything between spot and the trigger is not a destination.
-  const ceiling = monthly.triggerUp ?? weekly.triggerUp ?? lastPrice;
-  const floor = monthly.triggerDown ?? weekly.triggerDown ?? lastPrice;
+  // anything between spot and the trigger is on the way there, not a
+  // destination.
+  //
+  // Measured from the weekly trigger, because that is the level the write-up
+  // names, and clamped to spot on both sides. Anchoring to the monthly bar
+  // alone let a rally past a stale monthly high produce "targets" the market
+  // had already traded through: with spot at $101 and last month's high at
+  // $83, levels at $90 and $97 were reported as places price was headed.
+  const decisionUp = weekly.triggerUp ?? monthly.triggerUp ?? lastPrice;
+  const decisionDown = weekly.triggerDown ?? monthly.triggerDown ?? lastPrice;
+  const ceiling = Math.max(decisionUp, lastPrice);
+  const floor = Math.min(decisionDown, lastPrice);
 
   // Confirmed swing points first. A steadily trending market can have none —
   // a swing needs bars on both sides to confirm it — so fall back to the
