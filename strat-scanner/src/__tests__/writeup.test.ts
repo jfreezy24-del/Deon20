@@ -32,6 +32,23 @@ const lowerLows = [
   bar(5, 135, 140, 115, 120),
 ];
 
+/** Real SOL weeks: a flat base, then two weeks that nearly double it. */
+const rallyWeeks = [
+  bar(0, 76.77, 77.5, 70.58, 73.63),
+  bar(1, 73.64, 77.84, 71.98, 76.27),
+  bar(2, 76.26, 77.33, 74.1, 74.61),
+  bar(3, 74.62, 102.74, 74.43, 95.43),
+  bar(4, 95.44, 110.6, 93.26, 101.75),
+];
+
+/** The months behind that rally: July closed at $72, high $83.98. */
+const staleMonths = [
+  bar(0, 82.45, 83.1, 60.13, 73.67),
+  bar(1, 83.19, 90.73, 76.7, 83.09),
+  bar(2, 84.35, 97.68, 78.96, 83.2),
+  bar(3, 73.67, 83.98, 72.25, 72.87),
+];
+
 const plan = (over: Partial<DcaPlan> = {}): DcaPlan => ({
   symbol: 'SOL-USD',
   lastPrice: 196,
@@ -76,15 +93,24 @@ describe('buildStructure', () => {
     expect(s.weekly.run).toBeGreaterThanOrEqual(3);
   });
 
-  it('measures targets beyond the decision level, not beyond spot', () => {
+  it('measures targets beyond the decision level', () => {
     // Where price travels *after* a break — anything between spot and the
     // trigger is on the way there, not a destination.
     const s = buildStructure(insideLast, insideLast, 150);
-    const { triggerUp, triggerDown } = s.monthly;
+    const { triggerUp, triggerDown } = s.weekly;
     expect(s.targetsUp.every((t) => t > triggerUp!)).toBe(true);
     expect(s.targetsDown.every((t) => t < triggerDown!)).toBe(true);
     expect(s.targetsUp).toEqual([...s.targetsUp].sort((a, b) => a - b));
     expect(s.targetsDown).toEqual([...s.targetsDown].sort((a, b) => b - a));
+  });
+
+  it('never names a target price has already traded through', () => {
+    // A fast rally leaves last month's high far below spot. Anchoring the
+    // filter to the monthly bar alone reported levels *beneath* the market as
+    // places price was headed: spot $101, "targets" at $90 and $97.
+    const s = buildStructure(rallyWeeks, staleMonths, 101.75);
+    expect(s.targetsUp.every((t) => t > 101.75)).toBe(true);
+    expect(s.targetsDown.every((t) => t < 101.75)).toBe(true);
   });
 
   it('falls back to traded highs and lows when no swing point is confirmed', () => {
@@ -173,6 +199,35 @@ describe('buildWriteup', () => {
     expect(w.higher).toContain('$210');
     expect(w.lower).toContain('$190');
     expect(w.watch).toContain('$210');
+  });
+
+  it('leads with last week, not last month', () => {
+    // The monthly bar does not change until the month does, so quoting it as
+    // the headline repeated the same two numbers across every weekly report
+    // in a calendar month while price ran away from both.
+    const w = buildWriteup(
+      input({
+        lastPrice: 101.75,
+        structure: buildStructure(rallyWeeks, staleMonths, 101.75),
+      }),
+    );
+    expect(w.higher).toContain('$110.60'); // last week's high
+    expect(w.lower).toContain('$93.26'); // last week's low
+    expect(w.higher).not.toContain('$83.98'); // last month's high
+    expect(w.lower).not.toContain('$72.25'); // last month's low
+  });
+
+  it('moves its levels as soon as a new week closes', () => {
+    // The reported symptom: consecutive weekly reports quoting identical
+    // support and resistance while the week in between had a 28% range.
+    const lastWeek = buildWriteup(
+      input({ lastPrice: 95.43, structure: buildStructure(rallyWeeks.slice(0, 4), staleMonths, 95.43) }),
+    );
+    const thisWeek = buildWriteup(
+      input({ lastPrice: 101.75, structure: buildStructure(rallyWeeks, staleMonths, 101.75) }),
+    );
+    expect(thisWeek.higher).not.toBe(lastWeek.higher);
+    expect(thisWeek.lower).not.toBe(lastWeek.lower);
   });
 
   it('describes a long decline as a run, not a single week', () => {

@@ -408,17 +408,24 @@ export function buildWriteup(input: WriteupInput): Writeup {
     .filter(Boolean)
     .join(' ');
 
-  const up = structure.monthly.triggerUp;
-  const down = structure.monthly.triggerDown;
+  // The level that decides the coming week is last week's high and low.
+  //
+  // These used to read off the monthly bar, which does not change until the
+  // month does: four or five consecutive weekly reports quoted the same two
+  // numbers while price ran away from both. The month is context, and it is
+  // still carried in `standing` and `picture`; the headline has to be the
+  // level the next five days actually trade against.
+  const up = structure.weekly.triggerUp ?? structure.monthly.triggerUp;
+  const down = structure.weekly.triggerDown ?? structure.monthly.triggerDown;
 
   const higher = [
     up === null
       ? `No clear level above yet.`
       : pick(seed, 'higher:level', [
-          `Trading above ${money(up)}, the top of last month's range.`,
-          `It takes a move through ${money(up)}, the ceiling of last month's range.`,
-          `${money(up)} is the number. That is the top of last month's range.`,
-          `Above ${money(up)} and it changes. That price is the roof of last month's range.`,
+          `Trading above ${money(up)}, the top of last week's range.`,
+          `It takes a move through ${money(up)}, the ceiling of last week's range.`,
+          `${money(up)} is the number. That is the high of last week.`,
+          `Above ${money(up)} and it changes. That price is the roof of last week's range.`,
         ]),
     up === null
       ? ''
@@ -443,7 +450,7 @@ export function buildWriteup(input: WriteupInput): Writeup {
       : pick(seed, 'lower:level', [
           `Losing ${money(down)}, the floor of the same range.`,
           `It breaks down through ${money(down)}, the bottom of that same range.`,
-          `${money(down)} is the level that matters underneath, the floor of the range.`,
+          `${money(down)} is the level that matters underneath, last week's low.`,
           `Under ${money(down)} the picture changes. That is the floor of the same range.`,
         ]),
     down === null
