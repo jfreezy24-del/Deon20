@@ -1,0 +1,568 @@
+//@version=6
+// =============================================================================
+// OHLC Statistical Mapping
+// -----------------------------------------------------------------------------
+// Projects five statistical levels from the CURRENT period's open, derived from
+// how the same period has historically manipulated and distributed:
+//
+//     +D   average favourable UPSIDE extension   (periods that closed up)
+//     -M   average unfavourable UPSIDE wick      (periods that closed down)
+//      O   the current period's open             (the anchor)
+//     +M   average unfavourable DOWNSIDE wick    (periods that closed up)
+//     -D   average favourable DOWNSIDE extension (periods that closed down)
+//
+// The sign prefix names the SCENARIO, not the direction of the level. In a
+// bullish period manipulation prints below the open (+M) before distribution
+// runs above it (+D). In a bearish period manipulation prints above the open
+// (-M) before distribution runs below it (-D). So +M/-M bracket the open as
+// the two stop-hunt sides, and +D/-D sit outside them as the two targets.
+//
+// HOW IT DIFFERS FROM ohlc-projection-levels.pine (also in this repo):
+//   That script is the deep-history engine — ATR normalisation, recency
+//   weighting, reach/hold rates, pooled feeds. It answers "what is the
+//   distribution over thousands of periods".
+//   This script is the session engine. It answers "what does THIS session, on
+//   THIS weekday, typically do, and WHEN in the session does it do it". It
+//   adds custom session anchors, day-of-week bucketing, expected time of the
+//   high and low, and liquidity that is matched to the projected levels.
+//   They are complements, not replacements. Run both if you want both answers.
+//
+// ANCHORING:
+//   Each of the three map slots is anchored either to a standard timeframe
+//   (1D, 4H, 1W...) or to a custom session ("0930-1600"). A session written as
+//   "0930-0930" spans a full 24h and gives you a CUSTOM DAILY ANCHOR — daily
+//   statistics that start at the NYSE bell or the London open rather than at
+//   an arbitrary midnight.
+//
+// SAMPLING — read this before trusting the numbers:
+//   Statistics are accumulated from CHART bars, not from a higher-timeframe
+//   request. That is what makes the timing rows possible (intra-period order
+//   is only visible on the chart timeframe) and it makes the whole script
+//   repaint-free. The cost is that the sample can only contain periods that
+//   exist in the chart's loaded history. Projecting 1D from a 1m chart will
+//   collect very few days. Run the chart timeframe roughly 50-300x finer than
+//   the anchor: 5m or 15m under a daily anchor, 1m or 5m under a session.
+//   The table reports the live sample size (n) for exactly this reason — if n
+//   is below the minimum it turns amber, because those levels are noise.
+//
+//   Day-of-week bucketing splits the sample by five, so it needs roughly five
+//   times the history to reach the same n. Watch the amber.
+// =============================================================================
+
+indicator("OHLC Statistical Mapping", shorttitle="OHLC StatMap",
+     overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ================================== Inputs ===================================
+grpG      = "Model"
+calcMode  = input.string("Median", "Statistic", options=["Mean","Median","Percentile"], group=grpG, tooltip="Mean is pulled around by a single NFP or FOMC period. Median is the honest 'typical' period and is the default for that reason.\n\nPercentile answers a different question: 'only (100-p)% of periods extend past here', which turns a level into a target with a stated probability instead of an average.")
+calcPct   = input.float(70, "Percentile", minval=1, maxval=99, step=5, group=grpG, tooltip="Only used when Statistic = Percentile.")
+unitMode  = input.string("Percent", "Measure excursions in", options=["Percent","Points"], group=grpG, tooltip="Percent: each period is stored as (high-open)/open. Comparable across price regimes, so old history stays usable.\n\nPoints: raw price distance. Fine for an index future inside one contract, misleading on anything that has doubled over the sample.")
+lookback  = input.int(60, "Sample size (completed periods)", minval=5, maxval=500, group=grpG, tooltip="How many completed periods feed each statistic. The default of 60 is about a quarter of daily sessions.")
+dowOn     = input.bool(false, "Bucket by day of week", group=grpG, tooltip="Aggregate only periods sharing the current period's weekday. Monday's open behaves differently from Friday's, and on intraday anchors the difference is large. Costs you ~5x the sample, so raise history or lower the sample size to compensate.")
+minN      = input.int(20, "Minimum sample before trusting", minval=3, maxval=200, group=grpG, tooltip="Below this the table row turns amber. The levels still draw — they are just not yet evidence.")
+
+grpD      = "Display"
+dispMode  = input.string("Both", "Show", options=["Levels","Liquidity","Both"], group=grpD, tooltip="Declutter without losing the calculation. Switch to Liquidity during the hunt, back to Levels once you are looking for targets.")
+showLbl   = input.bool(true,  "Level labels", group=grpD)
+showOpen  = input.bool(true,  "Open line", group=grpD)
+extendR   = input.int(30, "Extend levels right (bars)", minval=0, maxval=400, group=grpD)
+histShow  = input.int(2, "Historical periods to keep", minval=0, maxval=10, group=grpD, tooltip="Frozen maps from previous periods, for eyeballing whether the levels actually got respected. 0 draws only the live period.")
+lblSize   = input.string("small", "Label size", options=["tiny","small","normal"], group=grpD)
+
+grpT      = "Time projections"
+timeOn    = input.bool(true, "Project expected high / low time", group=grpT, tooltip="Marks where in the period the high and the low have historically formed, as a fraction of the period's length. This is the half of the model that price-only projections throw away: knowing the low usually prints in the first third changes how you treat an early sweep.")
+colTime   = input.color(color.new(color.gray, 30), "Marker colour", group=grpT)
+
+grpL      = "Liquidity"
+liqOn     = input.bool(true, "Detect liquidity at levels", group=grpL, tooltip="Marks swing highs and lows that sit ON a projected level. Those are the pools where resting stops and a statistical target coincide — the confluence the model is actually about. Unswept draws solid, swept draws dashed.")
+pivLen    = input.int(5, "Swing strength (bars each side)", minval=1, maxval=50, group=grpL)
+liqTol    = input.float(0.15, "Match tolerance (%)", minval=0.01, maxval=5.0, step=0.05, group=grpL, tooltip="How close a swing must sit to a projected level to count as confluent. Widen it on noisy instruments.")
+liqWin    = input.int(500, "Only consider swings within (bars)", minval=50, maxval=5000, group=grpL)
+liqMax    = input.int(40, "Max pools drawn", minval=5, maxval=120, group=grpL, tooltip="Hard cap so a choppy instrument cannot exhaust the drawing budget and silently stop rendering levels.")
+liqPre    = input.bool(false, "Pre-period liquidity only", group=grpL, tooltip="Ignore swings formed after the current period opened, leaving only the pools that were already resting when the session began.")
+colLiqU   = input.color(color.new(color.red, 0),   "Unswept", group=grpL)
+colLiqS   = input.color(color.new(color.gray, 45), "Swept",   group=grpL)
+
+grpTbl    = "Table"
+tblOn     = input.bool(true, "Show stats table", group=grpTbl)
+tblPos    = input.string("top_right", "Position", options=["top_right","top_left","bottom_right","bottom_left","middle_right"], group=grpTbl)
+tblSize   = input.string("tiny", "Text size", options=["tiny","small","normal"], group=grpTbl)
+
+grpA      = "Alerts"
+alertOn   = input.bool(true, "Fire alert() on first touch of a level", group=grpA, tooltip="One shot per level per period, so a level that is straddled for an hour does not spam.")
+
+// --- Slot 1 ------------------------------------------------------------------
+g1        = "Map 1"
+on1       = input.bool(true, "Enabled", group=g1)
+mode1     = input.string("Timeframe", "Anchor", options=["Timeframe","Session"], group=g1)
+tf1       = input.timeframe("1D", "Timeframe", group=g1)
+sess1     = input.session("0930-1600", "Session", group=g1, tooltip="Write 0930-0930 for a 24h period anchored at 09:30 — a custom daily anchor.")
+days1     = input.string("23456", "Session days", group=g1, tooltip="1=Sunday .. 7=Saturday. 23456 is Mon-Fri.")
+tz1       = input.string("America/New_York", "Session timezone", group=g1)
+col1      = input.color(color.new(color.teal, 0), "Colour", group=g1)
+
+// --- Slot 2 ------------------------------------------------------------------
+g2        = "Map 2"
+on2       = input.bool(false, "Enabled", group=g2)
+mode2     = input.string("Timeframe", "Anchor", options=["Timeframe","Session"], group=g2)
+tf2       = input.timeframe("240", "Timeframe", group=g2)
+sess2     = input.session("0200-0500", "Session", group=g2)
+days2     = input.string("23456", "Session days", group=g2)
+tz2       = input.string("America/New_York", "Session timezone", group=g2)
+col2      = input.color(color.new(color.purple, 0), "Colour", group=g2)
+
+// --- Slot 3 ------------------------------------------------------------------
+g3        = "Map 3"
+on3       = input.bool(false, "Enabled", group=g3)
+mode3     = input.string("Session", "Anchor", options=["Timeframe","Session"], group=g3)
+tf3       = input.timeframe("1W", "Timeframe", group=g3)
+sess3     = input.session("0300-1130", "Session", group=g3)
+days3     = input.string("23456", "Session days", group=g3)
+tz3       = input.string("America/New_York", "Session timezone", group=g3)
+col3      = input.color(color.new(color.orange, 0), "Colour", group=g3)
+
+// =============================== Types =======================================
+// One completed period. Everything downstream is derived from these records, so
+// the accumulator is the only place that touches raw bars.
+type Period
+    float o
+    float h
+    float l
+    float c
+    int   bars    // length of the period in chart bars
+    int   hiOff   // bars from period start to the high
+    int   loOff   // bars from period start to the low
+    int   dow     // weekday at the period's open
+
+// One map slot: its config, the period currently building, the completed
+// history, the projected levels, and the drawings that render them.
+type Slot
+    string name
+    bool   on
+    color  col
+    // period under construction
+    float  o     = na
+    float  h     = na
+    float  l     = na
+    float  c     = na
+    int    b0    = na
+    int    hiOff = na
+    int    loOff = na
+    int    dow   = na
+    // completed periods, oldest first
+    array<Period> hist
+    // projected levels for the live period
+    float  pD = na
+    float  mM = na
+    float  pM = na
+    float  mD = na
+    int    n  = 0
+    // projected timing, in bars from the period's start
+    int    hiBars  = na
+    int    loBars  = na
+    int    avgBars = na
+    // drawings
+    array<line>  cur      // live period: [+D, -M, O, +M, -D]
+    array<label> curLbl
+    array<line>  old      // frozen maps from previous periods
+    line   hiMark = na
+    line   loMark = na
+    // one-shot alert latches, reset each period
+    bool   tpD = false
+    bool   tmM = false
+    bool   tpM = false
+    bool   tmD = false
+
+// A swing high or low that sits on a projected level.
+type Liq
+    float price
+    int   bar
+    bool  isHigh
+    bool  swept = false
+    line  ln    = na
+
+// ============================ Statistical helpers ============================
+// One statistic, three ways. Kept in a single place so the table can name the
+// method it actually used without the caller re-deriving it.
+f_stat(array<float> a, string mode, float pct) =>
+    float r = na
+    if array.size(a) > 0
+        r := mode == "Mean" ? array.avg(a) : mode == "Median" ? array.median(a) : array.percentile_nearest_rank(a, pct)
+    r
+
+// Rebuild a price from a stored excursion. Mirrors f_measure, so whatever
+// transform went in comes back out as a price on the current open.
+f_level(float v, float base, string unit, bool up) =>
+    float r = na
+    if not na(v) and not na(base)
+        float d = unit == "Percent" ? base * v / 100.0 : v
+        r := up ? base + d : base - d
+    r
+
+// Store an excursion in whichever unit the model is running in.
+f_measure(float dist, float ref, string unit) =>
+    unit == "Percent" and ref > 0 ? dist / ref * 100.0 : dist
+
+f_txtSize(string s) => s == "tiny" ? size.tiny : s == "small" ? size.small : size.normal
+
+f_tblPos(string s) =>
+    s == "top_left" ? position.top_left : s == "bottom_right" ? position.bottom_right : s == "bottom_left" ? position.bottom_left : s == "middle_right" ? position.middle_right : position.top_right
+
+// ============================== Slot mechanics ===============================
+// Close out the period that just ended and file it in history. Called on the
+// first bar of the next period, so the period's close is the last close we
+// recorded while it was still open — not close[1], which would be wrong when a
+// session gaps or the anchor skips a weekend.
+method f_rollover(Slot s) =>
+    if not na(s.o) and not na(s.b0) and bar_index > s.b0
+        s.hist.push(Period.new(s.o, s.h, s.l, s.c, bar_index - s.b0, s.hiOff, s.loOff, s.dow))
+        // Cap memory. 600 completed periods is well past any usable sample.
+        if s.hist.size() > 600
+            s.hist.shift()
+
+// Start a fresh period on the current bar.
+method f_open(Slot s) =>
+    s.o     := open
+    s.h     := high
+    s.l     := low
+    s.c     := close
+    s.b0    := bar_index
+    s.hiOff := 0
+    s.loOff := 0
+    s.dow   := dayofweek
+    s.tpD   := false
+    s.tmM   := false
+    s.tpM   := false
+    s.tmD   := false
+
+// Extend the period under construction with the current bar.
+method f_extend(Slot s) =>
+    if not na(s.o)
+        if high > s.h
+            s.h     := high
+            s.hiOff := bar_index - s.b0
+        if low < s.l
+            s.l     := low
+            s.loOff := bar_index - s.b0
+        s.c := close
+
+// Recompute every projection for the live period. Runs once per period rather
+// than per bar: the sample is fixed the moment the period opens, since it only
+// ever contains COMPLETED periods.
+method f_project(Slot s, int lb, string stat, float pct, string unit, bool byDow) =>
+    array<float> upD = array.new<float>()
+    array<float> upM = array.new<float>()
+    array<float> dnM = array.new<float>()
+    array<float> dnD = array.new<float>()
+    array<float> hiF = array.new<float>()
+    array<float> loF = array.new<float>()
+    array<float> len = array.new<float>()
+
+    int total = s.hist.size()
+    int cnt   = 0
+    if total > 0
+        for i = total - 1 to 0
+            if cnt >= lb
+                break
+            Period p = s.hist.get(i)
+            if na(p.o) or p.o <= 0 or p.bars <= 0
+                continue
+            if byDow and p.dow != s.dow
+                continue
+            cnt += 1
+            float vUp = f_measure(p.h - p.o, p.o, unit)
+            float vDn = f_measure(p.o - p.l, p.o, unit)
+            // A period that closed up donates its up-excursion as DISTRIBUTION
+            // and its down-wick as MANIPULATION. A period that closed down
+            // donates the mirror image. This conditioning is the whole model.
+            if p.c >= p.o
+                upD.push(vUp)
+                upM.push(vDn)
+            else
+                dnM.push(vUp)
+                dnD.push(vDn)
+            hiF.push(float(p.hiOff) / float(p.bars))
+            loF.push(float(p.loOff) / float(p.bars))
+            len.push(float(p.bars))
+
+    s.n  := cnt
+    s.pD := f_level(f_stat(upD, stat, pct), s.o, unit, true)
+    s.mM := f_level(f_stat(dnM, stat, pct), s.o, unit, true)
+    s.pM := f_level(f_stat(upM, stat, pct), s.o, unit, false)
+    s.mD := f_level(f_stat(dnD, stat, pct), s.o, unit, false)
+
+    s.avgBars := array.size(len) > 0 ? int(math.round(array.avg(len))) : na
+    float fh = f_stat(hiF, stat, pct)
+    float fl = f_stat(loF, stat, pct)
+    s.hiBars := na(fh) or na(s.avgBars) ? na : int(math.round(fh * s.avgBars))
+    s.loBars := na(fl) or na(s.avgBars) ? na : int(math.round(fl * s.avgBars))
+
+// Retire the live drawings. Either freeze them at the period's right edge and
+// keep them as history, or delete them outright.
+method f_retire(Slot s, int keep) =>
+    if s.cur.size() > 0
+        if keep > 0
+            for i = 0 to s.cur.size() - 1
+                line ln = s.cur.get(i)
+                line.set_x2(ln, bar_index - 1)
+                s.old.push(ln)
+            // Trim whole maps (5 lines each), oldest first.
+            while s.old.size() > keep * 5
+                line.delete(s.old.shift())
+        else
+            for i = 0 to s.cur.size() - 1
+                line.delete(s.cur.get(i))
+        s.cur.clear()
+    if s.curLbl.size() > 0
+        for i = 0 to s.curLbl.size() - 1
+            label.delete(s.curLbl.get(i))
+        s.curLbl.clear()
+    if not na(s.hiMark)
+        line.delete(s.hiMark)
+        s.hiMark := na
+    if not na(s.loMark)
+        line.delete(s.loMark)
+        s.loMark := na
+
+// Draw or update the live map. Objects are created once per period and moved
+// thereafter — recreating them every bar would blow the 500-object budget.
+// Levels that have no sample yet are made transparent rather than deleted, so
+// the object identity survives to the next bar.
+method f_render(Slot s, bool levels, bool lbls, bool openLine, int ext, string lsz, bool times, color tcol) =>
+    if not (s.on and levels)
+        s.f_retire(0)
+    else if not na(s.o) and not na(s.b0)
+        int x2 = bar_index + ext
+
+        if s.cur.size() == 0
+            for i = 0 to 4
+                bool isOpen = i == 2
+                s.cur.push(line.new(s.b0, s.o, x2, s.o, xloc=xloc.bar_index,
+                     color=s.col,
+                     style=isOpen ? line.style_solid : (i == 1 or i == 3) ? line.style_dotted : line.style_dashed,
+                     width=isOpen ? 2 : 1))
+                s.curLbl.push(label.new(x2, s.o, "", xloc=xloc.bar_index,
+                     style=label.style_label_left, color=color.new(color.black, 100),
+                     textcolor=s.col, size=f_txtSize(lsz)))
+
+        for i = 0 to 4
+            float y = i == 0 ? s.pD : i == 1 ? s.mM : i == 2 ? s.o : i == 3 ? s.pM : s.mD
+            string tag = i == 0 ? "+D" : i == 1 ? "-M" : i == 2 ? "O" : i == 3 ? "+M" : "-D"
+            bool vis = not na(y) and (i != 2 or openLine)
+            float yy = vis ? y : s.o
+            line ln = s.cur.get(i)
+            label lb = s.curLbl.get(i)
+            line.set_color(ln, vis ? s.col : color.new(s.col, 100))
+            line.set_xy1(ln, s.b0, yy)
+            line.set_xy2(ln, x2, yy)
+            label.set_xy(lb, x2, yy)
+            label.set_text(lb, vis and lbls ? tag + " " + str.tostring(y, format.mintick) : "")
+
+        // Expected time of the high and the low, drawn as verticals spanning
+        // the projected band.
+        bool bandOk = times and not na(s.pD) and not na(s.mD)
+        if bandOk and not na(s.hiBars)
+            int xh = s.b0 + s.hiBars
+            if na(s.hiMark)
+                s.hiMark := line.new(xh, s.mD, xh, s.pD, xloc=xloc.bar_index, color=tcol, style=line.style_dotted)
+            else
+                line.set_xy1(s.hiMark, xh, s.mD)
+                line.set_xy2(s.hiMark, xh, s.pD)
+        if bandOk and not na(s.loBars)
+            int xl = s.b0 + s.loBars
+            if na(s.loMark)
+                s.loMark := line.new(xl, s.mD, xl, s.pD, xloc=xloc.bar_index, color=tcol, style=line.style_dotted)
+            else
+                line.set_xy1(s.loMark, xl, s.mD)
+                line.set_xy2(s.loMark, xl, s.pD)
+
+// ========================= Period boundary detection =========================
+// timeframe.change() and time() both demand a simple string, so every anchor is
+// resolved here at the top level and handed downstream as a plain bool. The
+// session strings are concatenated inline for the same reason — routing them
+// through a user function would demote them to series and fail to compile.
+inSess1 = mode1 == "Session" ? not na(time(timeframe.period, sess1 + ":" + days1, tz1)) : true
+inSess2 = mode2 == "Session" ? not na(time(timeframe.period, sess2 + ":" + days2, tz2)) : true
+inSess3 = mode3 == "Session" ? not na(time(timeframe.period, sess3 + ":" + days3, tz3)) : true
+
+new1 = mode1 == "Session" ? (inSess1 and not inSess1[1]) : timeframe.change(tf1)
+new2 = mode2 == "Session" ? (inSess2 and not inSess2[1]) : timeframe.change(tf2)
+new3 = mode3 == "Session" ? (inSess3 and not inSess3[1]) : timeframe.change(tf3)
+
+// =============================== Slot instances ==============================
+f_newSlot(string nm, bool en, color c) =>
+    Slot.new(name = nm, on = en, col = c,
+         hist = array.new<Period>(), cur = array.new<line>(),
+         curLbl = array.new<label>(), old = array.new<line>())
+
+var Slot s1 = f_newSlot("Map 1", on1, col1)
+var Slot s2 = f_newSlot("Map 2", on2, col2)
+var Slot s3 = f_newSlot("Map 3", on3, col3)
+
+// The slots are created once with `var`, so keep the mutable config in sync.
+s1.on  := on1
+s1.col := col1
+s2.on  := on2
+s2.col := col2
+s3.on  := on3
+s3.col := col3
+
+// Drive one slot through a bar. Split out so the three calls stay identical.
+f_step(Slot s, bool isNew, bool inside) =>
+    if s.on
+        if isNew
+            s.f_rollover()
+            s.f_retire(histShow)
+            s.f_open()
+            s.f_project(lookback, calcMode, calcPct, unitMode, dowOn)
+        else if inside
+            s.f_extend()
+
+f_step(s1, new1, inSess1)
+f_step(s2, new2, inSess2)
+f_step(s3, new3, inSess3)
+
+bool showLevels = dispMode == "Levels" or dispMode == "Both"
+bool showLiq    = (dispMode == "Liquidity" or dispMode == "Both") and liqOn
+
+s1.f_render(showLevels, showLbl, showOpen, extendR, lblSize, timeOn, colTime)
+s2.f_render(showLevels, showLbl, showOpen, extendR, lblSize, timeOn, colTime)
+s3.f_render(showLevels, showLbl, showOpen, extendR, lblSize, timeOn, colTime)
+
+// ================================= Liquidity =================================
+// Swings are detected unconditionally — pivots must see a continuous history or
+// they desynchronise — and only the MATCHING is gated by the display toggle.
+float ph = ta.pivothigh(high, pivLen, pivLen)
+float pl = ta.pivotlow(low, pivLen, pivLen)
+
+var array<Liq> pools = array.new<Liq>()
+
+// Does a price sit on any live projected level, within tolerance? Only the four
+// statistical levels count — the open is not liquidity, it is the anchor.
+f_nearLevel(float px) =>
+    bool hit = false
+    float tol = px * liqTol / 100.0
+    array<float> lv = array.from(
+         s1.on ? s1.pD : float(na), s1.on ? s1.mM : float(na), s1.on ? s1.pM : float(na), s1.on ? s1.mD : float(na),
+         s2.on ? s2.pD : float(na), s2.on ? s2.mM : float(na), s2.on ? s2.pM : float(na), s2.on ? s2.mD : float(na),
+         s3.on ? s3.pD : float(na), s3.on ? s3.mM : float(na), s3.on ? s3.pM : float(na), s3.on ? s3.mD : float(na))
+    for i = 0 to array.size(lv) - 1
+        float v = array.get(lv, i)
+        if not na(v) and math.abs(px - v) <= tol
+            hit := true
+            break
+    hit
+
+if showLiq
+    // Earliest period start among enabled slots, for the pre-period filter.
+    int anchorBar = na
+    if s1.on and not na(s1.b0)
+        anchorBar := s1.b0
+    if s2.on and not na(s2.b0)
+        anchorBar := na(anchorBar) or s2.b0 < anchorBar ? s2.b0 : anchorBar
+    if s3.on and not na(s3.b0)
+        anchorBar := na(anchorBar) or s3.b0 < anchorBar ? s3.b0 : anchorBar
+
+    if not na(ph) or not na(pl)
+        bool isHigh = not na(ph)
+        float px    = isHigh ? ph : pl
+        int   pbar  = bar_index - pivLen
+        bool  preOk = not liqPre or na(anchorBar) or pbar < anchorBar
+        if preOk and f_nearLevel(px)
+            Liq q = Liq.new(price = px, bar = pbar, isHigh = isHigh)
+            q.ln := line.new(pbar, px, bar_index + extendR, px, xloc=xloc.bar_index,
+                 color=colLiqU, style=line.style_solid, width=1)
+            pools.push(q)
+            // Hard cap, oldest first, so the drawing budget stays available
+            // for the levels themselves.
+            while pools.size() > liqMax
+                Liq drop = pools.shift()
+                line.delete(drop.ln)
+
+    // Age out, mark sweeps, and keep the right edge moving.
+    if pools.size() > 0
+        for i = pools.size() - 1 to 0
+            Liq q = pools.get(i)
+            if bar_index - q.bar > liqWin
+                line.delete(q.ln)
+                pools.remove(i)
+                continue
+            if not q.swept and ((q.isHigh and high > q.price) or (not q.isHigh and low < q.price))
+                q.swept := true
+                line.set_color(q.ln, colLiqS)
+                line.set_style(q.ln, line.style_dashed)
+            line.set_x2(q.ln, bar_index + extendR)
+else if pools.size() > 0
+    for i = pools.size() - 1 to 0
+        Liq q = pools.get(i)
+        line.delete(q.ln)
+        pools.remove(i)
+
+// ================================== Alerts ===================================
+// One shot per level per period. The latches live on the slot and are cleared
+// by f_open(), so a level straddled for an hour fires once.
+f_alerts(Slot s) =>
+    if alertOn and s.on and not na(s.o)
+        if not s.tpD and not na(s.pD) and high >= s.pD
+            s.tpD := true
+            alert(s.name + ": +D distribution target " + str.tostring(s.pD, format.mintick) + " tagged", alert.freq_once_per_bar)
+        if not s.tmM and not na(s.mM) and high >= s.mM
+            s.tmM := true
+            alert(s.name + ": -M manipulation " + str.tostring(s.mM, format.mintick) + " tagged (upside sweep)", alert.freq_once_per_bar)
+        if not s.tpM and not na(s.pM) and low <= s.pM
+            s.tpM := true
+            alert(s.name + ": +M manipulation " + str.tostring(s.pM, format.mintick) + " tagged (downside sweep)", alert.freq_once_per_bar)
+        if not s.tmD and not na(s.mD) and low <= s.mD
+            s.tmD := true
+            alert(s.name + ": -D distribution target " + str.tostring(s.mD, format.mintick) + " tagged", alert.freq_once_per_bar)
+
+f_alerts(s1)
+f_alerts(s2)
+f_alerts(s3)
+
+// =================================== Table ===================================
+// Columns: name | n | +D | -M | +M | -D | expected high/low time, as a
+// percentage of the way through the period.
+var table tbl = table.new(f_tblPos(tblPos), 7, 5, border_width=1)
+
+f_fmtLvl(float v) => na(v) ? "—" : str.tostring(v, format.mintick)
+f_fmtAt(int b, int tot) => na(b) or na(tot) or tot <= 0 ? "—" : str.tostring(float(b) / float(tot) * 100.0, "#") + "%"
+
+f_row(Slot s, int r, color txt) =>
+    color warn = s.n < minN ? color.new(color.orange, 0) : txt
+    table.cell(tbl, 0, r, s.name,            text_color=s.col, text_size=f_txtSize(tblSize), text_halign=text.align_left)
+    table.cell(tbl, 1, r, str.tostring(s.n), text_color=warn,  text_size=f_txtSize(tblSize))
+    table.cell(tbl, 2, r, f_fmtLvl(s.pD),    text_color=warn,  text_size=f_txtSize(tblSize))
+    table.cell(tbl, 3, r, f_fmtLvl(s.mM),    text_color=warn,  text_size=f_txtSize(tblSize))
+    table.cell(tbl, 4, r, f_fmtLvl(s.pM),    text_color=warn,  text_size=f_txtSize(tblSize))
+    table.cell(tbl, 5, r, f_fmtLvl(s.mD),    text_color=warn,  text_size=f_txtSize(tblSize))
+    table.cell(tbl, 6, r, f_fmtAt(s.hiBars, s.avgBars) + " / " + f_fmtAt(s.loBars, s.avgBars),
+         text_color=warn, text_size=f_txtSize(tblSize))
+
+if barstate.islast and tblOn
+    color hdr = color.new(color.gray, 0)
+    color txt = chart.fg_color
+    string meth = calcMode == "Percentile" ? "P" + str.tostring(calcPct, "#") : calcMode
+    table.cell(tbl, 0, 0, meth + " · " + unitMode + (dowOn ? " · DOW" : ""), text_color=hdr, text_size=f_txtSize(tblSize), text_halign=text.align_left)
+    table.cell(tbl, 1, 0, "n",       text_color=hdr, text_size=f_txtSize(tblSize))
+    table.cell(tbl, 2, 0, "+D",      text_color=hdr, text_size=f_txtSize(tblSize))
+    table.cell(tbl, 3, 0, "-M",      text_color=hdr, text_size=f_txtSize(tblSize))
+    table.cell(tbl, 4, 0, "+M",      text_color=hdr, text_size=f_txtSize(tblSize))
+    table.cell(tbl, 5, 0, "-D",      text_color=hdr, text_size=f_txtSize(tblSize))
+    table.cell(tbl, 6, 0, "Hi/Lo @", text_color=hdr, text_size=f_txtSize(tblSize))
+
+    int r = 1
+    if s1.on
+        f_row(s1, r, txt)
+        r += 1
+    if s2.on
+        f_row(s2, r, txt)
+        r += 1
+    if s3.on
+        f_row(s3, r, txt)
+        r += 1
+    // Blank any rows left over from a slot that was just disabled.
+    while r < 5
+        for c = 0 to 6
+            table.cell(tbl, c, r, "", text_size=f_txtSize(tblSize))
+        r += 1
