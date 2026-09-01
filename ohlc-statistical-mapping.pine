@@ -329,9 +329,13 @@ method f_retire(Slot s, int keep) =>
 // Levels that have no sample yet are made transparent rather than deleted, so
 // the object identity survives to the next bar.
 method f_render(Slot s, bool levels, bool lbls, bool openLine, int ext, string lsz, bool times, color tcol) =>
-    if not (s.on and levels)
+    // Two independent `if` statements, not if/else: f_retire ends in an object
+    // assignment while the render path ends in a void setter, and Pine will
+    // not unify those two branch types.
+    bool active = s.on and levels and not na(s.o) and not na(s.b0)
+    if not active
         s.f_retire(0)
-    else if not na(s.o) and not na(s.b0)
+    if active
         int x2 = bar_index + ext
 
         if s.cur.size() == 0
@@ -361,20 +365,21 @@ method f_render(Slot s, bool levels, bool lbls, bool openLine, int ext, string l
         // Expected time of the high and the low, drawn as verticals spanning
         // the projected band.
         bool bandOk = times and not na(s.pD) and not na(s.mD)
+        // Create-if-missing then always reposition, rather than if/else. Pine
+        // unifies the return types of if/else branches, and an object
+        // assignment is `series line` where a setter call is void.
         if bandOk and not na(s.hiBars)
             int xh = s.b0 + s.hiBars
             if na(s.hiMark)
                 s.hiMark := line.new(xh, s.mD, xh, s.pD, xloc=xloc.bar_index, color=tcol, style=line.style_dotted)
-            else
-                line.set_xy1(s.hiMark, xh, s.mD)
-                line.set_xy2(s.hiMark, xh, s.pD)
+            line.set_xy1(s.hiMark, xh, s.mD)
+            line.set_xy2(s.hiMark, xh, s.pD)
         if bandOk and not na(s.loBars)
             int xl = s.b0 + s.loBars
             if na(s.loMark)
                 s.loMark := line.new(xl, s.mD, xl, s.pD, xloc=xloc.bar_index, color=tcol, style=line.style_dotted)
-            else
-                line.set_xy1(s.loMark, xl, s.mD)
-                line.set_xy2(s.loMark, xl, s.pD)
+            line.set_xy1(s.loMark, xl, s.mD)
+            line.set_xy2(s.loMark, xl, s.pD)
 
 // ========================= Period boundary detection =========================
 // timeframe.change() and time() both demand a simple string, so every anchor is
@@ -409,14 +414,15 @@ s3.col := col3
 
 // Drive one slot through a bar. Split out so the three calls stay identical.
 f_step(Slot s, bool isNew, bool inside) =>
-    if s.on
-        if isNew
-            s.f_rollover()
-            s.f_retire(histShow)
-            s.f_open()
-            s.f_project(lookback, calcMode, calcPct, unitMode, dowOn)
-        else if inside
-            s.f_extend()
+    // Separate ifs rather than if/else, for the same branch-type reason as
+    // f_render: f_project ends in an int assignment, f_extend in a float one.
+    if s.on and isNew
+        s.f_rollover()
+        s.f_retire(histShow)
+        s.f_open()
+        s.f_project(lookback, calcMode, calcPct, unitMode, dowOn)
+    if s.on and not isNew and inside
+        s.f_extend()
 
 f_step(s1, new1, inSess1)
 f_step(s2, new2, inSess2)
@@ -494,9 +500,11 @@ if showLiq
             line.set_x2(q.ln, bar_index + extendR)
 else if pools.size() > 0
     for i = pools.size() - 1 to 0
-        Liq q = pools.get(i)
+        // remove() before delete() so the block ends on a void call —
+        // array.remove returns the element, which would not unify with the
+        // void `if showLiq` branch above.
+        Liq q = pools.remove(i)
         line.delete(q.ln)
-        pools.remove(i)
 
 // ================================== Alerts ===================================
 // One shot per level per period. The latches live on the slot and are cleared
