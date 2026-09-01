@@ -165,11 +165,18 @@ nBuckets = condMode == "Weekday" ? 7 : condMode == "None" ? 1 : 3
 medStyle  = medStyleIn == "Solid" ? line.style_solid : medStyleIn == "Dotted" ? line.style_dotted : line.style_dashed
 labelSize = lblSize == "small" ? size.small : lblSize == "normal" ? size.normal : size.tiny
 
-// Period length in chart bars. Sizes the projection and places the timing
-// markers; the levels themselves are unaffected by it.
-chartSec   = timeframe.in_seconds(timeframe.period)
-periodBars = math.max(1, int(math.round(float(timeframe.in_seconds(tf)) / math.max(1, chartSec))))
-projBars   = extendTo == "Fixed bars" ? extBars : periodBars
+// Drawings are positioned in TIME, not bar index. A monthly projection on a
+// 15m chart is ~2,880 bars long, and objects placed with xloc.bar_index cannot
+// be drawn more than 500 bars into the future — xloc.bar_time has no such
+// limit, so the period-end projection works on every timeframe pair.
+chartSec = timeframe.in_seconds(timeframe.period)
+barMs    = chartSec * 1000
+periodMs = float(timeframe.in_seconds(tf)) * 1000.0
+// Initial width of a freshly drawn level, before the per-bar extend below.
+projMs   = extendTo == "Fixed bars" ? extBars * barMs : int(periodMs)
+// Confluence shading still works in bar index, so it keeps the 500-bar cap the
+// old projection-width input enforced.
+cfBars   = math.min(500, extendTo == "Fixed bars" ? extBars : math.max(1, int(math.round(periodMs / 1000.0 / math.max(1, chartSec)))))
 
 // Level ordering, top of the map to the bottom. Also the table's row order.
 // 0 = +D, 1 = +M, 2 = Open, 3 = -M, 4 = -D. The sign names which side of the
@@ -638,11 +645,11 @@ thin = smallestN < minSample
 // Levels are projected from YOUR chart symbol's open; only the ratios and the
 // volatility scale come from the provider.
 var float curO = na
-var int   startBar = na
+var int   startTime = na
 newP = ta.change(time(tf)) != 0
 if newP
     curO := open
-    startBar := bar_index
+    startTime := time
 
 appliedAtr = transform == "Log + ATR" ? chartAtrP : na
 
@@ -693,12 +700,13 @@ f_newGroup() =>
     LevelGroup.new(array.new<line>(), array.new<color>(), array.new<linefill>(),
          array.new<label>(), array.new<color>(), array.new<box>(), array.new<color>())
 
+// x is a TIMESTAMP throughout the drawing layer, not a bar index.
 mkLine(int x, float y, color c, string st, int w) =>
-    na(y) ? na : line.new(x, y, x + projBars, y, xloc=xloc.bar_index, color=c, style=st, width=w)
+    na(y) ? na : line.new(x, y, x + projMs, y, xloc=xloc.bar_time, color=c, style=st, width=w)
 
 // Transparent-background label with coloured text, set left of its anchor.
 mkLabel(int x, float y, string txt, color c) =>
-    na(y) ? na : label.new(x, y, txt, xloc=xloc.bar_index, style=label.style_label_left,
+    na(y) ? na : label.new(x, y, txt, xloc=xloc.bar_time, style=label.style_label_left,
          color=color.new(color.black, 100), textcolor=c, size=labelSize, textalign=text.align_left)
 
 f_add(LevelGroup g, line ln, color c) =>
@@ -745,8 +753,8 @@ f_drawSet(LevelGroup g, int x, float vm, float vd, float vp, float bHi, float bL
     f_add(g, ld, col)
     f_add(g, lp, col)
     if drawMode == "Zones" and not na(bHi) and not na(bLo)
-        array.push(g.boxes, box.new(x, math.max(bHi, bLo), x + projBars, math.min(bHi, bLo),
-             xloc=xloc.bar_index, border_color=color.new(col, 100), bgcolor=color.new(col, 55)))
+        array.push(g.boxes, box.new(x, math.max(bHi, bLo), x + projMs, math.min(bHi, bLo),
+             xloc=xloc.bar_time, border_color=color.new(col, 100), bgcolor=color.new(col, 55)))
         array.push(g.boxCols, color.new(col, 55))
     else if showFill and not na(lm) and not na(ld)
         array.push(g.fills, linefill.new(lm, ld, color.new(col, 86)))
@@ -760,12 +768,11 @@ f_drawSet(LevelGroup g, int x, float vm, float vd, float vp, float bHi, float bL
 // historically completed, spanning the pair of levels it belongs to.
 f_timeMark(LevelGroup g, int x0, float frac, float yA, float yB, string tag) =>
     if showTime and not na(frac) and not na(yA) and not na(yB)
-        int xm = x0 + int(math.round(frac * float(periodBars)))
-        array.push(g.lines, line.new(xm, yA, xm, yB, xloc=xloc.bar_index, color=colTime, style=line.style_dotted, width=lnWidth))
+        int xm = x0 + int(math.round(frac * periodMs))
+        array.push(g.lines, line.new(xm, yA, xm, yB, xloc=xloc.bar_time, color=colTime, style=line.style_dotted, width=lnWidth))
         array.push(g.lineCols, colTime)
         if showTimeL
-            int tm = time + int(math.round(frac * float(timeframe.in_seconds(tf)) * 1000.0))
-            label lb = label.new(xm, math.min(yA, yB), tag + " " + f_stamp(tm), xloc=xloc.bar_index,
+            label lb = label.new(xm, math.min(yA, yB), tag + " " + f_stamp(xm), xloc=xloc.bar_time,
                  style=label.style_label_up, color=color.new(color.black, 100),
                  textcolor=colTime, size=labelSize)
             array.push(g.labels, lb)
@@ -776,21 +783,21 @@ f_timeMark(LevelGroup g, int x0, float frac, float yA, float yB, string tag) =>
 if newP and hasStats
     g = f_newGroup()
     if showO
-        f_add(g, mkLine(startBar, curO, colO, line.style_solid, lnWidth), colO)
+        f_add(g, mkLine(startTime, curO, colO, line.style_solid, lnWidth), colO)
         if lblMode != "None"
-            f_addLbl(g, mkLabel(startBar, curO, f_lblTxt(2, "", curO), colO), colO)
+            f_addLbl(g, mkLabel(startTime, curO, f_lblTxt(2, "", curO), colO), colO)
     // Drawn top of the map to the bottom: +D, +M, open, -M, -D.
     if showD
-        f_drawSet(g, startBar, lvlPDm, lvlPDd, lvlPDp, f_bandHi(med2, e1.s2, true), f_bandLo(med2, e1.s2, true), colD, 0)
+        f_drawSet(g, startTime, lvlPDm, lvlPDd, lvlPDp, f_bandHi(med2, e1.s2, true), f_bandLo(med2, e1.s2, true), colD, 0)
     if showM
-        f_drawSet(g, startBar, lvlPMm, lvlPMd, lvlPMp, f_bandHi(med0, e1.s0, true), f_bandLo(med0, e1.s0, true), colM, 1)
-        f_drawSet(g, startBar, lvlNMm, lvlNMd, lvlNMp, f_bandHi(med1, e1.s1, false), f_bandLo(med1, e1.s1, false), colM, 3)
+        f_drawSet(g, startTime, lvlPMm, lvlPMd, lvlPMp, f_bandHi(med0, e1.s0, true), f_bandLo(med0, e1.s0, true), colM, 1)
+        f_drawSet(g, startTime, lvlNMm, lvlNMd, lvlNMp, f_bandHi(med1, e1.s1, false), f_bandLo(med1, e1.s1, false), colM, 3)
     if showD
-        f_drawSet(g, startBar, lvlNDm, lvlNDd, lvlNDp, f_bandHi(med3, e1.s3, false), f_bandLo(med3, e1.s3, false), colD, 4)
+        f_drawSet(g, startTime, lvlNDm, lvlNDd, lvlNDp, f_bandHi(med3, e1.s3, false), f_bandLo(med3, e1.s3, false), colD, 4)
     // Phase timing, from the same walk-forward accumulators the table reports.
-    f_timeMark(g, startBar, mFrN > 0 ? sumMFr / mFrN : float(na), lvlPMd, lvlNMd, "M")
-    f_timeMark(g, startBar, extN > 0 ? sumHiFr / extN : float(na), lvlPDd, lvlNDd, "H")
-    f_timeMark(g, startBar, extN > 0 ? sumLoFr / extN : float(na), lvlPDd, lvlNDd, "L")
+    f_timeMark(g, startTime, mFrN > 0 ? sumMFr / mFrN : float(na), lvlPMd, lvlNMd, "M")
+    f_timeMark(g, startTime, extN > 0 ? sumHiFr / extN : float(na), lvlPDd, lvlNDd, "H")
+    f_timeMark(g, startTime, extN > 0 ? sumLoFr / extN : float(na), lvlPDd, lvlNDd, "L")
 
     if histDim
         f_dim(active)
@@ -809,10 +816,11 @@ if newP and hasStats
 
 if not na(active)
     // "Period end" runs to the projected close of the period, or to the current
-    // bar once the period has overrun it.
-    rightX = extendTo == "Last bar" ? math.max(bar_index, startBar + 1) :
-         extendTo == "Fixed bars" ? startBar + extBars :
-         math.max(startBar + periodBars, bar_index)
+    // bar once the period has overrun it. All of this is in milliseconds.
+    int periodEnd = startTime + int(periodMs)
+    rightX = extendTo == "Last bar" ? time :
+         extendTo == "Fixed bars" ? time + extBars * barMs :
+         periodEnd > time ? periodEnd : time
     for ln in active.lines
         // level lines are horizontal; the vertical timing markers keep their x
         if line.get_y1(ln) == line.get_y2(ln)
@@ -940,7 +948,7 @@ if barstate.islast and (cf2On or cf3On)
         array<float> b3 = f_lvlsOf(eC, chartAtrC, curO)
         for v in b3
             array.push(other, v)
-    int x1 = math.max(0, bar_index - projBars)
+    int x1 = math.max(0, bar_index - cfBars)
     for a in base
         if not na(a)
             for b in other
@@ -948,7 +956,7 @@ if barstate.islast and (cf2On or cf3On)
                     float lo = math.min(a, b)
                     float hi = math.max(a, b)
                     float pad = a * cfTol / 100.0 * 0.5
-                    array.push(cfBoxes, box.new(x1, hi + pad, bar_index + projBars, lo - pad,
+                    array.push(cfBoxes, box.new(x1, hi + pad, bar_index + cfBars, lo - pad,
                          border_color=color.new(color.yellow, 60), bgcolor=cfCol, xloc=xloc.bar_index))
                     break
 
