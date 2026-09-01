@@ -54,6 +54,22 @@
 //
 // NOTE: run this on a chart timeframe EQUAL TO OR FINER THAN the projection
 //   timeframe (view 5m/15m/1H while projecting 1D or 1W, etc).
+//
+// PRESENTATION: the map is drawn in the same visual language as
+//   ohlc-statistical-mapping.pine (OHLC Statistical Mapping Pro+), so the two
+//   read alike side by side — neutral level colours against an orange open,
+//   transparent-background labels naming the timeframe and level, an optional
+//   standard-deviation Zones mode, vertical phase-time markers, completed
+//   periods faded rather than deleted, and a compact light table laid out top
+//   of the map to the bottom (+DIS, +MAN, OPEN, -MAN, -DIS).
+//
+//   ONE DELIBERATE DIFFERENCE. Pro+ signs a manipulation level by the close
+//   direction of the periods it was sampled from, so its "+ Manipulation" sits
+//   BELOW the open. This script signs by which side of the open the level sits
+//   on, so +M is the UPPER one. The two describe the same quantity from
+//   opposite ends; the convention here is unchanged, because a level that
+//   swapped its name would change what you read off the chart rather than how
+//   it looks. Pro+'s "+ Manipulation" is this script's "- Manipulation".
 // =============================================================================
 
 indicator("OHLC Projection Levels — Adaptive", shorttitle="OHLC Proj+",
@@ -94,30 +110,44 @@ cfCol  = input.color(color.new(color.yellow, 80), "Confluence shading", group=gr
 
 grpM   = "Manipulation (wick / liquidity)"
 showM  = input.bool(true,  "Show Manipulation levels", group=grpM)
-colM   = input.color(color.orange, "Color", group=grpM)
+colM   = input.color(color.new(color.gray, 20), "Color", group=grpM)
 
 grpD   = "Distribution (targets)"
 showD  = input.bool(true,  "Show Distribution levels", group=grpD)
-colD   = input.color(color.teal, "Color", group=grpD)
+colD   = input.color(color.new(color.gray, 20), "Color", group=grpD)
 
-grpO   = "Open & Display"
-showO  = input.bool(true,  "Show Open line", group=grpO)
-colO   = input.color(color.gray, "Open color", group=grpO)
-showMean = input.bool(true, "Draw mean lines", group=grpO)
-showMed  = input.bool(true, "Draw median lines", group=grpO)
-showPct  = input.bool(true, "Draw percentile lines", group=grpO)
-showFill   = input.bool(true,  "Shade mean-median zones", group=grpO)
-showLabels = input.bool(true,  "Show labels", group=grpO)
+grpO      = "Levels & Style"
+drawMode  = input.string("Lines", "Draw levels as", options=["Lines","Zones"], group=grpO, tooltip="Zones widen the median level into a band of +/- a multiple of the sample's standard deviation, which is a more honest picture of where the estimate actually lives. The band uses the same standard deviation already reported as ±SE in the table, so nothing new is calculated.")
+bandMult  = input.float(0.5, "Zone width (std deviations)", minval=0.05, maxval=3.0, step=0.05, group=grpO)
+medStyleIn = input.string("Dashed", "Median line style", options=["Dotted","Dashed","Solid"], group=grpO, tooltip="Mean always draws solid and the percentile always draws dotted, so the three statistics stay distinguishable. This picks the style of the median line between them.")
+lnWidth   = input.int(1, "Line width", minval=1, maxval=4, group=grpO)
+showMean  = input.bool(true, "Draw mean lines", group=grpO)
+showMed   = input.bool(true, "Draw median lines", group=grpO)
+showPct   = input.bool(true, "Draw percentile lines", group=grpO)
+showFill  = input.bool(true, "Shade mean-median zones", group=grpO)
+showO     = input.bool(true, "Show open (accumulation) line", group=grpO, inline="op")
+colO      = input.color(color.new(color.orange, 30), "", group=grpO, inline="op")
+lblMode   = input.string("Long", "Labels", options=["Long","Short","None"], group=grpO, tooltip="Long: '1D / + Distribution'. Short: '1D + D'. The statistic each line carries is appended as mu, ~ or pNN.")
+lblSize   = input.string("tiny", "Label size", options=["tiny","small","normal"], group=grpO)
+histDim   = input.bool(true, "Dim completed periods", group=grpO, tooltip="Fades the maps of periods that have already closed so the running period reads first, while the record of what was projected stays on the chart.")
 
 grpW     = "Projection Width"
-projBars = input.int(60, "Zone width (bars to the right)", minval=5, maxval=500, group=grpW)
-extendCur = input.bool(true, "Always reach current bar if past width", group=grpW)
+extendTo = input.string("Period end", "Extend levels to", options=["Period end","Last bar","Fixed bars"], group=grpW)
+extBars  = input.int(40, "Fixed bars", minval=1, maxval=500, group=grpW)
 
-grpT     = "Stats Table"
-showTbl  = input.bool(true, "Show stats table", group=grpT)
+grpTm     = "Timing"
+showTime  = input.bool(true, "Project average phase times", group=grpTm, tooltip="Vertical markers at the average point inside the period where each phase has historically completed. The manipulation marker spans the two manipulation levels; the high and low markers span the two distribution levels. These read the same walk-forward accumulators as the table's Timing row, so they add no calculation.")
+colTime   = input.color(color.new(color.gray, 35), "Marker colour", group=grpTm)
+showTimeL = input.bool(true, "Show time labels", group=grpTm)
+
+grpT     = "Table"
+showTbl  = input.bool(true, "Show statistics table", group=grpT)
 showSeq  = input.bool(true, "Show sequencing & timing rows", group=grpT, tooltip="Measured on the CHART timeframe (the only place intra-period order is visible), so it carries its own smaller sample size. It answers the model's core claim: does the manipulation side actually get swept BEFORE the distribution target, and when in the period do the extremes print?")
-tblPos   = input.string("top_right", "Position", options=["top_right","top_left","bottom_right","bottom_left","middle_right"], group=grpT)
-tblSize  = input.string("normal", "Text size", options=["tiny","small","normal","large"], group=grpT)
+showRange = input.bool(false, "Add average-range row", group=grpT, tooltip="Typical candle range implied by the median levels, averaged over the up-close case (lower manipulation to upper distribution) and the down-close case (upper manipulation to lower distribution).")
+tblPos   = input.string("bottom_center", "Position", options=["bottom_center","bottom_left","bottom_right","top_center","top_left","top_right","middle_left","middle_right"], group=grpT)
+tblSize  = input.string("tiny", "Text size", options=["auto","tiny","small","normal"], group=grpT)
+tblTxtCol = input.color(color.new(color.black, 0), "Text colour", group=grpT)
+tblBgCol  = input.color(color.new(color.white, 20), "Background", group=grpT)
 
 grpA     = "Alerts"
 alertOn  = input.bool(true, "Enable alert() calls", group=grpA, tooltip="Fires on first tag of each level in a period, and on the close-back-through that actually confirms a manipulation.")
@@ -130,6 +160,47 @@ tfC = f_tf(cf3Tf)
 
 // number of context buckets implied by the conditioning mode
 nBuckets = condMode == "Weekday" ? 7 : condMode == "None" ? 1 : 3
+
+// ============================ Presentation helpers ============================
+medStyle  = medStyleIn == "Solid" ? line.style_solid : medStyleIn == "Dotted" ? line.style_dotted : line.style_dashed
+labelSize = lblSize == "small" ? size.small : lblSize == "normal" ? size.normal : size.tiny
+
+// Period length in chart bars. Sizes the projection and places the timing
+// markers; the levels themselves are unaffected by it.
+chartSec   = timeframe.in_seconds(timeframe.period)
+periodBars = math.max(1, int(math.round(float(timeframe.in_seconds(tf)) / math.max(1, chartSec))))
+projBars   = extendTo == "Fixed bars" ? extBars : periodBars
+
+// Level ordering, top of the map to the bottom. Also the table's row order.
+// 0 = +D, 1 = +M, 2 = Open, 3 = -M, 4 = -D. The sign names which side of the
+// open the level sits on, which is this script's convention throughout.
+f_levelName(int i, bool shortForm) =>
+    switch i
+        0 => shortForm ? "+ D" : "+ Distribution"
+        1 => shortForm ? "+ M" : "+ Manipulation"
+        2 => shortForm ? "0"   : "Open"
+        3 => shortForm ? "- M" : "- Manipulation"
+        => shortForm ? "- D" : "- Distribution"
+
+f_levelTag(int i) =>
+    switch i
+        0 => "+DIS"
+        1 => "+MAN"
+        2 => "OPEN"
+        3 => "-MAN"
+        => "-DIS"
+
+// Label text: timeframe, level, then which statistic this particular line is.
+f_lblTxt(int i, string stat) =>
+    string s = stat == "" ? "" : "  " + stat
+    lblMode == "Short" ? tfSel + " " + f_levelName(i, true) + s : tfSel + "\n" + f_levelName(i, false) + s
+
+// Format a projected timestamp. Sub-daily periods want a clock, longer periods
+// want a date — "14:35" on a monthly projection would be meaningless.
+f_stamp(int ts) =>
+    float periodMs = float(timeframe.in_seconds(tf)) * 1000.0
+    string fmt = periodMs >= 432000000.0 ? "dd MMM" : periodMs >= 86400000.0 ? "dd HH:mm" : "HH:mm"
+    str.format_time(ts, fmt, syminfo.timezone)
 
 // ============================ Shared math helpers =============================
 // Rebuild a price level from a stored ratio. Mirrors the excursion measure so
@@ -586,60 +657,141 @@ lvlNDm = f_lvl(transform, mean3, curO, appliedAtr, false)
 lvlNDd = f_lvl(transform, med3,  curO, appliedAtr, false)
 lvlNDp = f_lvl(transform, pct3,  curO, appliedAtr, false)
 
+// ===================== Timing accumulators (chart TF) =========================
+// Declared here rather than with the rest of the sequencing block below because
+// the phase-time markers are drawn at the period open and read them. They are
+// written to further down, so a marker drawn now reflects strictly completed
+// periods — walk-forward, same as the table row it mirrors.
+var float seqN     = 0.0
+var float seqMwin  = 0.0
+var float seqDwin  = 0.0
+var float sumHiFr  = 0.0
+var float sumLoFr  = 0.0
+var float sumMFr   = 0.0
+var float mFrN     = 0.0
+var float extN     = 0.0
+
 // ============================= Drawing helpers ================================
+// Colours are carried alongside the drawings because Pine can read a line's
+// coordinates back but not its colour, and a completed period has to be dimmed
+// from whatever colour it was originally given.
 type LevelGroup
     array<line>     lines
+    array<color>    lineCols
     array<linefill> fills
     array<label>    labels
+    array<color>    labelCols
+    array<box>      boxes
+    array<color>    boxCols
 
 var array<LevelGroup> groups = array.new<LevelGroup>()
 var LevelGroup active = na
 
+f_newGroup() =>
+    LevelGroup.new(array.new<line>(), array.new<color>(), array.new<linefill>(),
+         array.new<label>(), array.new<color>(), array.new<box>(), array.new<color>())
+
 mkLine(int x, float y, color c, string st, int w) =>
     na(y) ? na : line.new(x, y, x + projBars, y, xloc=xloc.bar_index, color=c, style=st, width=w)
 
+// Transparent-background label with coloured text, set left of its anchor.
 mkLabel(int x, float y, string txt, color c) =>
     na(y) ? na : label.new(x, y, txt, xloc=xloc.bar_index, style=label.style_label_left,
-         color=color.new(c, 90), textcolor=c, size=size.small)
+         color=color.new(color.black, 100), textcolor=c, size=labelSize, textalign=text.align_left)
 
-f_add(LevelGroup g, line ln) =>
+f_add(LevelGroup g, line ln, color c) =>
     if not na(ln)
         array.push(g.lines, ln)
+        array.push(g.lineCols, c)
 
-f_addLbl(LevelGroup g, label lb) =>
+f_addLbl(LevelGroup g, label lb, color c) =>
     if not na(lb)
         array.push(g.labels, lb)
+        array.push(g.labelCols, c)
+
+// Fade every drawing a group owns. Called on the previous period's group once a
+// new period opens, so the running map reads first without losing the record.
+f_dim(LevelGroup g) =>
+    if not na(g)
+        if array.size(g.lines) > 0
+            for i = 0 to array.size(g.lines) - 1
+                line.set_color(array.get(g.lines, i), color.new(array.get(g.lineCols, i), 70))
+        if array.size(g.labels) > 0
+            for i = 0 to array.size(g.labels) - 1
+                label.set_textcolor(array.get(g.labels, i), color.new(array.get(g.labelCols, i), 70))
+        if array.size(g.boxes) > 0
+            for i = 0 to array.size(g.boxes) - 1
+                box.set_bgcolor(array.get(g.boxes, i), color.new(array.get(g.boxCols, i), 80))
+    true
+
+// Band edges for a Zones-mode level, built from the same standard deviation the
+// table already reports as ±SE. The ratio is widened in ratio space and then
+// converted to price, so the band respects the selected excursion measure.
+// Two scalar calls rather than one tuple, since the caller is a local block.
+f_bandHi(float ratio, float sd, bool up) =>
+    na(ratio) or na(sd) or sd <= 0 ? float(na) : f_lvl(transform, ratio + bandMult * sd, curO, appliedAtr, up)
+
+f_bandLo(float ratio, float sd, bool up) =>
+    na(ratio) or na(sd) or sd <= 0 ? float(na) : f_lvl(transform, math.max(0.0, ratio - bandMult * sd), curO, appliedAtr, up)
 
 // Draw one side of one level family: mean, median and percentile.
-f_drawSet(LevelGroup g, int x, float vm, float vd, float vp, color col, string tag) =>
-    line lm = showMean ? mkLine(x, vm, col, line.style_solid, 1) : na
-    line ld = showMed ? mkLine(x, vd, col, line.style_dashed, 1) : na
-    line lp = showPct ? mkLine(x, vp, col, line.style_dotted, 2) : na
-    f_add(g, lm)
-    f_add(g, ld)
-    f_add(g, lp)
-    if showFill and not na(lm) and not na(ld)
+f_drawSet(LevelGroup g, int x, float vm, float vd, float vp, float bHi, float bLo, color col, int li) =>
+    line lm = showMean ? mkLine(x, vm, col, line.style_solid, lnWidth) : na
+    line ld = showMed ? mkLine(x, vd, col, medStyle, lnWidth) : na
+    line lp = showPct ? mkLine(x, vp, col, line.style_dotted, lnWidth) : na
+    f_add(g, lm, col)
+    f_add(g, ld, col)
+    f_add(g, lp, col)
+    if drawMode == "Zones" and not na(bHi) and not na(bLo)
+        array.push(g.boxes, box.new(x, math.max(bHi, bLo), x + projBars, math.min(bHi, bLo),
+             xloc=xloc.bar_index, border_color=color.new(col, 100), bgcolor=color.new(col, 55)))
+        array.push(g.boxCols, color.new(col, 55))
+    else if showFill and not na(lm) and not na(ld)
         array.push(g.fills, linefill.new(lm, ld, color.new(col, 86)))
-    if showLabels
-        float pShown = (tag == "+M" or tag == "-M") ? pctM : pctD
-        f_addLbl(g, showMean ? mkLabel(x, vm, tag + " mu  " + str.tostring(vm, format.mintick), col) : na)
-        f_addLbl(g, showMed ? mkLabel(x, vd, tag + " ~  " + str.tostring(vd, format.mintick), col) : na)
-        f_addLbl(g, showPct ? mkLabel(x, vp, tag + " p" + str.tostring(pShown, "#") + "  " + str.tostring(vp, format.mintick), col) : na)
+    if lblMode != "None"
+        float pShown = (li == 1 or li == 3) ? pctM : pctD
+        f_addLbl(g, showMean ? mkLabel(x, vm, f_lblTxt(li, "mu"), col) : na, col)
+        f_addLbl(g, showMed ? mkLabel(x, vd, f_lblTxt(li, "~"), col) : na, col)
+        f_addLbl(g, showPct ? mkLabel(x, vp, f_lblTxt(li, "p" + str.tostring(pShown, "#")), col) : na, col)
+
+// Vertical marker at the average point inside the period where a phase has
+// historically completed, spanning the pair of levels it belongs to.
+f_timeMark(LevelGroup g, int x0, float frac, float yA, float yB, string tag) =>
+    if showTime and not na(frac) and not na(yA) and not na(yB)
+        int xm = x0 + int(math.round(frac * float(periodBars)))
+        array.push(g.lines, line.new(xm, yA, xm, yB, xloc=xloc.bar_index, color=colTime, style=line.style_dotted, width=lnWidth))
+        array.push(g.lineCols, colTime)
+        if showTimeL
+            int tm = time + int(math.round(frac * float(timeframe.in_seconds(tf)) * 1000.0))
+            label lb = label.new(xm, math.min(yA, yB), tag + " " + f_stamp(tm), xloc=xloc.bar_index,
+                 style=label.style_label_up, color=color.new(color.black, 100),
+                 textcolor=colTime, size=labelSize)
+            array.push(g.labels, lb)
+            array.push(g.labelCols, colTime)
+    true
 
 // ==================== Build a fresh group at each new period ==================
 if newP and hasStats
-    g = LevelGroup.new(array.new<line>(), array.new<linefill>(), array.new<label>())
+    g = f_newGroup()
     if showO
-        f_add(g, mkLine(startBar, curO, colO, line.style_dotted, 1))
-        if showLabels
-            f_addLbl(g, mkLabel(startBar, curO, "Open  " + str.tostring(curO, format.mintick), colO))
-    if showM
-        f_drawSet(g, startBar, lvlPMm, lvlPMd, lvlPMp, colM, "+M")
-        f_drawSet(g, startBar, lvlNMm, lvlNMd, lvlNMp, colM, "-M")
+        f_add(g, mkLine(startBar, curO, colO, line.style_solid, lnWidth), colO)
+        if lblMode != "None"
+            f_addLbl(g, mkLabel(startBar, curO, f_lblTxt(2, ""), colO), colO)
+    // Drawn top of the map to the bottom: +D, +M, open, -M, -D.
     if showD
-        f_drawSet(g, startBar, lvlPDm, lvlPDd, lvlPDp, colD, "+D")
-        f_drawSet(g, startBar, lvlNDm, lvlNDd, lvlNDp, colD, "-D")
+        f_drawSet(g, startBar, lvlPDm, lvlPDd, lvlPDp, f_bandHi(med2, e1.s2, true), f_bandLo(med2, e1.s2, true), colD, 0)
+    if showM
+        f_drawSet(g, startBar, lvlPMm, lvlPMd, lvlPMp, f_bandHi(med0, e1.s0, true), f_bandLo(med0, e1.s0, true), colM, 1)
+        f_drawSet(g, startBar, lvlNMm, lvlNMd, lvlNMp, f_bandHi(med1, e1.s1, false), f_bandLo(med1, e1.s1, false), colM, 3)
+    if showD
+        f_drawSet(g, startBar, lvlNDm, lvlNDd, lvlNDp, f_bandHi(med3, e1.s3, false), f_bandLo(med3, e1.s3, false), colD, 4)
+    // Phase timing, from the same walk-forward accumulators the table reports.
+    f_timeMark(g, startBar, mFrN > 0 ? sumMFr / mFrN : float(na), lvlPMd, lvlNMd, "M")
+    f_timeMark(g, startBar, extN > 0 ? sumHiFr / extN : float(na), lvlPDd, lvlNDd, "H")
+    f_timeMark(g, startBar, extN > 0 ? sumLoFr / extN : float(na), lvlPDd, lvlNDd, "L")
 
+    if histDim
+        f_dim(active)
     array.push(groups, g)
     active := g
     if array.size(groups) > periodsShow
@@ -650,13 +802,25 @@ if newP and hasStats
             line.delete(ln)
         for lb in old.labels
             label.delete(lb)
+        for bx in old.boxes
+            box.delete(bx)
 
 if not na(active)
-    rightX = extendCur ? math.max(startBar + projBars, bar_index) : startBar + projBars
+    // "Period end" runs to the projected close of the period, or to the current
+    // bar once the period has overrun it.
+    rightX = extendTo == "Last bar" ? math.max(bar_index, startBar + 1) :
+         extendTo == "Fixed bars" ? startBar + extBars :
+         math.max(startBar + periodBars, bar_index)
     for ln in active.lines
-        line.set_x2(ln, rightX)
-    for lb in active.labels
-        label.set_x(lb, rightX)
+        // level lines are horizontal; the vertical timing markers keep their x
+        if line.get_y1(ln) == line.get_y2(ln)
+            line.set_x2(ln, rightX)
+    if array.size(active.labels) > 0
+        for i = 0 to array.size(active.labels) - 1
+            if array.get(active.labelCols, i) != colTime
+                label.set_x(array.get(active.labels, i), rightX)
+    for bx in active.boxes
+        box.set_right(bx, rightX)
 
 // ======================= Sequencing & timing (chart TF) =======================
 // Intra-period ordering is invisible on higher-timeframe bars, so this is
@@ -674,15 +838,6 @@ var float lockPM  = na
 var float lockNM  = na
 var float lockPD  = na
 var float lockND  = na
-
-var float seqN     = 0.0
-var float seqMwin  = 0.0
-var float seqDwin  = 0.0
-var float sumHiFr  = 0.0
-var float sumLoFr  = 0.0
-var float sumMFr   = 0.0
-var float mFrN     = 0.0
-var float extN     = 0.0
 
 if newP
     if pBars > 1 and not na(pHi)
@@ -796,8 +951,22 @@ if barstate.islast and (cf2On or cf3On)
                     break
 
 // ================================ Stats table =================================
-posSel  = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : tblPos == "middle_right" ? position.middle_right : position.top_right
-sizeSel = tblSize == "tiny" ? size.tiny : tblSize == "small" ? size.small : tblSize == "large" ? size.large : size.normal
+// Laid out top of the map to the bottom (+DIS, +MAN, OPEN, -MAN, -DIS) so the
+// rows read in the same order the levels sit on the chart, with the projected
+// price alongside each statistic.
+f_tablePos(string p) =>
+    switch p
+        "bottom_left"  => position.bottom_left
+        "bottom_right" => position.bottom_right
+        "top_center"   => position.top_center
+        "top_left"     => position.top_left
+        "top_right"    => position.top_right
+        "middle_left"  => position.middle_left
+        "middle_right" => position.middle_right
+        => position.bottom_center
+
+posSel  = f_tablePos(tblPos)
+sizeSel = tblSize == "auto" ? size.auto : tblSize == "small" ? size.small : tblSize == "normal" ? size.normal : size.tiny
 
 // Units follow the measure: ATR mode is dimensionless, the rest are percentages.
 f_ratio(float v) =>
@@ -808,92 +977,102 @@ f_ratioSe(float v, float se) =>
 
 f_rate(float r) => na(r) ? "—" : str.tostring(math.round(r * 100)) + "%"
 
-var table t = table.new(posSel, 7, 12, border_width=1, frame_color=color.new(color.gray, 50), frame_width=1)
+f_price(float p) => na(p) ? "—" : str.tostring(p, format.mintick)
+
+var table t = table.new(posSel, 8, 12, border_width=1,
+     border_color=color.new(color.gray, 60), frame_width=1, frame_color=color.new(color.gray, 60))
+
+// A thin sample dims its rows rather than flooding them, so the table stays
+// readable while still saying plainly that the numbers are not yet evidence.
+txtC  = thin ? color.new(tblTxtCol, 55) : tblTxtCol
+dimC  = color.new(tblTxtCol, 45)
+warnC = color.new(color.orange, 0)
+
+// One level row: tag, projected price, then the statistics behind it.
+f_lvlRow(int r, int li, float px, float mn, float md, float pc, float se, float nn,
+         float rr, float hh, float rrp, float hhp, color tagCol) =>
+    table.cell(t, 0, r, f_levelTag(li), text_color=thin ? color.new(tagCol, 55) : tagCol,
+         text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol)
+    table.cell(t, 1, r, f_price(px), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, r, f_ratioSe(mn, se), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, r, f_ratio(md), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, r, f_ratio(pc), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, r, f_rate(rr), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol,
+         tooltip="percentile level reach: " + f_rate(rrp))
+    table.cell(t, 6, r, f_rate(hh), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol,
+         tooltip="percentile level hold: " + f_rate(hhp))
+    table.cell(t, 7, r, str.tostring(nn, "#"), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
 
 if barstate.islast and showTbl
-    bg   = color.new(color.black, 20)
-    hbg  = color.new(color.gray, 40)
-    warn = color.new(color.orange, 35)
-    txt  = color.white
-    rowBg = thin ? warn : bg
+    table.cell(t, 0, 0, tfSel, text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Measure: " + transform + (uncondMode ? " · unconditional" : " · conditional") + (recOn ? " · half-life " + str.tostring(halfLife) : "") + (condMode != "None" ? " · conditioned on " + condMode : ""))
+    table.cell(t, 1, 0, "Price",    text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="The median level, which is the line the reach and hold columns are measured against.")
+    table.cell(t, 2, 0, "Mean ±SE", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 0, "Median",   text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, 0, "Pctile",   text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, 0, "Reach",    text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="How often price TOUCHED the median level. This is the number you want for setting targets.")
+    table.cell(t, 6, 0, "Hold",     text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Of the times it was reached, how often price closed back through it — the reversal rate.")
+    table.cell(t, 7, 0, "n",        text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
 
-    table.cell(t, 0, 0, tfSel, bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Measure: " + transform + (uncondMode ? " · unconditional" : " · conditional") + (recOn ? " · half-life " + str.tostring(halfLife) : "") + (condMode != "None" ? " · conditioned on " + condMode : ""))
-    table.cell(t, 1, 0, "Mean ±SE", bgcolor=hbg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 0, "Median",   bgcolor=hbg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 3, 0, "Pctile",   bgcolor=hbg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 0, "Reach",    bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="How often price TOUCHED the median level. This is the number you want for setting targets.")
-    table.cell(t, 5, 0, "Hold",     bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Of the times it was reached, how often price closed back through it — the reversal rate.")
-    table.cell(t, 6, 0, "n",        bgcolor=hbg, text_color=txt, text_size=sizeSel)
+    // Levels, top of the map to the bottom.
+    f_lvlRow(1, 0, lvlPDd, mean2, med2, pct2, se2, n2, e1.rd2, e1.hd2, e1.rp2, e1.hp2, colD)
+    f_lvlRow(2, 1, lvlPMd, mean0, med0, pct0, se0, n0, e1.rd0, e1.hd0, e1.rp0, e1.hp0, colM)
 
-    // +M
-    table.cell(t, 0, 1, "+M", bgcolor=rowBg, text_color=colM, text_size=sizeSel)
-    table.cell(t, 1, 1, f_ratioSe(mean0, se0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 1, f_ratio(med0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 3, 1, f_ratio(pct0), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 1, f_rate(e1.rd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp0))
-    table.cell(t, 5, 1, f_rate(e1.hd0), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp0))
-    table.cell(t, 6, 1, str.tostring(n0, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    // Open
+    table.cell(t, 0, 3, f_levelTag(2), text_color=colO, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol)
+    table.cell(t, 1, 3, f_price(curO), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    for c = 2 to 7
+        table.cell(t, c, 3, "", bgcolor=tblBgCol)
 
-    // -M
-    table.cell(t, 0, 2, "-M", bgcolor=rowBg, text_color=colM, text_size=sizeSel)
-    table.cell(t, 1, 2, f_ratioSe(mean1, se1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 2, f_ratio(med1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 3, 2, f_ratio(pct1), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 2, f_rate(e1.rd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp1))
-    table.cell(t, 5, 2, f_rate(e1.hd1), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp1))
-    table.cell(t, 6, 2, str.tostring(n1, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    f_lvlRow(4, 3, lvlNMd, mean1, med1, pct1, se1, n1, e1.rd1, e1.hd1, e1.rp1, e1.hp1, colM)
+    f_lvlRow(5, 4, lvlNDd, mean3, med3, pct3, se3, n3, e1.rd3, e1.hd3, e1.rp3, e1.hp3, colD)
 
-    // +D
-    table.cell(t, 0, 3, "+D", bgcolor=rowBg, text_color=colD, text_size=sizeSel)
-    table.cell(t, 1, 3, f_ratioSe(mean2, se2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 3, f_ratio(med2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 3, 3, f_ratio(pct2), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 3, f_rate(e1.rd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp2))
-    table.cell(t, 5, 3, f_rate(e1.hd2), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp2))
-    table.cell(t, 6, 3, str.tostring(n2, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    // Typical candle range implied by the median levels: the up-close case runs
+    // from the lower manipulation to the upper distribution, the down-close case
+    // from the upper manipulation to the lower distribution.
+    if showRange
+        float rngUp = na(lvlPDd) or na(lvlNMd) ? float(na) : lvlPDd - lvlNMd
+        float rngDn = na(lvlPMd) or na(lvlNDd) ? float(na) : lvlPMd - lvlNDd
+        float rng   = na(rngUp) or na(rngDn) ? float(na) : (rngUp + rngDn) / 2.0
+        table.cell(t, 0, 6, "RNG", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Average of the up-close range (-MAN to +DIS) and the down-close range (+MAN to -DIS), both taken from the median levels.")
+        table.cell(t, 1, 6, f_price(rng), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        for c = 2 to 7
+            table.cell(t, c, 6, "", bgcolor=tblBgCol)
 
-    // -D
-    table.cell(t, 0, 4, "-D", bgcolor=rowBg, text_color=colD, text_size=sizeSel)
-    table.cell(t, 1, 4, f_ratioSe(mean3, se3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 4, f_ratio(med3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 3, 4, f_ratio(pct3), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 4, f_rate(e1.rd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level reach: " + f_rate(e1.rp3))
-    table.cell(t, 5, 4, f_rate(e1.hd3), bgcolor=rowBg, text_color=txt, text_size=sizeSel, tooltip="percentile level hold: " + f_rate(e1.hp3))
-    table.cell(t, 6, 4, str.tostring(n3, "#"), bgcolor=rowBg, text_color=txt, text_size=sizeSel)
+    // Whipsaw / volatility
+    table.cell(t, 0, 7, "both-side", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="How often BOTH manipulation levels were tagged in the same period — the whipsaw rate, i.e. how often this model's premise fails.")
+    table.cell(t, 1, 7, f_rate(e1.bothR), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 7, "vol", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 7, na(chartAtrP) ? "—" : str.tostring(chartAtrP * 100, "#.##") + "%", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Current ATR as a percentage of price on the projection timeframe. In 'Log + ATR' mode this is the scale every stored ratio is multiplied by.")
+    table.cell(t, 4, 7, "scored", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, 7, str.tostring(e1.evalN, "#"), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Periods scored walk-forward for the reach/hold columns, over the same rolling window as the ratios.")
+    for c = 6 to 7
+        table.cell(t, c, 7, "", bgcolor=tblBgCol)
 
-    // Open / whipsaw
-    table.cell(t, 0, 5, "Open", bgcolor=bg, text_color=colO, text_size=sizeSel)
-    table.cell(t, 1, 5, na(curO) ? "—" : str.tostring(curO, format.mintick), bgcolor=bg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 2, 5, "both-side", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip="How often BOTH manipulation levels were tagged in the same period — the whipsaw rate, i.e. how often this model's premise fails.")
-    table.cell(t, 3, 5, f_rate(e1.bothR), bgcolor=bg, text_color=txt, text_size=sizeSel)
-    table.cell(t, 4, 5, "vol", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 5, 5, na(chartAtrP) ? "—" : str.tostring(chartAtrP * 100, "#.##") + "%", bgcolor=bg, text_color=txt, text_size=sizeSel, tooltip="Current ATR as a percentage of price on the projection timeframe. In 'Log + ATR' mode this is the scale every stored ratio is multiplied by.")
-    table.cell(t, 6, 5, "", bgcolor=bg)
-
-    // Source / sample
+    // Source / sample health
     nFeeds = 1 + (use2 ? 1 : 0) + (use3 ? 1 : 0)
     srcTip = statSym1 + (use2 ? "\n" + sym2 : "") + (use3 ? "\n" + sym3 : "")
-    table.cell(t, 0, 6, "Source", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 1, 6, useCustomFeed ? statSym1 : "Chart", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
-    table.cell(t, 2, 6, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip=srcTip)
-    table.cell(t, 3, 6, "scored", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-    table.cell(t, 4, 6, str.tostring(e1.evalN, "#"), bgcolor=bg, text_color=color.gray, text_size=sizeSel, tooltip="Periods scored walk-forward for the reach/hold columns, over the same rolling window as the ratios.")
-    table.cell(t, 5, 6, tfInverted ? "CHART > PROJ TF" : thin ? "THIN SAMPLE" : "", bgcolor=(tfInverted or thin) ? warn : bg, text_color=txt, text_size=sizeSel, tooltip=tfInverted ? "Your chart timeframe is coarser than the projection timeframe, so every chart bar registers as a new period and the levels are meaningless. Raise the projection timeframe above your chart timeframe." : thin ? "At least one level has fewer than " + str.tostring(minSample) + " samples. Treat these levels as indicative only." : "")
-    table.cell(t, 6, 6, "", bgcolor=bg)
+    table.cell(t, 0, 8, "Source", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol)
+    table.cell(t, 1, 8, useCustomFeed ? statSym1 : "Chart", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip=srcTip)
+    table.cell(t, 2, 8, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip=srcTip)
+    table.cell(t, 3, 8, tfInverted ? "CHART > PROJ TF" : thin ? "THIN SAMPLE" : "", text_color=(tfInverted or thin) ? warnC : dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip=tfInverted ? "Your chart timeframe is coarser than the projection timeframe, so every chart bar registers as a new period and the levels are meaningless. Raise the projection timeframe above your chart timeframe." : thin ? "At least one level has fewer than " + str.tostring(minSample) + " samples. Treat these levels as indicative only." : "")
+    for c = 4 to 7
+        table.cell(t, c, 8, "", bgcolor=tblBgCol)
 
     if showSeq
-        table.cell(t, 0, 7, "Sequence", bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Measured on the chart timeframe over " + str.tostring(seqN, "#") + " periods — a much smaller sample than the level statistics above.")
-        table.cell(t, 1, 7, "M first", bgcolor=bg, text_color=colM, text_size=sizeSel)
-        table.cell(t, 2, 7, seqN > 0 ? f_rate(seqMwin / seqN) : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
-        table.cell(t, 3, 7, "D first", bgcolor=bg, text_color=colD, text_size=sizeSel)
-        table.cell(t, 4, 7, seqN > 0 ? f_rate(seqDwin / seqN) : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
-        table.cell(t, 5, 7, "n=" + str.tostring(seqN, "#"), bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-        table.cell(t, 6, 7, "", bgcolor=bg)
+        table.cell(t, 0, 9, "Sequence", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Measured on the chart timeframe over " + str.tostring(seqN, "#") + " periods — a much smaller sample than the level statistics above.")
+        table.cell(t, 1, 9, "M first", text_color=colM, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 2, 9, seqN > 0 ? f_rate(seqMwin / seqN) : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 3, 9, "D first", text_color=colD, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 4, 9, seqN > 0 ? f_rate(seqDwin / seqN) : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 5, 9, "n=" + str.tostring(seqN, "#"), text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        for c = 6 to 7
+            table.cell(t, c, 9, "", bgcolor=tblBgCol)
 
-        table.cell(t, 0, 8, "Timing", bgcolor=hbg, text_color=txt, text_size=sizeSel, tooltip="Average position within the period, as a fraction of its length, at which each event printed.")
-        table.cell(t, 1, 8, "high at", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-        table.cell(t, 2, 8, extN > 0 ? str.tostring(sumHiFr / extN * 100, "#") + "%" : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
-        table.cell(t, 3, 8, "low at", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-        table.cell(t, 4, 8, extN > 0 ? str.tostring(sumLoFr / extN * 100, "#") + "%" : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
-        table.cell(t, 5, 8, "M tag at", bgcolor=bg, text_color=color.gray, text_size=sizeSel)
-        table.cell(t, 6, 8, mFrN > 0 ? str.tostring(sumMFr / mFrN * 100, "#") + "%" : "—", bgcolor=bg, text_color=txt, text_size=sizeSel)
+        table.cell(t, 0, 10, "Timing", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Average position within the period, as a fraction of its length, at which each event printed. These are the fractions the chart's vertical phase markers are drawn from.")
+        table.cell(t, 1, 10, "high at", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 2, 10, extN > 0 ? str.tostring(sumHiFr / extN * 100, "#") + "%" : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 3, 10, "low at", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 4, 10, extN > 0 ? str.tostring(sumLoFr / extN * 100, "#") + "%" : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 5, 10, "M tag at", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 6, 10, mFrN > 0 ? str.tostring(sumMFr / mFrN * 100, "#") + "%" : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 7, 10, "", bgcolor=tblBgCol)
