@@ -1,0 +1,524 @@
+//@version=6
+// =============================================================================
+// OHLC Statistical Mapping Pro+
+// -----------------------------------------------------------------------------
+// A candle-by-candle statistical map of accumulation, manipulation and
+// distribution, in the ICT sense:
+//
+//   * ACCUMULATION  -> the period OPEN. Everything is measured from it.
+//   * MANIPULATION  -> the wick OPPOSING the close. On a period that closes up
+//                      this is (open - low); on a period that closes down it is
+//                      (high - open). It is the excursion that traps traders on
+//                      the wrong side before the real move.
+//   * DISTRIBUTION  -> the excursion in the DIRECTION of the close. On an up
+//                      period (high - open), on a down period (open - low). It
+//                      is where the period actually expands to.
+//
+// For each selected timeframe the script measures those two excursions on every
+// completed period, takes the average (or median) over a rolling sample and
+// mirrors the result around the CURRENT period's open, producing five levels:
+//
+//        + Distribution     open + avg distribution     (up-close target)
+//        - Manipulation     open + avg manipulation     (down-close trap)
+//          Open             the anchor
+//        + Manipulation     open - avg manipulation     (up-close trap)
+//        - Distribution     open - avg distribution     (down-close target)
+//
+// The sign is the direction the period is expected to CLOSE, so "+ Manipulation"
+// sits BELOW the open (an up period sweeps lows first) and "- Manipulation"
+// sits ABOVE it. The distance from +D to -D is twice the average excursion; the
+// average RANGE of the candle is manipulation + distribution (table row RNG).
+//
+// TIME IS MAPPED TOO. For every completed period the script also records WHEN
+// inside the period the manipulation extreme and the distribution extreme
+// printed, and projects the average of those offsets forward onto the running
+// period as two vertical markers. The price levels say where, these say when
+// the period has historically finished each phase.
+//
+// DELIVERY SEQUENCE. Within the running period every level is stamped with the
+// order in which price traded through it. The table's right-hand grid shows
+// that sequence, which is where the orderflow read lives: manipulation tagged
+// before distribution is the model behaving; distribution tagged first is not.
+//
+// HOW IT IS COMPUTED (and why there is no request.security call)
+//   Every period is rebuilt bar by bar from the chart timeframe. That is the
+//   only place intra-period information exists, so it is the only way the
+//   timing and sequencing statistics can be measured at all. Consequences:
+//     - the chart timeframe must be LOWER than every mapped timeframe;
+//     - the sample is bounded by how much chart-timeframe history your plan
+//       loads (the table reports n for each timeframe);
+//     - nothing repaints: a period's levels are frozen at its open out of
+//       periods that had already completed, and never move again.
+//
+//   Within a single chart bar the true order of the high and the low is
+//   unknown. The script assumes the conventional reading - an up bar made its
+//   low first, a down bar made its high first - and places the second extreme
+//   at the bar midpoint. On timing that is a sub-bar approximation; drop to a
+//   finer chart timeframe for finer resolution.
+//
+// As with any historical tool, past behaviour is not future performance. These
+// levels describe what the candle has typically done, not what it must do.
+// =============================================================================
+
+indicator("OHLC Statistical Mapping Pro+", shorttitle = "OHLC Stat Map°",
+     overlay = true, max_lines_count = 500, max_labels_count = 500,
+     max_boxes_count = 500)
+
+// ============================== INPUTS =======================================
+string gTF1 = "Timeframe 1"
+string gTF2 = "Timeframe 2"
+string gTF3 = "Timeframe 3"
+string gTF4 = "Timeframe 4"
+string gTF5 = "Timeframe 5"
+string gST  = "Statistics"
+string gSTY = "Levels & Style"
+string gTM  = "Timing"
+string gHM  = "Historical Mapping"
+string gTB  = "Table"
+string gAL  = "Alerts"
+
+// ----- mapped timeframes -----------------------------------------------------
+en1 = input.bool(true,       "Enable", group = gTF1, inline = "1")
+tf1 = input.timeframe("60",  "",       group = gTF1, inline = "1")
+c1  = input.color(color.new(color.gray, 20), "", group = gTF1, inline = "1")
+
+en2 = input.bool(true,       "Enable", group = gTF2, inline = "2")
+tf2 = input.timeframe("240", "",       group = gTF2, inline = "2")
+c2  = input.color(color.new(color.gray, 20), "", group = gTF2, inline = "2")
+
+en3 = input.bool(false,      "Enable", group = gTF3, inline = "3")
+tf3 = input.timeframe("720", "",       group = gTF3, inline = "3")
+c3  = input.color(color.new(color.gray, 20), "", group = gTF3, inline = "3")
+
+en4 = input.bool(false,      "Enable", group = gTF4, inline = "4")
+tf4 = input.timeframe("1D",  "",       group = gTF4, inline = "4")
+c4  = input.color(color.new(color.gray, 20), "", group = gTF4, inline = "4")
+
+en5 = input.bool(false,      "Enable", group = gTF5, inline = "5")
+tf5 = input.timeframe("1W",  "",       group = gTF5, inline = "5")
+c5  = input.color(color.new(color.gray, 20), "", group = gTF5, inline = "5")
+
+// ----- statistics ------------------------------------------------------------
+lookback = input.int(60, "Sample size (completed candles)", minval = 2, maxval = 5000, group = gST,
+     tooltip = "Rolling window of completed candles of the mapped timeframe. Older candles drop out. The table reports the sample actually collected (n), which is capped by how much chart-timeframe history loads.")
+statMode = input.string("Average", "Statistic", options = ["Average", "Median"], group = gST,
+     tooltip = "Average is the classic reading. Median ignores the one news candle that wicked four times normal and is the steadier choice on a thin sample.")
+basisMode = input.string("Percent of open", "Measure excursions as", options = ["Percent of open", "Points"], group = gST,
+     tooltip = "Percent keeps old history comparable when price has travelled a long way - gold at 1800 and gold at 2400 wick the same percent, not the same points. Points is the raw distance and is fine over short samples.")
+minSample = input.int(5, "Minimum sample to draw", minval = 1, maxval = 500, group = gST,
+     tooltip = "Below this a timeframe is measured but not drawn, and its table column is dimmed. A 1W map on a 1-minute chart will sit here for a long time - that is an honest statement about the sample, not a bug.")
+
+// ----- style -----------------------------------------------------------------
+drawMode = input.string("Lines", "Draw levels as", options = ["Lines", "Zones"], group = gSTY,
+     tooltip = "Zones widen each level into a band of +/- a multiple of the sample's standard deviation, which is a more honest picture of where the average actually lives.")
+bandMult = input.float(0.5, "Zone width (std deviations)", minval = 0.05, maxval = 3.0, step = 0.05, group = gSTY)
+lnStyleIn = input.string("Dotted", "Line style", options = ["Dotted", "Dashed", "Solid"], group = gSTY)
+lnWidth  = input.int(1, "Line width", minval = 1, maxval = 4, group = gSTY)
+showOpen = input.bool(true, "Show open (accumulation) line", group = gSTY, inline = "op")
+colOpen  = input.color(color.new(color.orange, 30), "", group = gSTY, inline = "op")
+lblMode  = input.string("Long", "Labels", options = ["Long", "Short", "None"], group = gSTY,
+     tooltip = "Long: '4H / + Distribution'. Short: '4H + D'.")
+lblSize  = input.string("tiny", "Label size", options = ["tiny", "small", "normal"], group = gSTY)
+extendTo = input.string("Period end", "Extend levels to", options = ["Period end", "Last bar", "Fixed bars"], group = gSTY)
+extBars  = input.int(40, "Fixed bars", minval = 1, maxval = 500, group = gSTY)
+
+// ----- timing ----------------------------------------------------------------
+showTime  = input.bool(true, "Project average phase times", group = gTM,
+     tooltip = "Vertical markers at the average time the manipulation and the distribution extremes have completed inside the period. The manipulation marker spans the two manipulation levels, the distribution marker spans the two distribution levels.")
+colTime   = input.color(color.new(color.gray, 35), "Marker colour", group = gTM)
+showTimeL = input.bool(true, "Show time labels", group = gTM)
+
+// ----- historical mapping ----------------------------------------------------
+histOn    = input.bool(false, "Enable historical mapping", group = gHM,
+     tooltip = "Redraw the map on completed periods using only the statistics that existed at each of those period opens - a walk-forward record you can scroll through, not a hindsight fit.")
+histLbl   = input.bool(false, "Show historical labels", group = gHM)
+histEye   = input.bool(true, "Mark actual phase extremes", group = gHM,
+     tooltip = "Drops a marker on the bar where each completed period's manipulation and distribution extremes actually printed, so projected timing can be eyeballed against realised timing.")
+eyeGlyph  = input.string("👁", "Marker glyph", group = gHM)
+
+// ----- table -----------------------------------------------------------------
+showTbl  = input.bool(true, "Show statistics table", group = gTB)
+tblPos   = input.string("bottom_center", "Position",
+     options = ["bottom_center", "bottom_left", "bottom_right", "top_center", "top_left", "top_right", "middle_left", "middle_right"], group = gTB)
+tblSize  = input.string("tiny", "Text size", options = ["auto", "tiny", "small", "normal"], group = gTB)
+seqSlots = input.int(4, "Delivery sequence slots", minval = 1, maxval = 4, group = gTB,
+     tooltip = "How many touches of the running period to record. A shaded cell in column N of a row means that level was the Nth level price traded through since the period opened.")
+seqCol   = input.color(color.new(color.gray, 40), "Sequence shading", group = gTB)
+showRange = input.bool(false, "Add average-range row", group = gTB)
+tblTxtCol = input.color(color.new(color.black, 0), "Text colour", group = gTB)
+tblBgCol  = input.color(color.new(color.white, 20), "Background", group = gTB)
+
+// ----- alerts ----------------------------------------------------------------
+alertMan = input.bool(false, "Alert on manipulation touch", group = gAL)
+alertDis = input.bool(false, "Alert on distribution touch", group = gAL)
+
+// ============================== HELPERS ======================================
+lineStyle = lnStyleIn == "Dashed" ? line.style_dashed : lnStyleIn == "Solid" ? line.style_solid : line.style_dotted
+labelSize = lblSize == "small" ? size.small : lblSize == "normal" ? size.normal : size.tiny
+textSize  = tblSize == "auto" ? size.auto : tblSize == "small" ? size.small : tblSize == "normal" ? size.normal : size.tiny
+bool usePct = basisMode == "Percent of open"
+bool useMed = statMode == "Median"
+
+f_tablePos(string p) =>
+    switch p
+        "bottom_left"  => position.bottom_left
+        "bottom_right" => position.bottom_right
+        "top_center"   => position.top_center
+        "top_left"     => position.top_left
+        "top_right"    => position.top_right
+        "middle_left"  => position.middle_left
+        "middle_right" => position.middle_right
+        => position.bottom_center
+
+// Rolling statistic over a sample, in whatever basis the sample was stored in.
+f_stat(array<float> a) =>
+    array.size(a) == 0 ? float(na) : useMed ? array.median(a) : array.avg(a)
+
+f_dev(array<float> a) =>
+    array.size(a) < 2 ? 0.0 : array.stdev(a)
+
+// Format a projected timestamp. Sub-daily periods want a clock, longer periods
+// want a date - "14:35" on a monthly map would be meaningless.
+f_stamp(int t, float periodMs) =>
+    string fmt = periodMs >= 432000000.0 ? "dd MMM" : periodMs >= 86400000.0 ? "dd HH:mm" : "HH:mm"
+    str.format_time(t, fmt, syminfo.timezone)
+
+// Level ordering, top of the map to the bottom. Also the table's row order.
+// 0 = +Distribution, 1 = -Manipulation, 2 = Open, 3 = +Manipulation, 4 = -Distribution
+f_levelName(int i, bool shortForm) =>
+    switch i
+        0 => shortForm ? "+ D" : "+ Distribution"
+        1 => shortForm ? "- M" : "- Manipulation"
+        2 => shortForm ? "0"   : "Open"
+        3 => shortForm ? "+ M" : "+ Manipulation"
+        => shortForm ? "- D" : "- Distribution"
+
+f_levelTag(int i) =>
+    switch i
+        0 => "+DIS"
+        1 => "-MAN"
+        2 => "OPEN"
+        3 => "+MAN"
+        => "-DIS"
+
+// ============================== STATE ========================================
+// One Mapper per configured timeframe: everything that timeframe needs to
+// rebuild its periods, hold its sample, freeze its projection and own its
+// drawings.
+type Mapper
+    string       name
+    bool         en
+    color        col
+    float        periodMs
+    bool         ok = true          // chart timeframe is fine enough to map it
+    // --- period under construction
+    float        pOpen  = na
+    float        pHigh  = na
+    float        pLow   = na
+    int          pStart = na
+    int          tHigh  = na
+    int          tLow   = na
+    int          barsIn = 0
+    // --- projection frozen at the period open, never recomputed mid-period
+    float        dMan = na
+    float        dDis = na
+    float        bMan = 0.0
+    float        bDis = 0.0
+    int          projMan = na
+    int          projDis = na
+    int          nSamp = 0
+    // --- rolling sample of completed periods
+    array<float> sMan
+    array<float> sDis
+    array<float> sManT
+    array<float> sDisT
+    // --- delivery sequence of the running period
+    array<int>   seq
+    array<bool>  hit
+    // --- drawings owned by the running period
+    array<line>  lns
+    array<box>   bxs
+    array<label> lbs
+
+f_newMapper(string _nm, bool _en, color _col, float _ms, bool _ok) =>
+    Mapper.new(name = _nm, en = _en, col = _col, periodMs = _ms, ok = _ok,
+         sMan = array.new<float>(), sDis = array.new<float>(),
+         sManT = array.new<float>(), sDisT = array.new<float>(),
+         seq = array.new<int>(), hit = array.new<bool>(5, false),
+         lns = array.new<line>(), bxs = array.new<box>(), lbs = array.new<label>())
+
+method levelAt(Mapper s, int i) =>
+    switch i
+        0 => s.pOpen + s.dDis
+        1 => s.pOpen + s.dMan
+        2 => s.pOpen
+        3 => s.pOpen - s.dMan
+        => s.pOpen - s.dDis
+
+method bandAt(Mapper s, int i) =>
+    i == 0 or i == 4 ? s.bDis : i == 2 ? 0.0 : s.bMan
+
+// Historical drawings live outside the Mapper so they can be trimmed globally
+// against the plot budget.
+var array<line>  histLines  = array.new<line>()
+var array<label> histLabels = array.new<label>()
+
+// Touches are detected deep inside the per-timeframe engine but fired as one
+// alert from the global scope, so a bar that tags three levels is one alert.
+var array<string> alertQ = array.new<string>()
+
+// ============================== BUILD ========================================
+int chartSec = timeframe.in_seconds()
+int barMs    = chartSec * 1000
+
+var Mapper m1 = f_newMapper(tf1, en1, c1, timeframe.in_seconds(tf1) * 1000.0, timeframe.in_seconds(tf1) > chartSec)
+var Mapper m2 = f_newMapper(tf2, en2, c2, timeframe.in_seconds(tf2) * 1000.0, timeframe.in_seconds(tf2) > chartSec)
+var Mapper m3 = f_newMapper(tf3, en3, c3, timeframe.in_seconds(tf3) * 1000.0, timeframe.in_seconds(tf3) > chartSec)
+var Mapper m4 = f_newMapper(tf4, en4, c4, timeframe.in_seconds(tf4) * 1000.0, timeframe.in_seconds(tf4) > chartSec)
+var Mapper m5 = f_newMapper(tf5, en5, c5, timeframe.in_seconds(tf5) * 1000.0, timeframe.in_seconds(tf5) > chartSec)
+
+var array<Mapper> maps = array.new<Mapper>()
+if bar_index == 0
+    array.push(maps, m1)
+    array.push(maps, m2)
+    array.push(maps, m3)
+    array.push(maps, m4)
+    array.push(maps, m5)
+
+// timeframe.change() needs a simple string, so the five period-change flags
+// have to be evaluated out here rather than inside the loop.
+var array<bool> changes = array.new<bool>(5, false)
+array.set(changes, 0, timeframe.change(tf1))
+array.set(changes, 1, timeframe.change(tf2))
+array.set(changes, 2, timeframe.change(tf3))
+array.set(changes, 3, timeframe.change(tf4))
+array.set(changes, 4, timeframe.change(tf5))
+
+// Sub-bar timing assumption: an up bar is read as low-then-high, a down bar as
+// high-then-low, with the second extreme placed at the bar midpoint.
+bool upBar   = close >= open
+int  tOfLow  = upBar ? time : time + barMs / 2
+int  tOfHigh = upBar ? time + barMs / 2 : time
+
+// --------------------------------------------------------------- drawing ----
+method clearDrawings(Mapper s) =>
+    while array.size(s.lns) > 0
+        line.delete(array.pop(s.lns))
+    while array.size(s.bxs) > 0
+        box.delete(array.pop(s.bxs))
+    while array.size(s.lbs) > 0
+        label.delete(array.pop(s.lbs))
+    true
+
+method rightEdge(Mapper s) =>
+    int pEnd = s.pStart + int(s.periodMs)
+    int x = extendTo == "Last bar" ? time :
+         extendTo == "Fixed bars" ? time + extBars * barMs :
+         pEnd > time ? pEnd : time
+    x
+
+method drawCurrent(Mapper s) =>
+    s.clearDrawings()
+    if s.en and s.ok and not na(s.pOpen) and not na(s.dMan) and s.nSamp >= minSample
+        int xR = s.rightEdge()
+        for i = 0 to 4
+            if i != 2 or showOpen
+                float lv  = s.levelAt(i)
+                color col = i == 2 ? colOpen : s.col
+                float bd  = s.bandAt(i)
+                if drawMode == "Zones" and i != 2 and bd > 0
+                    array.push(s.bxs, box.new(s.pStart, lv + bd, xR, lv - bd, xloc = xloc.bar_time,
+                         border_color = color.new(col, 100), bgcolor = color.new(col, 55)))
+                else
+                    array.push(s.lns, line.new(s.pStart, lv, xR, lv, xloc = xloc.bar_time,
+                         color = col, style = i == 2 ? line.style_solid : lineStyle, width = lnWidth))
+                if lblMode != "None"
+                    string txt = lblMode == "Short" ? s.name + " " + f_levelName(i, true) : s.name + "\n" + f_levelName(i, false)
+                    array.push(s.lbs, label.new(xR, lv, txt, xloc = xloc.bar_time,
+                         style = label.style_label_left, color = color.new(color.black, 100),
+                         textcolor = col, size = labelSize, textalign = text.align_left))
+        // --- projected phase times
+        if showTime and not na(s.projMan)
+            array.push(s.lns, line.new(s.projMan, s.levelAt(1), s.projMan, s.levelAt(3),
+                 xloc = xloc.bar_time, color = colTime, style = line.style_dotted))
+            if showTimeL
+                array.push(s.lbs, label.new(s.projMan, s.levelAt(3), f_stamp(s.projMan, s.periodMs),
+                     xloc = xloc.bar_time, style = label.style_label_up,
+                     color = color.new(color.black, 100), textcolor = colTime, size = labelSize))
+        if showTime and not na(s.projDis)
+            array.push(s.lns, line.new(s.projDis, s.levelAt(0), s.projDis, s.levelAt(4),
+                 xloc = xloc.bar_time, color = colTime, style = line.style_dotted))
+            if showTimeL
+                array.push(s.lbs, label.new(s.projDis, s.levelAt(4), f_stamp(s.projDis, s.periodMs),
+                     xloc = xloc.bar_time, style = label.style_label_up,
+                     color = color.new(color.black, 100), textcolor = colTime, size = labelSize))
+    true
+
+// Snapshot of the period that has just closed, drawn with the projection that
+// was frozen at ITS open - no hindsight.
+method drawHistorical(Mapper s, int xEnd) =>
+    if not na(s.dMan) and s.nSamp >= minSample
+        for i = 0 to 4
+            if i != 2 or showOpen
+                float lv  = s.levelAt(i)
+                color col = i == 2 ? colOpen : s.col
+                array.push(histLines, line.new(s.pStart, lv, xEnd, lv, xloc = xloc.bar_time,
+                     color = color.new(col, 25), style = i == 2 ? line.style_solid : lineStyle, width = lnWidth))
+                if histLbl and lblMode != "None"
+                    string txt = lblMode == "Short" ? s.name + " " + f_levelName(i, true) : s.name + "\n" + f_levelName(i, false)
+                    array.push(histLabels, label.new(xEnd, lv, txt, xloc = xloc.bar_time,
+                         style = label.style_label_left, color = color.new(color.black, 100),
+                         textcolor = color.new(col, 25), size = labelSize, textalign = text.align_left))
+        if showTime and not na(s.projMan)
+            array.push(histLines, line.new(s.projMan, s.levelAt(1), s.projMan, s.levelAt(3),
+                 xloc = xloc.bar_time, color = color.new(colTime, 40), style = line.style_dotted))
+        if showTime and not na(s.projDis)
+            array.push(histLines, line.new(s.projDis, s.levelAt(0), s.projDis, s.levelAt(4),
+                 xloc = xloc.bar_time, color = color.new(colTime, 40), style = line.style_dotted))
+    true
+
+// --------------------------------------------------------------- the engine -
+// Rebuilds one timeframe's periods bar by bar: books the finished period into
+// the sample, opens the new one, freezes its projection, then tracks touches.
+method update(Mapper s, bool isNew) =>
+    if s.en and s.ok
+        if isNew
+            // ---- 1. book the period that just finished ----------------------
+            if not na(s.pOpen) and bar_index > 0
+                float pClose = close[1]
+                bool  bull   = pClose >= s.pOpen
+                float man    = bull ? s.pOpen - s.pLow  : s.pHigh - s.pOpen
+                float dis    = bull ? s.pHigh - s.pOpen : s.pOpen - s.pLow
+                int   manT   = (bull ? s.tLow  : s.tHigh) - s.pStart
+                int   disT   = (bull ? s.tHigh : s.tLow) - s.pStart
+                float k      = usePct ? 100.0 / s.pOpen : 1.0
+                if histOn
+                    s.drawHistorical(time)
+                    if histEye
+                        // where the manipulation extreme actually printed
+                        array.push(histLabels, label.new(bull ? s.tLow : s.tHigh, bull ? s.pLow : s.pHigh,
+                             eyeGlyph, xloc = xloc.bar_time,
+                             style = bull ? label.style_label_up : label.style_label_down,
+                             color = color.new(color.black, 100), textcolor = s.col, size = labelSize))
+                        // where the distribution extreme actually printed
+                        array.push(histLabels, label.new(bull ? s.tHigh : s.tLow, bull ? s.pHigh : s.pLow,
+                             eyeGlyph, xloc = xloc.bar_time,
+                             style = bull ? label.style_label_down : label.style_label_up,
+                             color = color.new(color.black, 100), textcolor = s.col, size = labelSize))
+                array.push(s.sMan, math.max(man, 0.0) * k)
+                array.push(s.sDis, math.max(dis, 0.0) * k)
+                array.push(s.sManT, math.max(manT, 0))
+                array.push(s.sDisT, math.max(disT, 0))
+                while array.size(s.sMan) > lookback
+                    array.shift(s.sMan)
+                    array.shift(s.sDis)
+                    array.shift(s.sManT)
+                    array.shift(s.sDisT)
+            // ---- 2. open the new period -------------------------------------
+            s.pOpen  := open
+            s.pHigh  := high
+            s.pLow   := low
+            s.pStart := time
+            s.tHigh  := tOfHigh
+            s.tLow   := tOfLow
+            s.barsIn := 1
+            array.clear(s.seq)
+            for i = 0 to 4
+                array.set(s.hit, i, false)
+            // ---- 3. freeze this period's projection -------------------------
+            s.nSamp := array.size(s.sMan)
+            if s.nSamp > 0
+                float scale = usePct ? s.pOpen / 100.0 : 1.0
+                s.dMan := f_stat(s.sMan) * scale
+                s.dDis := f_stat(s.sDis) * scale
+                s.bMan := drawMode == "Zones" ? f_dev(s.sMan) * scale * bandMult : 0.0
+                s.bDis := drawMode == "Zones" ? f_dev(s.sDis) * scale * bandMult : 0.0
+                s.projMan := s.pStart + int(math.round(f_stat(s.sManT)))
+                s.projDis := s.pStart + int(math.round(f_stat(s.sDisT)))
+        else if not na(s.pOpen)
+            s.barsIn := s.barsIn + 1
+            if high > s.pHigh
+                s.pHigh := high
+                s.tHigh := tOfHigh
+            if low < s.pLow
+                s.pLow := low
+                s.tLow := tOfLow
+        // ---- 4. delivery sequence of the running period ---------------------
+        if not na(s.dMan) and s.nSamp >= minSample
+            for i = 0 to 4
+                if array.size(s.seq) < seqSlots and not array.get(s.hit, i)
+                    // the open only counts as a delivery event once price has left it
+                    if i != 2 or s.barsIn > 1
+                        float lv = s.levelAt(i)
+                        if low <= lv and high >= lv
+                            array.set(s.hit, i, true)
+                            array.push(s.seq, i)
+                            bool isMan = i == 1 or i == 3
+                            if (isMan and alertMan) or (not isMan and i != 2 and alertDis)
+                                array.push(alertQ, s.name + " " + f_levelName(i, false) + " tagged at " +
+                                     str.tostring(lv, format.mintick))
+    true
+
+for i = 0 to 4
+    array.get(maps, i).update(array.get(changes, i))
+
+if array.size(alertQ) > 0
+    alert(array.join(alertQ, " | "), alert.freq_once_per_bar)
+    array.clear(alertQ)
+
+// keep the historical drawings inside the plot budget
+while array.size(histLines) > 400
+    line.delete(array.shift(histLines))
+while array.size(histLabels) > 250
+    label.delete(array.shift(histLabels))
+
+if barstate.islast
+    for i = 0 to 4
+        array.get(maps, i).drawCurrent()
+
+// ============================== TABLE ========================================
+// One block of six columns per enabled timeframe: row tag, price, then the
+// delivery sequence grid. A shaded cell in column N marks the Nth level price
+// traded through since the period opened.
+var table tbl = table.new(f_tablePos(tblPos), 30, 7, border_width = 1,
+     border_color = color.new(color.gray, 60), frame_width = 1, frame_color = color.new(color.gray, 60))
+
+if showTbl and barstate.islast
+    int blk = 0
+    for i = 0 to 4
+        Mapper s = array.get(maps, i)
+        if s.en
+            int   base = blk * 6
+            bool  thin = not s.ok or s.nSamp < minSample
+            color txtC = thin ? color.new(tblTxtCol, 55) : tblTxtCol
+            // header: timeframe and the sample it is speaking from
+            table.cell(tbl, base, 0, s.name, text_color = txtC, text_size = textSize, bgcolor = tblBgCol)
+            table.cell(tbl, base + 1, 0, s.ok ? "n=" + str.tostring(s.nSamp) : "chart TF too high",
+                 text_color = txtC, text_size = textSize, bgcolor = tblBgCol)
+            for c = 2 to 5
+                table.cell(tbl, base + c, 0, "", bgcolor = tblBgCol)
+            // the five levels
+            for r = 0 to 4
+                float lv = s.ok and not na(s.dMan) ? s.levelAt(r) : na
+                table.cell(tbl, base, r + 1, f_levelTag(r), text_color = txtC, text_size = textSize,
+                     text_halign = text.align_left, bgcolor = tblBgCol)
+                table.cell(tbl, base + 1, r + 1, na(lv) ? "-" : str.tostring(lv, format.mintick),
+                     text_color = txtC, text_size = textSize, bgcolor = tblBgCol)
+                for c = 0 to 3
+                    bool on = c < seqSlots and c < array.size(s.seq) and array.get(s.seq, c) == r
+                    table.cell(tbl, base + 2 + c, r + 1, "", width = 1, bgcolor = on ? seqCol : tblBgCol)
+            // average range of the candle = manipulation + distribution
+            if showRange
+                float rng = s.dMan + s.dDis
+                table.cell(tbl, base, 6, "RNG", text_color = txtC, text_size = textSize,
+                     text_halign = text.align_left, bgcolor = tblBgCol)
+                table.cell(tbl, base + 1, 6, na(rng) ? "-" : str.tostring(rng, format.mintick),
+                     text_color = txtC, text_size = textSize, bgcolor = tblBgCol)
+                for c = 2 to 5
+                    table.cell(tbl, base + c, 6, "", bgcolor = tblBgCol)
+            blk += 1
+    // clear any columns left behind by a timeframe that was switched off
+    if blk < 5
+        for c = blk * 6 to 29
+            for r = 0 to 6
+                table.cell(tbl, c, r, "", bgcolor = color.new(color.white, 100))
