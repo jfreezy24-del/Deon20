@@ -58,10 +58,10 @@
 // PRESENTATION: the map is drawn in the same visual language as
 //   ohlc-statistical-mapping.pine (OHLC Statistical Mapping Pro+), so the two
 //   read alike side by side — neutral level colours against an orange open,
-//   transparent-background labels naming the timeframe and level, an optional
-//   standard-deviation Zones mode, vertical phase-time markers, completed
-//   periods faded rather than deleted, and a compact light table laid out top
-//   of the map to the bottom (+DIS, +MAN, OPEN, -MAN, -DIS).
+//   transparent-background labels naming the timeframe, level and price, an
+//   optional standard-deviation Zones mode, vertical phase-time markers,
+//   completed periods faded rather than deleted, and a compact light table
+//   laid out top of the map to the bottom (+DIS, +MAN, OPEN, -MAN, -DIS).
 //
 //   ONE DELIBERATE DIFFERENCE. Pro+ signs a manipulation level by the close
 //   direction of the periods it was sampled from, so its "+ Manipulation" sits
@@ -190,10 +190,12 @@ f_levelTag(int i) =>
         3 => "-MAN"
         => "-DIS"
 
-// Label text: timeframe, level, then which statistic this particular line is.
-f_lblTxt(int i, string stat) =>
+// Label text: timeframe, level, which statistic this particular line is, and
+// the price it projects to.
+f_lblTxt(int i, string stat, float px) =>
     string s = stat == "" ? "" : "  " + stat
-    lblMode == "Short" ? tfSel + " " + f_levelName(i, true) + s : tfSel + "\n" + f_levelName(i, false) + s
+    string p = na(px) ? "" : "  " + str.tostring(px, format.mintick)
+    lblMode == "Short" ? tfSel + " " + f_levelName(i, true) + s + p : tfSel + "\n" + f_levelName(i, false) + s + p
 
 // Format a projected timestamp. Sub-daily periods want a clock, longer periods
 // want a date — "14:35" on a monthly projection would be meaningless.
@@ -750,9 +752,9 @@ f_drawSet(LevelGroup g, int x, float vm, float vd, float vp, float bHi, float bL
         array.push(g.fills, linefill.new(lm, ld, color.new(col, 86)))
     if lblMode != "None"
         float pShown = (li == 1 or li == 3) ? pctM : pctD
-        f_addLbl(g, showMean ? mkLabel(x, vm, f_lblTxt(li, "mu"), col) : na, col)
-        f_addLbl(g, showMed ? mkLabel(x, vd, f_lblTxt(li, "~"), col) : na, col)
-        f_addLbl(g, showPct ? mkLabel(x, vp, f_lblTxt(li, "p" + str.tostring(pShown, "#")), col) : na, col)
+        f_addLbl(g, showMean ? mkLabel(x, vm, f_lblTxt(li, "mu", vm), col) : na, col)
+        f_addLbl(g, showMed ? mkLabel(x, vd, f_lblTxt(li, "~", vd), col) : na, col)
+        f_addLbl(g, showPct ? mkLabel(x, vp, f_lblTxt(li, "p" + str.tostring(pShown, "#"), vp), col) : na, col)
 
 // Vertical marker at the average point inside the period where a phase has
 // historically completed, spanning the pair of levels it belongs to.
@@ -776,7 +778,7 @@ if newP and hasStats
     if showO
         f_add(g, mkLine(startBar, curO, colO, line.style_solid, lnWidth), colO)
         if lblMode != "None"
-            f_addLbl(g, mkLabel(startBar, curO, f_lblTxt(2, ""), colO), colO)
+            f_addLbl(g, mkLabel(startBar, curO, f_lblTxt(2, "", curO), colO), colO)
     // Drawn top of the map to the bottom: +D, +M, open, -M, -D.
     if showD
         f_drawSet(g, startBar, lvlPDm, lvlPDd, lvlPDp, f_bandHi(med2, e1.s2, true), f_bandLo(med2, e1.s2, true), colD, 0)
