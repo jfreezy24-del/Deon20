@@ -63,13 +63,15 @@
 //   completed periods faded rather than deleted, and a compact light table
 //   laid out top of the map to the bottom (+DIS, +MAN, OPEN, -MAN, -DIS).
 //
-//   ONE DELIBERATE DIFFERENCE. Pro+ signs a manipulation level by the close
-//   direction of the periods it was sampled from, so its "+ Manipulation" sits
-//   BELOW the open. This script signs by which side of the open the level sits
-//   on, so +M is the UPPER one. The two describe the same quantity from
-//   opposite ends; the convention here is unchanged, because a level that
-//   swapped its name would change what you read off the chart rather than how
-//   it looks. Pro+'s "+ Manipulation" is this script's "- Manipulation".
+//   MANIPULATION SIGNS FOLLOW PRO+. A manipulation level is named for the
+//   close direction of the periods it was sampled from, not for the side of
+//   the open it sits on. An up-closing period sweeps the lows first, so
+//   "+ Manipulation" is the level BELOW the open and "- Manipulation" the one
+//   above. Distribution keeps reading geometrically — +D above, -D below —
+//   because for distribution the two conventions agree.
+//
+//   Only the naming changed. Every level is computed, drawn and scored exactly
+//   as before: the line that was labelled +M is the same line, now labelled -M.
 // =============================================================================
 
 indicator("OHLC Projection Levels — Adaptive", shorttitle="OHLC Proj+",
@@ -179,22 +181,28 @@ projMs   = extendTo == "Fixed bars" ? extBars * barMs : int(periodMs)
 cfBars   = math.min(500, extendTo == "Fixed bars" ? extBars : math.max(1, int(math.round(periodMs / 1000.0 / math.max(1, chartSec)))))
 
 // Level ordering, top of the map to the bottom. Also the table's row order.
-// 0 = +D, 1 = +M, 2 = Open, 3 = -M, 4 = -D. The sign names which side of the
-// open the level sits on, which is this script's convention throughout.
+// 0 = +D, 1 = -M, 2 = Open, 3 = +M, 4 = -D.
+//
+// The MANIPULATION sign names the close direction of the sessions it was
+// sampled from, not the side of the open it sits on: an up-closing period
+// sweeps the lows first, so "+ Manipulation" is the level BELOW the open and
+// "- Manipulation" the one above. This matches OHLC Statistical Mapping Pro+.
+// The DISTRIBUTION sign still reads geometrically, +D above and -D below,
+// because there the two conventions agree, which is this script's convention throughout.
 f_levelName(int i, bool shortForm) =>
     switch i
         0 => shortForm ? "+ D" : "+ Distribution"
-        1 => shortForm ? "+ M" : "+ Manipulation"
+        1 => shortForm ? "- M" : "- Manipulation"
         2 => shortForm ? "0"   : "Open"
-        3 => shortForm ? "- M" : "- Manipulation"
+        3 => shortForm ? "+ M" : "+ Manipulation"
         => shortForm ? "- D" : "- Distribution"
 
 f_levelTag(int i) =>
     switch i
         0 => "+DIS"
-        1 => "+MAN"
+        1 => "-MAN"
         2 => "OPEN"
-        3 => "-MAN"
+        3 => "+MAN"
         => "-DIS"
 
 // Label text: timeframe, level, which statistic this particular line is, and
@@ -1043,7 +1051,7 @@ if barstate.islast and showTbl
         float rngUp = na(lvlPDd) or na(lvlNMd) ? float(na) : lvlPDd - lvlNMd
         float rngDn = na(lvlPMd) or na(lvlNDd) ? float(na) : lvlPMd - lvlNDd
         float rng   = na(rngUp) or na(rngDn) ? float(na) : (rngUp + rngDn) / 2.0
-        table.cell(t, 0, 6, "RNG", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Average of the up-close range (-MAN to +DIS) and the down-close range (+MAN to -DIS), both taken from the median levels.")
+        table.cell(t, 0, 6, "RNG", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Average of the up-close range (+MAN to +DIS) and the down-close range (-MAN to -DIS), both taken from the median levels.")
         table.cell(t, 1, 6, f_price(rng), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
         for c = 2 to 7
             table.cell(t, c, 6, "", bgcolor=tblBgCol)
