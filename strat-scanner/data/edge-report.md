@@ -1,12 +1,12 @@
 # Edge Report — live signal record
 
-_Generated 2026-09-07_ · **436** settled signals from 2026-08-17 to 2026-09-07 · 40 open, 58 pending (excluded)
+_Generated 2026-09-08_ · **438** settled signals from 2026-08-17 to 2026-09-07 · 40 open, 60 pending (excluded)
 
 Forward record of every signal published at confidence ≥ 50 on D/W/M structure across 35 symbols, resolved against daily bars. Out-of-sample by construction: each signal was enrolled when it was published, before its outcome existed. The trigger stays actionable for 1 bar(s) of its own timeframe and trades are held at most 6. Compare against `calibration.md`, which measures the same engine over history — a large gap between the two is a live-run problem, not a strategy one.
 
 ## Headline
 
-- **75%** of published signals actually triggered (325 of 436) — the rest expired unfilled.
+- **74%** of published signals actually triggered (326 of 438) — the rest expired unfilled.
 - Of those trades, **74%** reached target 1, 22% stopped out, 4% timed out.
 - **Expectancy -0.04R per trade taken**, -0.03R per signal published.
 - Promised **0.84R** to target 1 on average; delivered **-0.04R**.
@@ -18,12 +18,12 @@ The score is ordinal, not a probability — the only claim it makes is that a hi
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 45–54 | 179 | 70% | 125 | 79% | -0.08 | -0.06 | -10.36 |
+| 45–54 | 180 | 69% | 125 | 79% | -0.08 | -0.06 | -10.36 |
 | 55–64 | 193 | 77% | 149 | 72% | -0.02 | -0.01 | -2.73 |
-| 65–74 (High) | 57 | 81% | 46 | 70% | +0.01 | +0.01 | +0.46 |
+| 65–74 (High) | 58 | 81% | 47 | 68% | +0.04 | +0.03 | +1.66 |
 | 75+ (High) | 7 | 71% | 5 | 60% | -0.22 | -0.16 | -1.12 |
 
-Spearman rank correlation between confidence and realised R: **0.123** — **weak but positive** — the ordering is real yet slight.
+Spearman rank correlation between confidence and realised R: **0.130** — **weak but positive** — the ordering is real yet slight.
 
 ## Which confidence terms are earning their weight?
 
@@ -31,18 +31,18 @@ Mean R per signal when a term fired versus when it did not. A term should lift r
 
 | Factor | Fired (n) | R/signal | Did not (n) | R/signal | Lift | Win% w/ vs w/o |
 | --- | --- | --- | --- | --- | --- | --- |
-| `ftfc-full` | 346 | +0.00 | 90 | -0.17 | +0.17 | 77% vs 64% |
-| `volume` | 83 | +0.10 | 353 | -0.06 | +0.16 | 62% vs 76% |
-| `rr-poor` | 309 | -0.01 | 127 | -0.09 | +0.08 | 85% vs 37% |
-| `reversal-backed` | 252 | -0.02 | 184 | -0.05 | +0.04 | 79% vs 68% |
-| `in-force` | 234 | -0.02 | 202 | -0.04 | +0.02 | 78% vs 64% |
-| `close-location` | 244 | -0.04 | 192 | -0.02 | -0.02 | 73% vs 76% |
-| `base` | 436 | -0.03 | 0 | +0.00 | -0.03 | 74% vs 0% |
-| `compression` | 145 | -0.06 | 291 | -0.02 | -0.04 | 78% vs 72% |
-| `rr-ok` | 117 | -0.07 | 319 | -0.02 | -0.05 | 37% vs 84% |
-| `ftfc-aligned` | 89 | -0.17 | 347 | +0.00 | -0.18 | 64% vs 77% |
-| `ftfc-opposed` | 89 | -0.17 | 347 | +0.00 | -0.18 | 64% vs 77% |
-| `rr-strong` | 10 | -0.32 | 426 | -0.02 | -0.30 | 40% vs 75% |
+| `volume` | 84 | +0.11 | 354 | -0.06 | +0.18 | 61% vs 76% |
+| `ftfc-full` | 347 | +0.00 | 91 | -0.15 | +0.16 | 77% vs 63% |
+| `rr-poor` | 310 | -0.01 | 128 | -0.08 | +0.07 | 85% vs 37% |
+| `reversal-backed` | 253 | -0.01 | 185 | -0.05 | +0.04 | 78% vs 68% |
+| `in-force` | 235 | -0.02 | 203 | -0.04 | +0.02 | 78% vs 64% |
+| `close-location` | 245 | -0.04 | 193 | -0.02 | -0.02 | 73% vs 76% |
+| `base` | 438 | -0.03 | 0 | +0.00 | -0.03 | 74% vs 0% |
+| `compression` | 146 | -0.06 | 292 | -0.02 | -0.04 | 78% vs 72% |
+| `rr-ok` | 118 | -0.06 | 320 | -0.02 | -0.04 | 37% vs 84% |
+| `ftfc-aligned` | 90 | -0.16 | 348 | +0.00 | -0.16 | 63% vs 77% |
+| `ftfc-opposed` | 90 | -0.16 | 348 | +0.00 | -0.16 | 63% vs 77% |
+| `rr-strong` | 10 | -0.32 | 428 | -0.02 | -0.30 | 40% vs 74% |
 
 ## By pattern
 
@@ -53,10 +53,10 @@ Which setups to keep taking, and which to stop.
 | 2-2 Reversal | 121 | 79% | 95 | 78% | -0.04 | -0.03 | -3.63 |
 | 2-2 Continuation | 107 | 72% | 77 | 60% | -0.05 | -0.04 | -4.13 |
 | 2-1-2 Reversal | 50 | 80% | 40 | 75% | -0.08 | -0.06 | -3.02 |
-| 2-1-2 Continuation | 47 | 77% | 36 | 86% | -0.07 | -0.05 | -2.45 |
+| 2-1-2 Continuation | 48 | 75% | 36 | 86% | -0.07 | -0.05 | -2.45 |
 | 3-1-2 Reversal | 32 | 56% | 18 | 78% | +0.03 | +0.02 | +0.57 |
 | Rev Strat (1-2-2) Reversal | 31 | 71% | 22 | 86% | +0.07 | +0.05 | +1.54 |
-| 3-2-2 Reversal | 19 | 68% | 13 | 85% | +0.03 | +0.02 | +0.34 |
+| 3-2-2 Reversal | 20 | 70% | 14 | 79% | +0.11 | +0.08 | +1.53 |
 | 1-1-2 Continuation | 16 | 88% | 14 | 64% | -0.23 | -0.20 | -3.19 |
 | 3-2 Continuation | 13 | 77% | 10 | 70% | +0.02 | +0.02 | +0.22 |
 
@@ -64,8 +64,8 @@ Which setups to keep taking, and which to stop.
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D | 288 | 71% | 204 | 73% | -0.02 | -0.02 | -4.86 |
-| W | 114 | 76% | 87 | 76% | -0.11 | -0.08 | -9.19 |
+| D | 289 | 71% | 205 | 73% | -0.02 | -0.01 | -3.66 |
+| W | 115 | 76% | 87 | 76% | -0.11 | -0.08 | -9.19 |
 | M | 34 | 100% | 34 | 76% | +0.01 | +0.01 | +0.29 |
 
 ## By timeframe continuity
@@ -74,23 +74,23 @@ FTFC is the single heaviest term in the model (24 points). This is where it is s
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Full continuity | 346 | 75% | 258 | 77% | +0.01 | +0.00 | +1.48 |
-| Mixed | 89 | 75% | 67 | 64% | -0.23 | -0.17 | -15.24 |
+| Full continuity | 347 | 74% | 258 | 77% | +0.01 | +0.00 | +1.48 |
+| Mixed | 90 | 76% | 68 | 63% | -0.21 | -0.16 | -14.04 |
 | Flat / unknown | 1 | 0% | 0 | — | — | +0.00 | +0.00 |
 
 ## Reversal vs continuation
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Continuation | 183 | 75% | 137 | 68% | -0.07 | -0.05 | -9.54 |
-| Reversal | 253 | 74% | 188 | 79% | -0.02 | -0.02 | -4.21 |
+| Continuation | 184 | 74% | 137 | 68% | -0.07 | -0.05 | -9.54 |
+| Reversal | 254 | 74% | 189 | 78% | -0.02 | -0.01 | -3.01 |
 
 ## Compression vs directional trigger
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Directional trigger bar | 291 | 75% | 217 | 72% | -0.03 | -0.02 | -5.66 |
-| Inside-bar compression (X-1-?) | 145 | 74% | 108 | 78% | -0.07 | -0.06 | -8.09 |
+| Directional trigger bar | 292 | 75% | 218 | 72% | -0.02 | -0.02 | -4.47 |
+| Inside-bar compression (X-1-?) | 146 | 74% | 108 | 78% | -0.07 | -0.06 | -8.09 |
 
 ## By symbol
 
@@ -112,8 +112,9 @@ Ordered by R per signal. Thin samples — read as a hint, not a verdict.
 | XRP-USD | 19 | 53% | 10 | 50% | +0.04 | +0.02 | +0.38 |
 | SPY | 11 | 73% | 8 | 88% | +0.00 | +0.00 | +0.00 |
 | XLC | 11 | 91% | 10 | 90% | -0.01 | -0.01 | -0.11 |
-| EURUSD=X | 11 | 9% | 1 | 0% | -0.16 | -0.01 | -0.16 |
+| EURUSD=X | 12 | 8% | 1 | 0% | -0.16 | -0.01 | -0.16 |
 | IWM | 13 | 62% | 8 | 75% | -0.03 | -0.02 | -0.25 |
+| XLU | 13 | 92% | 12 | 67% | -0.04 | -0.04 | -0.49 |
 | AMD | 10 | 100% | 10 | 90% | -0.04 | -0.04 | -0.42 |
 | XLY | 13 | 92% | 12 | 83% | -0.06 | -0.06 | -0.76 |
 | QQQ | 10 | 90% | 9 | 89% | -0.07 | -0.06 | -0.59 |
@@ -121,7 +122,6 @@ Ordered by R per signal. Thin samples — read as a hint, not a verdict.
 | HYPE-USD | 10 | 70% | 7 | 29% | -0.11 | -0.08 | -0.77 |
 | XLK | 13 | 92% | 12 | 83% | -0.08 | -0.08 | -1.02 |
 | XLF | 17 | 82% | 14 | 71% | -0.14 | -0.12 | -1.99 |
-| XLU | 12 | 92% | 11 | 73% | -0.15 | -0.14 | -1.68 |
 | DOGE-USD | 13 | 77% | 10 | 30% | -0.19 | -0.14 | -1.87 |
 | SMH | 14 | 100% | 14 | 71% | -0.16 | -0.16 | -2.22 |
 | XLE | 14 | 86% | 12 | 58% | -0.20 | -0.17 | -2.41 |
