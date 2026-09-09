@@ -1,0 +1,2254 @@
+//@version=6
+// =============================================================================
+// EmpModel [Pro+]
+// -----------------------------------------------------------------------------
+// The Empirical Profile and the Expansion Model, merged into one indicator.
+//
+// They were always two halves of the same statement. The Expansion Model reads
+// the higher timeframe as a sequence — Candle 1 holds the liquidity, Candle 2
+// runs it and closes back inside Candle 1's range, and the candle after that
+// expands — and draws that sequence faithfully. What it never says is HOW FAR
+// the expansion goes, or how often it goes anywhere at all. The Empirical
+// Profile answers exactly that, from the deepest higher-timeframe history the
+// data provider allows, but says nothing about whether the structure that
+// precedes today's period is the one the model is waiting for.
+//
+// Put them on one anchor and each supplies what the other is missing:
+//
+//   * ONE PERIOD, ONE TIMEFRAME. The Fractal selector picks the higher
+//     timeframe. That same timeframe is the statistical projection timeframe,
+//     so the C1/C2/C3/C4 candles and the M/D levels are anchored to the same
+//     opens and describe the same bars.
+//
+//   * THE MANIPULATION LEVEL IS THE SWEEP TARGET. The Pro+ manipulation sign
+//     convention already lines up with the model's direction: a period that
+//     closes up sweeps the lows first, so "+ Manipulation" is the level BELOW
+//     the open — which is precisely where a bullish C2 goes hunting. The
+//     dashboard reports how often a confirmed C2 actually reached it.
+//
+//   * THE DISTRIBUTION LEVEL IS THE EXPANSION TARGET. When a C2 confirms, the
+//     setup is drawn with the projected distribution level of the new period as
+//     its target, labelled with the probability that it is reached.
+//
+//   * AND THE PREMISE IS MEASURED. Three numbers that neither script could
+//     produce alone, all walk-forward, all on the instrument in front of you:
+//
+//         Swept -> C2   of the periods that took the prior period's high or
+//                       low, how often the candle CLOSED back inside — the
+//                       model's premise, and the line between a stop hunt and
+//                       a break
+//         Depth         of confirmed C2s, how often the sweep reached the
+//                       manipulation level that was projected for it
+//         Expansion     after a confirmed C2, how often the NEXT period reaches
+//                       the distribution target — shown against the
+//                       unconditional reach rate, so the structure has to earn
+//                       its keep rather than be assumed
+//
+// EVERYTHING BOTH PARENTS DID, THEY STILL DO. The statistical engine keeps its
+// volatility normalization, asymmetry, percentiles, recency weighting, context
+// conditioning and honest sampling; the structure keeps its HTF candle preview,
+// early C2 sweep, early CISD, CISD confirmation, T-Spot phases, standard
+// deviation projections and invalidation logic.
+//
+// ONE DELIBERATE DEPARTURE. The Expansion Model requested its higher timeframe
+// with lookahead_on, which is correct for drawing a candle that is still
+// forming and would be fatal for anything measured. The higher timeframe is
+// aggregated from chart bars here instead, so the C2 conditions are evaluated
+// from bars that have actually printed. The first period in loaded history
+// begins mid-candle, so it is never used as C1.
+//
+// NOTE: run this on a chart timeframe EQUAL TO OR FINER THAN the lower
+//   timeframe of the selected fractal. The dashboard says so plainly when it
+//   is not.
+//
+// PERFORMANCE: every enabled history feed and every confluence timeframe costs
+//   one request.security call, and Pine executes all of them whether or not the
+//   result is used. If load time gets slow, disable pooling and the extra
+//   confluence timeframes first.
+// =============================================================================
+
+indicator("EmpModel [Pro+]", shorttitle="EmpModel", overlay=true,
+     max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+//#region [INPUTS]
+
+grpModel   = "Model"
+modelType  = input.string('Auto', 'Fractal', options=['Custom','Auto','1m-15m','3m-30m','5m-1H','15m-4H','1H-1D','4H-1W','1D-1W'], group=grpModel, inline='fractal', tooltip='Picks the lower/higher timeframe pair. The higher timeframe is both the structure timeframe (C1/C2/C3/C4) and the statistical projection timeframe — the two halves of this indicator always describe the same bars.')
+customLTF  = input.timeframe('5',  'Custom LTF                      ', group=grpModel, inline='custom', active=modelType == 'Custom')
+customHTF  = input.timeframe('60', '', group=grpModel, inline='custom', tooltip='Only active when Fractal is set to Custom.', active=modelType == 'Custom')
+biasFilter = input.string('Neutral', 'Bias', options=['Neutral','Bullish','Bearish'], group=grpModel)
+showHistory = input.int(1, 'Setup history', minval=0, maxval=40, group=grpModel, tooltip='Number of past setups (valid or invalidated) to keep drawn. 0 = unlimited.')
+periodsShow = input.int(2, 'Level maps to keep', minval=1, maxval=20, group=grpModel, tooltip='Number of period maps (the projected M/D levels) kept on the chart.')
+showEarlyC2   = input.bool(true, 'Early C2 Sweep', group=grpModel, inline='early', tooltip="Marks C2 the moment the forming HTF candle takes out the previous HTF candle's low (bullish) or high (bearish), instead of waiting for that candle to close.\n\nThe early marker tracks the running sweep extreme while the candle is still forming. At the close it is replaced by the confirmed C2 setup (if the candle closed back inside C1's range) or removed.")
+showEarlyCisd = input.bool(true, 'Early CISD',     group=grpModel, inline='early')
+
+grpStat    = "Statistical Model"
+sampleLen  = input.int(2000, "Sample Size (completed periods)", minval=20, maxval=5000, group=grpStat, tooltip="Rolling window of completed periods used for every statistic, including reach/hold rates. Leave high to use the most history possible.")
+transform  = input.string("Log + ATR", "Excursion measure", options=["Percent","Log","Log + ATR"], group=grpStat, tooltip="Percent: (high-open)/open. Simple, but distorts on huge multi-year price ranges and mixes volatility regimes.\n\nLog: ln(high/open). Makes up and down moves symmetric — matters on 1M/1Y and on assets spanning orders of magnitude.\n\nLog + ATR (recommended): stores each period as log-excursion divided by the ATR% prevailing at that time, then re-scales by today's ATR%. Makes old history comparable to today instead of dragging the average toward a dead regime.")
+atrLen     = input.int(14, "ATR length (periods, on HTF)", minval=2, maxval=200, group=grpStat, tooltip="Volatility yardstick used by the 'Log + ATR' measure. Measured on the higher timeframe, always from bars that closed BEFORE the period being measured.")
+uncondMode = input.bool(false, "Unconditional excursion mode", group=grpStat, tooltip="OFF (default, conditional): the original M/D model. Manipulation is sampled from periods that closed AGAINST that side (a down-wick on a green period), distribution from periods that closed WITH it.\n\nON (unconditional): every period contributes its up excursion and its down excursion with no reference to how it closed. This removes the subtle mismatch that the conditional model is defined by the period's close — something you do not know at the open. In this mode M and D differ only by their percentile setting.")
+pctM       = input.float(50, "Manipulation percentile", minval=1, maxval=99, step=5, group=grpStat, tooltip="Percentile of the manipulation distribution to draw. 50 = median. Read it as: this level is exceeded by (100 - p)% of periods.")
+pctD       = input.float(80, "Distribution percentile", minval=1, maxval=99, step=5, group=grpStat, tooltip="Percentile of the distribution/expansion sample. 80 means only 20% of periods extend beyond this level — a target with a stated probability rather than an average.")
+recOn      = input.bool(false, "Recency weighting (exponential)", group=grpStat, tooltip="Weight recent periods more heavily. Costs load time and trims the effective sample to about six half-lives, since older data carries under 2% weight.")
+halfLife   = input.int(250, "Half-life (periods)", minval=10, maxval=2000, group=grpStat, tooltip="A period this far back counts half as much as the newest one.")
+condMode   = input.string("None", "Condition sample on", options=["None","Weekday","Prior range tercile","Gap direction"], group=grpStat, tooltip="Restrict the sample to periods sharing the current period's context.\n\nWeekday: Monday behaves differently from Friday (use on intraday/daily only).\nPrior range tercile: range expansion clusters — after a compressed period the next one expands.\nGap direction: for gapping markets, an up-gap open is a different animal from a flat one.\n\nConditioning splits the sample, so watch the n column and the amber warning.")
+minSample  = input.int(30, "Minimum sample per level", minval=5, maxval=500, group=grpStat, tooltip="Below this the table dims and reach/hold measurement stays in burn-in. A monthly projection will often sit under this permanently — that is the honest answer, not a bug.")
+
+grpSrc = "Historical Data Source"
+useCustomFeed = input.bool(false, "Override with a custom history feed", group=grpSrc, tooltip="OFF (default) = build stats from YOUR chart symbol's own higher-timeframe history. Works the same on any exchange, no setup. ON = borrow history from the feed below.")
+sym1 = input.symbol("BITSTAMP:BTCUSD", "Custom history feed", group=grpSrc)
+use2 = input.bool(false, "Pool extra feed #2", group=grpSrc, tooltip="Point it at the SAME asset on another exchange. Periods overlap in time, so pooling smooths exchange-specific wicks rather than extending history.")
+sym2 = input.symbol("COINBASE:BTCUSD", "Extra feed #2", group=grpSrc)
+use3 = input.bool(false, "Pool extra feed #3", group=grpSrc)
+sym3 = input.symbol("KRAKEN:BTCUSD", "Extra feed #3", group=grpSrc)
+
+grpLv     = "Empirical Levels"
+showM     = input.bool(true, "Show Manipulation levels", group=grpLv, inline='m')
+colM      = input.color(color.new(color.gray, 20), "", group=grpLv, inline='m')
+showD     = input.bool(true, "Show Distribution levels", group=grpLv, inline='d')
+colD      = input.color(color.new(color.gray, 20), "", group=grpLv, inline='d')
+drawMode  = input.string("Lines", "Draw levels as", options=["Lines","Zones"], group=grpLv, tooltip="Zones widen the median level into a band of +/- a multiple of the sample's standard deviation, which is a more honest picture of where the estimate actually lives. The band uses the same standard deviation already reported as ±SE in the table, so nothing new is calculated.")
+bandMult  = input.float(0.5, "Zone width (std deviations)", minval=0.05, maxval=3.0, step=0.05, group=grpLv)
+medStyleIn = input.string("Dashed", "Median line style", options=["Dotted","Dashed","Solid"], group=grpLv, tooltip="Mean always draws solid and the percentile always draws dotted, so the three statistics stay distinguishable. This picks the style of the median line between them.")
+lvlWidth  = input.int(1, "Line width", minval=1, maxval=4, group=grpLv)
+showMean  = input.bool(true, "Draw mean lines", group=grpLv)
+showMed   = input.bool(true, "Draw median lines", group=grpLv)
+showPct   = input.bool(true, "Draw percentile lines", group=grpLv)
+showFill  = input.bool(true, "Shade mean-median zones", group=grpLv)
+showO     = input.bool(true, "Show open (accumulation) line", group=grpLv, inline="op")
+colO      = input.color(color.new(color.orange, 30), "", group=grpLv, inline="op")
+lblMode   = input.string("Long", "Level labels", options=["Long","Short","None"], group=grpLv, tooltip="Long: '1D / + Distribution'. Short: '1D + D'. The statistic each line carries is appended as mu, ~ or pNN.")
+lvlLblSize = input.string("tiny", "Level label size", options=["tiny","small","normal"], group=grpLv)
+histDim   = input.bool(true, "Dim completed periods", group=grpLv, tooltip="Fades the maps of periods that have already closed so the running period reads first, while the record of what was projected stays on the chart.")
+extendTo  = input.string("Period end", "Extend levels to", options=["Period end","Last bar","Fixed bars"], group=grpLv)
+extBars   = input.int(40, "Fixed bars", minval=1, maxval=500, group=grpLv)
+
+grpCf = "Confluence (extra timeframes)"
+cf2On = input.bool(false, "Overlay timeframe #2", group=grpCf, tooltip="Draws the current period's levels for a second timeframe and highlights where they cluster with the primary. Where a daily D level sits on a weekly M level is where reactions concentrate.")
+cf2Tf = input.string("1W", "Timeframe #2", options=["4H","1D","1W","1M","1Y"], group=grpCf)
+cf3On = input.bool(false, "Overlay timeframe #3", group=grpCf)
+cf3Tf = input.string("1M", "Timeframe #3", options=["4H","1D","1W","1M","1Y"], group=grpCf)
+cfTol = input.float(0.25, "Confluence tolerance (%)", minval=0.01, maxval=5.0, step=0.05, group=grpCf)
+cfCol = input.color(color.new(color.yellow, 80), "Confluence shading", group=grpCf)
+
+grpCandles     = "HTF Candles"
+htfCandleCount = input.int(4, 'HTF Candles', minval=1, maxval=10, group=grpCandles, inline='count')
+hideHtf        = input.bool(false, 'Hide?', group=grpCandles, inline='count', tooltip='Hide the HTF candle preview.')
+candleOffsetIn = input.int(0, 'Offset', minval=0, group=grpCandles)
+bullBody   = input.color(color.new(color.green, 0), 'Body', group=grpCandles, inline='body')
+bearBody   = input.color(color.new(#000000, 0), '', group=grpCandles, inline='body')
+borderBull = input.color(color.new(#000000, 0), 'Borders', group=grpCandles, inline='border')
+borderBear = input.color(color.new(#000000, 0), '', group=grpCandles, inline='border')
+wickBull   = input.color(color.new(#000000, 0), 'Wick', group=grpCandles, inline='wick')
+wickBear   = input.color(color.new(#000000, 0), '', group=grpCandles, inline='wick')
+htfOpenStyle = input.string('Solid', 'HTF Open', options=['Solid','Dashed','Dotted'], group=grpCandles, inline='htfopen', tooltip='Carries the period open across to the candle preview, in the same colour as the map\'s open line.')
+htfOpenWidth = input.int(1, '', minval=1, group=grpCandles, inline='htfopen')
+showVlines = input.bool(true, 'O/C Time', group=grpCandles, inline='vline')
+lineColor  = input.color(color.new(color.gray, 60), '', group=grpCandles, inline='vline')
+lineStyle  = input.string('Solid', '', options=['Solid','Dashed','Dotted'], group=grpCandles, inline='vline')
+lineWidth  = input.int(1, '', minval=1, group=grpCandles, inline='vline')
+showLH  = input.bool(false, 'L/H Lines', group=grpCandles, inline='lh')
+lhColor = input.color(color.new(#1a1a1a, 30), '', group=grpCandles, inline='lh')
+lhStyle = input.string('Solid', '', options=['Solid','Dashed','Dotted'], group=grpCandles, inline='lh')
+lhWidth = input.int(1, '', minval=1, group=grpCandles, inline='lh')
+
+grpStruct  = "Structure Style"
+showLabels = input.bool(true, 'Labels?', group=grpStruct, inline='lbl')
+structLblSizeIn = input.string('Small', '', group=grpStruct, inline='lbl', options=['Tiny','Small','Normal','Large','Huge'], active=showLabels)
+showSweep  = input.bool(false, 'Candle 1 Sweep', group=grpStruct, inline='sweep')
+sweepColor = input.color(color.new(#000000, 0), '', group=grpStruct, inline='sweep')
+sweepStyle = input.string('Solid', '', options=['Solid','Dashed','Dotted'], group=grpStruct, inline='sweep')
+sweepWidth = input.int(1, '', minval=1, group=grpStruct, inline='sweep')
+earlyC2Color = input.color(color.new(color.orange, 0), 'Early C2 Sweep', group=grpStruct, inline='earlyc2line', active=showEarlyC2)
+earlyC2Style = input.string('Dotted', '', options=['Solid','Dashed','Dotted'], group=grpStruct, inline='earlyc2line', active=showEarlyC2)
+earlyC2Width = input.int(1, '', minval=1, group=grpStruct, inline='earlyc2line', active=showEarlyC2)
+earlyCisdColor = input.color(color.new(color.blue, 0), 'Early CISD', group=grpStruct, inline='earlycisd', active=showEarlyCisd)
+earlyCisdStyle = input.string('Dashed', '', options=['Solid','Dashed','Dotted'], group=grpStruct, inline='earlycisd', active=showEarlyCisd)
+earlyCisdWidth = input.int(1, '', minval=1, group=grpStruct, inline='earlycisd', active=showEarlyCisd)
+showBullCisd  = input.bool(true, 'Bullish CISD', group=grpStruct, inline='bullcisd')
+cisdBullColor = input.color(color.new(color.blue, 0), '', group=grpStruct, inline='bullcisd')
+cisdBullStyle = input.string('Solid', '', options=['Solid','Dashed','Dotted'], group=grpStruct, inline='bullcisd', active=showBullCisd)
+cisdBullWidth = input.int(1, '', minval=1, group=grpStruct, inline='bullcisd', active=showBullCisd)
+showBearCisd  = input.bool(true, 'Bearish CISD', group=grpStruct, inline='bearcisd')
+cisdBearColor = input.color(color.new(color.blue, 0), '', group=grpStruct, inline='bearcisd')
+cisdBearStyle = input.string('Solid', '', options=['Solid','Dashed','Dotted'], group=grpStruct, inline='bearcisd', active=showBearCisd)
+cisdBearWidth = input.int(1, '', minval=1, group=grpStruct, inline='bearcisd', active=showBearCisd)
+showEQ  = input.bool(true, 'Candle Equilibrium', group=grpStruct, inline='eq')
+eqColor = input.color(color.new(#000000, 0), '', group=grpStruct, inline='eq')
+eqStyle = input.string('Dotted', '', options=['Solid','Dashed','Dotted'], group=grpStruct, inline='eq')
+eqWidth = input.int(1, '', minval=1, group=grpStruct, inline='eq')
+showTSpot      = input.bool(true, 'T-Spot Box', group=grpStruct, inline='tspot')
+tSpotBullColor = input.color(color.new(color.green, 80), '', group=grpStruct, inline='tspot')
+tSpotBearColor = input.color(color.new(color.gray, 80), '', group=grpStruct, inline='tspot')
+
+grpTgt    = "Statistical Target"
+showTgt   = input.bool(true, 'Draw the distribution target on a confirmed C2', group=grpTgt, tooltip="This is where the two halves meet. When a C2 confirms, the setup is given the projected distribution level of the NEW period as its target — the level the model says price should now expand into — labelled with how often that level was actually reached after a C2 like this one.\n\nThe target is removed when the setup dies, because the premise it rested on is gone.")
+tgtStyle  = input.string('Dashed', 'Style', options=['Solid','Dashed','Dotted'], group=grpTgt, inline='tgt', active=showTgt)
+tgtWidth  = input.int(2, '', minval=1, maxval=4, group=grpTgt, inline='tgt', active=showTgt)
+tgtStat   = input.string('Median', 'Target level', options=['Median','Percentile'], group=grpTgt, tooltip="Which distribution statistic the target sits on. Median is the level reached about half the time in an expansion; the percentile is the stretch target, reached by (100 - p)% of periods.", active=showTgt)
+
+grpStdDev   = "Deviations"
+showStdDev  = input.bool(false, 'Enable Projections?', group=grpStdDev, inline='stdb')
+stdDevInput = input.string('-1,-2,-3', '', group=grpStdDev, inline='stdb', active=showStdDev)
+stdDevCalc  = input.string('Wick', 'Method', options=['Wick','Body'], group=grpStdDev, inline='stdb', active=showStdDev)
+stdDevColor = input.color(color.new(#000000, 0), '', group=grpStdDev, inline='stdc', active=showStdDev)
+stdDevStyle = input.string('Solid', '', options=['Solid','Dashed','Dotted'], group=grpStdDev, inline='stdc', active=showStdDev)
+stdDevWidth = input.int(1, '', minval=1, group=grpStdDev, inline='stdc', active=showStdDev)
+stdDevLabelGap = input.int(4, 'Label Gap', minval=0, maxval=50, group=grpStdDev, tooltip='Bars of clearance between the HTF candle preview and the projection price labels.', active=showStdDev)
+
+grpTm     = "Timing"
+showTime  = input.bool(true, "Project average phase times", group=grpTm, tooltip="Vertical markers at the average point inside the period where each phase has historically completed. The manipulation marker spans the two manipulation levels; the high and low markers span the two distribution levels. These read the same walk-forward accumulators as the dashboard's Timing row, so they add no calculation.")
+colTime   = input.color(color.new(color.gray, 35), "Marker colour", group=grpTm)
+showTimeL = input.bool(true, "Show time labels", group=grpTm)
+
+grpDash   = "Dashboard"
+showTbl   = input.bool(true, "Show dashboard", group=grpDash)
+showSeq   = input.bool(true, "Show sequencing & timing rows", group=grpDash, tooltip="Measured on the CHART timeframe (the only place intra-period order is visible), so it carries its own smaller sample size. It answers the model's core claim: does the manipulation side actually get swept BEFORE the distribution target, and when in the period do the extremes print?")
+showRange = input.bool(false, "Add average-range row", group=grpDash, tooltip="Typical candle range implied by the median levels, averaged over the up-close case (lower manipulation to upper distribution) and the down-close case (upper manipulation to lower distribution).")
+tblPos    = input.string("bottom_center", "Position", options=["bottom_center","bottom_left","bottom_right","top_center","top_left","top_right","middle_left","middle_right"], group=grpDash)
+tblSize   = input.string("tiny", "Text size", options=["auto","tiny","small","normal"], group=grpDash)
+tblTxtCol = input.color(color.new(color.black, 0), "Text colour", group=grpDash, inline='c')
+tblBgCol  = input.color(color.new(color.white, 20), "Background", group=grpDash, inline='c')
+
+grpAl      = "Alerts"
+showAlerts = input.bool(true, 'Alerts?', group=grpAl, tooltip="Master switch. With it off, nothing below fires.\n\nTo receive them: click the three dots next to the indicator title, choose 'Add alert on EmpModel [Pro+]', and confirm.")
+alertLevels = input.bool(true, 'Level tags (manipulation / distribution)', group=grpAl)
+alertC2     = input.bool(true, 'Confirmed C2', group=grpAl)
+showEarlyC2Alerts   = input.bool(false, 'Early C2 sweep', group=grpAl)
+showEarlyCisdAlerts = input.bool(false, 'Early CISD', group=grpAl)
+
+//#endregion
+
+//#region [TIMEFRAME RESOLUTION]
+
+tfLabel(string tf) =>
+    switch tf
+        '1'   => '1m'
+        '3'   => '3m'
+        '5'   => '5m'
+        '15'  => '15m'
+        '30'  => '30m'
+        '60'  => '1h'
+        '240' => '4h'
+        '1D'  => '1D'
+        'D'   => '1D'
+        '1W'  => '1W'
+        'W'   => '1W'
+        '1M'  => '1M'
+        'M'   => '1M'
+        =>       tf + 'm'
+
+tfMins(string tf) =>
+    switch tf
+        '1D' => 1440
+        'D'  => 1440
+        '1W' => 10080
+        'W'  => 10080
+        '1M' => 43200
+        'M'  => 43200
+        =>      int(str.tonumber(tf))
+
+curTfCode() =>
+    timeframe.isdaily ? '1D' : timeframe.isweekly ? '1W' : timeframe.ismonthly ? '1M' : timeframe.period
+
+autoHTF() =>
+    switch timeframe.period
+        '1'   => '15'
+        '3'   => '30'
+        '5'   => '60'
+        '15'  => '240'
+        '60'  => '1D'
+        '240' => '1W'
+        '1D'  => '1M'
+        =>       '1M'
+
+ltfCode() =>
+    switch modelType
+        '1m-15m' => '1'
+        '3m-30m' => '3'
+        '5m-1H'  => '5'
+        '15m-4H' => '15'
+        '1H-1D'  => '60'
+        '4H-1W'  => '240'
+        '1D-1W'  => '1D'
+        'Custom' => customLTF
+        =>          curTfCode()
+
+isAutoValidTf(int mins) => mins == 1 or mins == 3 or mins == 5 or mins == 15 or mins == 60 or mins == 240 or mins == 1440
+
+// The higher timeframe. Structure and statistics both run on it, so there is
+// only ever one period boundary in this script.
+htf = switch modelType
+    '1m-15m' => '15'
+    '3m-30m' => '30'
+    '5m-1H'  => '60'
+    '15m-4H' => '240'
+    '1H-1D'  => '1D'
+    '4H-1W'  => '1W'
+    '1D-1W'  => '1W'
+    'Custom' => customHTF
+    =>          autoHTF()
+
+// Confluence timeframes keep their own plain selector.
+f_cfTf(string s) => s == "4H" ? "240" : s == "1W" ? "1W" : s == "1M" ? "1M" : s == "1Y" ? "12M" : "1D"
+tfB = f_cfTf(cf2Tf)
+tfC = f_cfTf(cf3Tf)
+
+tfDisp  = tfLabel(htf)
+ltfDisp = tfLabel(ltfCode())
+
+// The chart must be finer than the fractal's lower timeframe for the structure,
+// and finer than the higher timeframe for the projection to mean anything.
+validTf    = modelType == 'Auto' ? isAutoValidTf(tfMins(curTfCode())) : tfMins(curTfCode()) <= tfMins(ltfCode())
+tfInverted = timeframe.in_seconds(timeframe.period) > timeframe.in_seconds(htf)
+
+// Number of context buckets implied by the conditioning mode.
+nBuckets = condMode == "Weekday" ? 7 : condMode == "None" ? 1 : 3
+
+allowBuy  = biasFilter != 'Bearish'
+allowSell = biasFilter != 'Bullish'
+
+//#endregion
+
+//#region [PRESENTATION HELPERS]
+
+candleSpacing = 3
+noColor       = color.new(#000000, 100)
+
+lineStyleFromStr(string s) =>
+    switch s
+        'Solid'  => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+        =>          line.style_dashed
+
+textSize(string s) =>
+    switch s
+        'Tiny'   => size.tiny
+        'Small'  => size.small
+        'Normal' => size.normal
+        'Large'  => size.large
+        =>          size.huge
+
+structSize = textSize(structLblSizeIn)
+medStyle   = medStyleIn == "Solid" ? line.style_solid : medStyleIn == "Dotted" ? line.style_dotted : line.style_dashed
+lvlLbl     = lvlLblSize == "small" ? size.small : lvlLblSize == "normal" ? size.normal : size.tiny
+
+// Level drawings are positioned in TIME, not bar index. A monthly projection on
+// a 15m chart is ~2,880 bars long, and objects placed with xloc.bar_index cannot
+// be drawn more than 500 bars into the future — xloc.bar_time has no such limit,
+// so the period-end projection works on every timeframe pair.
+chartSec = timeframe.in_seconds(timeframe.period)
+barMs    = chartSec * 1000
+periodMs = float(timeframe.in_seconds(htf)) * 1000.0
+projMs   = extendTo == "Fixed bars" ? extBars * barMs : int(periodMs)
+// Confluence shading still works in bar index, so it keeps the 500-bar cap.
+cfBars   = math.min(500, extendTo == "Fixed bars" ? extBars : math.max(1, int(math.round(periodMs / 1000.0 / math.max(1, chartSec)))))
+
+// Level ordering, top of the map to the bottom. Also the dashboard's row order.
+// 0 = +D, 1 = -M, 2 = Open, 3 = +M, 4 = -D.
+//
+// The MANIPULATION sign names the close direction of the periods it was sampled
+// from, not the side of the open it sits on: an up-closing period sweeps the
+// lows first, so "+ Manipulation" is the level BELOW the open and "- Manipulation"
+// the one above. That convention is why the two halves of this indicator agree —
+// a bullish C2 sweeps downward, into the level named "+ Manipulation".
+// DISTRIBUTION still reads geometrically, +D above and -D below, because there
+// the two conventions already agree.
+f_levelName(int i, bool shortForm) =>
+    switch i
+        0 => shortForm ? "+ D" : "+ Distribution"
+        1 => shortForm ? "- M" : "- Manipulation"
+        2 => shortForm ? "0"   : "Open"
+        3 => shortForm ? "+ M" : "+ Manipulation"
+        => shortForm ? "- D" : "- Distribution"
+
+f_levelTag(int i) =>
+    switch i
+        0 => "+DIS"
+        1 => "-MAN"
+        2 => "OPEN"
+        3 => "+MAN"
+        => "-DIS"
+
+f_lblTxt(int i, string stat, float px) =>
+    string s = stat == "" ? "" : "  " + stat
+    string p = na(px) ? "" : "  " + str.tostring(px, format.mintick)
+    lblMode == "Short" ? tfDisp + " " + f_levelName(i, true) + s + p : tfDisp + "\n" + f_levelName(i, false) + s + p
+
+// Sub-daily periods want a clock, longer periods want a date — "14:35" on a
+// monthly projection would be meaningless.
+f_stamp(int ts) =>
+    string fmt = periodMs >= 432000000.0 ? "dd MMM" : periodMs >= 86400000.0 ? "dd HH:mm" : "HH:mm"
+    str.format_time(ts, fmt, syminfo.timezone)
+
+f_rate(float r) => na(r) ? "—" : str.tostring(math.round(r * 100)) + "%"
+f_price(float p) => na(p) ? "—" : str.tostring(p, format.mintick)
+
+//#endregion
+
+//#region [STATISTICAL ENGINE]
+
+// Rebuild a price level from a stored ratio. Mirrors the excursion measure so
+// that whatever transform went in comes back out as a price.
+f_lvl(string tfm, float v, float o, float atrp, bool up) =>
+    float r = na
+    if not na(v) and not na(o)
+        if tfm == "Percent"
+            r := up ? o * (1.0 + v) : o * (1.0 - v)
+        else if tfm == "Log"
+            r := up ? o * math.exp(v) : o * math.exp(-v)
+        else if not na(atrp)
+            r := up ? o * math.exp(v * atrp) : o * math.exp(-v * atrp)
+    r
+
+// Exponentially weighted mean. Falls back to a plain average when weighting is
+// off, which is the common path and stays on the native implementation.
+f_wmean(array<float> vals, float hl) =>
+    int n = array.size(vals)
+    float res = na
+    if n > 0
+        if na(hl) or hl <= 0
+            res := array.avg(vals)
+        else
+            float decay = math.pow(0.5, 1.0 / hl)
+            float sw = 0.0
+            float sv = 0.0
+            for i = 0 to n - 1
+                float w = math.pow(decay, n - 1 - i)
+                sw += w
+                sv += array.get(vals, i) * w
+            res := sw > 0 ? sv / sw : na
+    res
+
+// Weighted percentile. Sorting is native; only the cumulative-weight walk is
+// interpreted, and it exits as soon as the threshold is crossed.
+f_wpct(array<float> vals, float hl, float pct) =>
+    int n = array.size(vals)
+    float res = na
+    if n > 0
+        if na(hl) or hl <= 0
+            res := array.percentile_linear_interpolation(vals, pct)
+        else
+            float decay = math.pow(0.5, 1.0 / hl)
+            float tot = decay >= 1.0 ? n : (1.0 - math.pow(decay, n)) / (1.0 - decay)
+            array<int> idx = array.sort_indices(vals, order.ascending)
+            float target = tot * pct / 100.0
+            float cum = 0.0
+            for k = 0 to n - 1
+                int i = array.get(idx, k)
+                cum += math.pow(decay, n - 1 - i)
+                if cum >= target
+                    res := array.get(vals, i)
+                    break
+            if na(res)
+                res := array.get(vals, array.get(idx, n - 1))
+    res
+
+// Which context bucket does a period belong to?
+f_bucket(string cond, int nb, float o, float prevC, float prevRange, float t1, float t2, float atrp, int tm) =>
+    int b = 0
+    if cond == "Weekday"
+        b := dayofweek(tm) - 1
+    else if cond == "Prior range tercile"
+        b := na(t1) or na(prevRange) ? 1 : prevRange <= t1 ? 0 : prevRange <= t2 ? 1 : 2
+    else if cond == "Gap direction"
+        float g = na(prevC) or prevC == 0 ? 0.0 : (o - prevC) / prevC
+        float th = na(atrp) ? 0.0 : 0.25 * atrp
+        b := g < -th ? 0 : g > th ? 2 : 1
+    math.max(0, math.min(nb - 1, b))
+
+// ========================== Engine result container ===========================
+// Only scalar fields cross the request.security boundary. Returning the sample
+// arrays themselves copies thousands of floats per chart bar and exhausts Pine's
+// memory budget — that is what this layout exists to avoid.
+type Res
+    float m0 = na
+    float d0 = na
+    float p0 = na
+    float s0 = na
+    float n0 = 0.0
+    float m1 = na
+    float d1 = na
+    float p1 = na
+    float s1 = na
+    float n1 = 0.0
+    float m2 = na
+    float d2 = na
+    float p2 = na
+    float s2 = na
+    float n2 = 0.0
+    float m3 = na
+    float d3 = na
+    float p3 = na
+    float s3 = na
+    float n3 = 0.0
+    float rd0 = na
+    float hd0 = na
+    float rp0 = na
+    float hp0 = na
+    float rd1 = na
+    float hd1 = na
+    float rp1 = na
+    float hp1 = na
+    float rd2 = na
+    float hd2 = na
+    float rp2 = na
+    float hp2 = na
+    float rd3 = na
+    float hd3 = na
+    float rp3 = na
+    float hp3 = na
+    float evalN = 0.0
+    float bothR = na
+    float atrP  = na
+    // ---- the model's premise, measured on the same history ----
+    float swpBullN = 0.0
+    float c2BullN  = 0.0
+    float swpBearN = 0.0
+    float c2BearN  = 0.0
+    float expBullN = 0.0
+    float expBullD = 0.0
+    float expBullP = 0.0
+    float expBullC = 0.0
+    float expBearN = 0.0
+    float expBearD = 0.0
+    float expBearP = 0.0
+    float expBearC = 0.0
+
+// Rolling walk-forward outcome record for one (level, statistic) combination.
+type Outcome
+    array<float> reach
+    array<float> held
+
+// Write one role's statistics into the cache slot k.
+f_store(array<float> cM, array<float> cD, array<float> cP, array<float> cS,
+         array<float> cN, int k, array<float> f, float hl, float pct) =>
+    int m = array.size(f)
+    array.set(cN, k, m)
+    if m >= 2
+        array.set(cM, k, f_wmean(f, hl))
+        array.set(cD, k, f_wpct(f, hl, 50.0))
+        array.set(cP, k, f_wpct(f, hl, pct))
+        array.set(cS, k, array.stdev(f, false))
+    else
+        array.set(cM, k, na)
+        array.set(cD, k, na)
+        array.set(cP, k, na)
+        array.set(cS, k, na)
+
+// Record one walk-forward outcome, trimmed to the same window as the ratios.
+f_push(Outcome oc, bool reached, bool held, int maxN) =>
+    array.push(oc.reach, reached ? 1.0 : 0.0)
+    array.push(oc.held, held ? 1.0 : 0.0)
+    if array.size(oc.reach) > maxN
+        array.shift(oc.reach)
+        array.shift(oc.held)
+
+f_reachRate(Outcome oc) =>
+    array.size(oc.reach) > 0 ? array.sum(oc.reach) / array.size(oc.reach) : na
+
+f_holdRate(Outcome oc) =>
+    float r = array.sum(oc.reach)
+    r > 0 ? array.sum(oc.held) / r : na
+
+// ================================= The engine =================================
+// Runs INSIDE request.security at the higher timeframe, walking the provider's
+// entire history. Every period is read from bar[1] so only confirmed data enters
+// the sample and nothing repaints.
+//
+// Role indices: 0 = +M (upper manipulation), 1 = -M (lower manipulation),
+//               2 = +D (upper distribution), 3 = -D (lower distribution).
+f_engine(int maxN, int aLen, string tfm, bool recOn_, float hl_, string cond,
+         int nb, bool uncond, float pM, float pD, int minN, bool full) =>
+    var array<float> upA = array.new<float>()
+    var array<float> dnA = array.new<float>()
+    var array<float> blA = array.new<float>()
+    var array<float> bkA = array.new<float>()
+    var array<float> rgA = array.new<float>()
+    var array<float> cM  = array.new<float>(4 * nb, na)
+    var array<float> cD  = array.new<float>(4 * nb, na)
+    var array<float> cP  = array.new<float>(4 * nb, na)
+    var array<float> cS  = array.new<float>(4 * nb, na)
+    var array<float> cN  = array.new<float>(4 * nb, 0)
+    var array<Outcome> ocs = array.new<Outcome>()
+    // Scratch buffers for the recompute. Allocating these fresh on every
+    // recompute churned thousands of 2000-element arrays per feed, which is what
+    // exhausted memory; they are reused and cleared instead.
+    var array<float> f0 = array.new<float>()
+    var array<float> f1 = array.new<float>()
+    var array<float> f2 = array.new<float>()
+    var array<float> f3 = array.new<float>()
+    var float terc1 = na
+    var float terc2 = na
+    var int sinceRe = 999
+    var float bothN = 0.0
+    var float bothHit = 0.0
+    // Premise counters. Cumulative over all available history rather than the
+    // rolling window, like the whipsaw rate they sit beside.
+    var float swpBullN = 0.0
+    var float c2BullN  = 0.0
+    var float swpBearN = 0.0
+    var float c2BearN  = 0.0
+    var float expBullN = 0.0
+    var float expBullD = 0.0
+    var float expBullP = 0.0
+    var float expBullC = 0.0
+    var float expBearN = 0.0
+    var float expBearD = 0.0
+    var float expBearP = 0.0
+    var float expBearC = 0.0
+
+    if array.size(ocs) == 0
+        for j = 0 to 7
+            array.push(ocs, Outcome.new(reach = array.new<float>(), held = array.new<float>()))
+
+    // ta.atr must be evaluated on every bar, never inside a branch, or its
+    // internal state desynchronises from the series.
+    float atrSeries = ta.atr(aLen)
+
+    float hl = na
+    if recOn_
+        hl := hl_
+    // Beyond ~6 half-lives a period carries under 2% weight, so trimming there
+    // costs nothing statistically and keeps the weighted walk bounded.
+    int effMax = recOn_ ? int(math.min(maxN, math.round(hl_ * 6.0))) : maxN
+
+    if bar_index > 1
+        float o = open[1]
+        float h = high[1]
+        float l = low[1]
+        float c = close[1]
+        float pc = close[2]
+        // Volatility yardstick known strictly BEFORE the period being measured.
+        float atrPrev = close[2] > 0 ? atrSeries[2] / close[2] : na
+        float prevRange = na(close[2]) or close[2] == 0 ? na : (high[2] - low[2]) / close[2]
+
+        if o > 0 and h > 0 and l > 0
+            // ---- excursions, in the selected measure ----
+            float upV = tfm == "Percent" ? (h - o) / o : math.log(h / o)
+            float dnV = tfm == "Percent" ? (o - l) / o : math.log(o / l)
+            if tfm == "Log + ATR"
+                if na(atrPrev) or atrPrev <= 0
+                    upV := na
+                    dnV := na
+                else
+                    upV := upV / atrPrev
+                    dnV := dnV / atrPrev
+
+            if not na(upV) and not na(dnV)
+                int bk = f_bucket(cond, nb, o, pc, prevRange, terc1, terc2, atrPrev, time[1])
+                int base = 4 * bk
+
+                // ---- walk-forward scoring: judge this period against estimates
+                // built only from periods that preceded it. Only the primary feed
+                // needs this; pooled feeds contribute ratios alone, so they skip
+                // it and keep their outcome buffers empty. ----
+                if full
+                    for r = 0 to 3
+                        bool upSide = r == 0 or r == 2
+                        if array.get(cN, base + r) >= minN
+                            float vd = array.get(cD, base + r)
+                            float vp = array.get(cP, base + r)
+                            float ld = f_lvl(tfm, vd, o, atrPrev, upSide)
+                            float lp = f_lvl(tfm, vp, o, atrPrev, upSide)
+                            bool rd = upSide ? h >= ld : l <= ld
+                            bool hd = rd and (upSide ? c < ld : c > ld)
+                            bool rp = upSide ? h >= lp : l <= lp
+                            bool hp = rp and (upSide ? c < lp : c > lp)
+                            f_push(array.get(ocs, r), rd, hd, effMax)
+                            f_push(array.get(ocs, 4 + r), rp, hp, effMax)
+
+                // ---- the Expansion Model's premise, on this same history ----
+                // Every condition here is the model's own, copied rather than
+                // approximated: a sweep is l < prior low / h > prior high, and a
+                // confirmed C2 is that sweep with a close back inside the prior
+                // candle's range.
+                if full and bar_index > 3
+                    float ph = high[2]
+                    float pl = low[2]
+                    if l < pl
+                        swpBullN += 1.0
+                        if c > pl
+                            c2BullN += 1.0
+                    if h > ph
+                        swpBearN += 1.0
+                        if c < ph
+                            c2BearN += 1.0
+                    // Is THIS period the expansion candle — the one that follows
+                    // a confirmed C2? If so, score it against the distribution
+                    // target that was projectable for it at its open.
+                    bool prevBullC2 = low[2] < low[3] and close[2] > low[3]
+                    bool prevBearC2 = high[2] > high[3] and close[2] < high[3]
+                    if prevBullC2 and array.get(cN, base + 2) >= minN
+                        float tD = f_lvl(tfm, array.get(cD, base + 2), o, atrPrev, true)
+                        float tP = f_lvl(tfm, array.get(cP, base + 2), o, atrPrev, true)
+                        expBullN += 1.0
+                        if h >= tD
+                            expBullD += 1.0
+                        if h >= tP
+                            expBullP += 1.0
+                        if c >= o
+                            expBullC += 1.0
+                    if prevBearC2 and array.get(cN, base + 3) >= minN
+                        float bD = f_lvl(tfm, array.get(cD, base + 3), o, atrPrev, false)
+                        float bP = f_lvl(tfm, array.get(cP, base + 3), o, atrPrev, false)
+                        expBearN += 1.0
+                        if l <= bD
+                            expBearD += 1.0
+                        if l <= bP
+                            expBearP += 1.0
+                        if c <= o
+                            expBearC += 1.0
+
+                // ---- whipsaw: how often BOTH manipulation sides get tagged ----
+                if array.get(cN, base) >= minN and array.get(cN, base + 1) >= minN
+                    float lu = f_lvl(tfm, array.get(cD, base), o, atrPrev, true)
+                    float ldn = f_lvl(tfm, array.get(cD, base + 1), o, atrPrev, false)
+                    bothN += 1.0
+                    if h >= lu and l <= ldn
+                        bothHit += 1.0
+
+                // ---- record the period ----
+                array.push(upA, upV)
+                array.push(dnA, dnV)
+                array.push(blA, c >= o ? 1.0 : 0.0)
+                array.push(bkA, bk)
+                if array.size(upA) > effMax
+                    array.shift(upA)
+                    array.shift(dnA)
+                    array.shift(blA)
+                    array.shift(bkA)
+                if not na(prevRange)
+                    array.push(rgA, prevRange)
+                    if array.size(rgA) > 500
+                        array.shift(rgA)
+
+                // ---- throttled recompute of cached statistics ----
+                // The estimate barely moves between adjacent periods once the
+                // sample is large, so recomputing every bar is wasted work.
+                int n = array.size(upA)
+                sinceRe += 1
+                int reEvery = n < 250 ? 1 : 25
+                if sinceRe >= reEvery or barstate.islast
+                    sinceRe := 0
+                    if cond == "Prior range tercile" and array.size(rgA) >= 30
+                        terc1 := array.percentile_linear_interpolation(rgA, 33.3333)
+                        terc2 := array.percentile_linear_interpolation(rgA, 66.6667)
+                    for b = 0 to nb - 1
+                        array.clear(f0)
+                        array.clear(f1)
+                        array.clear(f2)
+                        array.clear(f3)
+                        // n is at least 1 here: the current period was just pushed
+                        for i = 0 to n - 1
+                            if nb == 1 or int(array.get(bkA, i)) == b
+                                float u = array.get(upA, i)
+                                float d = array.get(dnA, i)
+                                if uncond
+                                    array.push(f0, u)
+                                    array.push(f1, d)
+                                    array.push(f2, u)
+                                    array.push(f3, d)
+                                else if array.get(blA, i) > 0.5
+                                    array.push(f1, d)
+                                    array.push(f2, u)
+                                else
+                                    array.push(f0, u)
+                                    array.push(f3, d)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 0, f0, hl, pM)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 1, f1, hl, pM)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 2, f2, hl, pD)
+                        f_store(cM, cD, cP, cS, cN, 4 * b + 3, f3, hl, pD)
+
+    // ---- assemble the result for the period about to be projected ----
+    float atrNow = close[1] > 0 ? atrSeries[1] / close[1] : na
+    float pcNow = close[2]
+    float rangeNow = na(close[2]) or close[2] == 0 ? na : (high[2] - low[2]) / close[2]
+    int bkNow = f_bucket(cond, nb, open[1], pcNow, rangeNow, terc1, terc2, atrNow, time)
+    int bn = 4 * bkNow
+
+    Res out = Res.new()
+    out.m0 := array.get(cM, bn + 0)
+    out.d0 := array.get(cD, bn + 0)
+    out.p0 := array.get(cP, bn + 0)
+    out.s0 := array.get(cS, bn + 0)
+    out.n0 := array.get(cN, bn + 0)
+    out.m1 := array.get(cM, bn + 1)
+    out.d1 := array.get(cD, bn + 1)
+    out.p1 := array.get(cP, bn + 1)
+    out.s1 := array.get(cS, bn + 1)
+    out.n1 := array.get(cN, bn + 1)
+    out.m2 := array.get(cM, bn + 2)
+    out.d2 := array.get(cD, bn + 2)
+    out.p2 := array.get(cP, bn + 2)
+    out.s2 := array.get(cS, bn + 2)
+    out.n2 := array.get(cN, bn + 2)
+    out.m3 := array.get(cM, bn + 3)
+    out.d3 := array.get(cD, bn + 3)
+    out.p3 := array.get(cP, bn + 3)
+    out.s3 := array.get(cS, bn + 3)
+    out.n3 := array.get(cN, bn + 3)
+    out.rd0 := f_reachRate(array.get(ocs, 0))
+    out.hd0 := f_holdRate(array.get(ocs, 0))
+    out.rd1 := f_reachRate(array.get(ocs, 1))
+    out.hd1 := f_holdRate(array.get(ocs, 1))
+    out.rd2 := f_reachRate(array.get(ocs, 2))
+    out.hd2 := f_holdRate(array.get(ocs, 2))
+    out.rd3 := f_reachRate(array.get(ocs, 3))
+    out.hd3 := f_holdRate(array.get(ocs, 3))
+    out.rp0 := f_reachRate(array.get(ocs, 4))
+    out.hp0 := f_holdRate(array.get(ocs, 4))
+    out.rp1 := f_reachRate(array.get(ocs, 5))
+    out.hp1 := f_holdRate(array.get(ocs, 5))
+    out.rp2 := f_reachRate(array.get(ocs, 6))
+    out.hp2 := f_holdRate(array.get(ocs, 6))
+    out.rp3 := f_reachRate(array.get(ocs, 7))
+    out.hp3 := f_holdRate(array.get(ocs, 7))
+    out.evalN := array.size(array.get(ocs, 0).reach)
+    out.bothR := bothN > 0 ? bothHit / bothN : na
+    out.atrP  := atrNow
+    out.swpBullN := swpBullN
+    out.c2BullN  := c2BullN
+    out.swpBearN := swpBearN
+    out.c2BearN  := c2BearN
+    out.expBullN := expBullN
+    out.expBullD := expBullD
+    out.expBullP := expBullP
+    out.expBullC := expBullC
+    out.expBearN := expBearN
+    out.expBearD := expBearD
+    out.expBearP := expBearP
+    out.expBearC := expBearC
+    out
+
+//#endregion
+
+//#region [FEEDS AND POOLING]
+
+statSym1 = useCustomFeed ? sym1 : syminfo.tickerid
+
+s1 = request.security(statSym1, htf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, true))
+s2 = request.security(sym2,     htf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
+s3 = request.security(sym3,     htf, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
+
+// Volatility scale is always taken from the CHART symbol, so ATR-normalized
+// ratios borrowed from another provider land on the right absolute size here.
+chartAtrP = request.security(syminfo.tickerid, htf, ta.atr(atrLen)[1] / close[1])
+
+// Extra timeframes for confluence use the primary feed only.
+sB = request.security(statSym1, tfB, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
+sC = request.security(statSym1, tfC, f_engine(sampleLen, atrLen, transform, recOn, halfLife, condMode, nBuckets, uncondMode, pctM, pctD, minSample, false))
+chartAtrB = request.security(syminfo.tickerid, tfB, ta.atr(atrLen)[1] / close[1])
+chartAtrC = request.security(syminfo.tickerid, tfC, ta.atr(atrLen)[1] / close[1])
+
+// A feed returns na for bars that predate its history — Coinbase has no 2011,
+// SPY has no 1970 — and reading a field off an na object is a runtime error, not
+// a silent na. Substitute an empty result so a feed that does not reach this far
+// back contributes nothing instead of taking the whole script down.
+var Res EMPTY = Res.new()
+e1 = na(s1) ? EMPTY : s1
+e2 = na(s2) ? EMPTY : s2
+e3 = na(s3) ? EMPTY : s3
+eB = na(sB) ? EMPTY : sB
+eC = na(sC) ? EMPTY : sC
+
+// Sample-size-weighted blend. For the mean this is exact; for median and
+// percentile it is an approximation, which is acceptable because pooled feeds
+// track the same asset and their quantiles sit close together.
+f_pool(float a, float b, float c, float na_, float nb_, float nc_) =>
+    float w1 = na(a) ? 0.0 : nz(na_)
+    float w2 = use2 and not na(b) ? nz(nb_) : 0.0
+    float w3 = use3 and not na(c) ? nz(nc_) : 0.0
+    float tot = w1 + w2 + w3
+    tot > 0 ? (nz(a) * w1 + nz(b) * w2 + nz(c) * w3) / tot : na
+
+f_poolN(float a, float b, float c) =>
+    nz(a) + (use2 ? nz(b) : 0.0) + (use3 ? nz(c) : 0.0)
+
+// role 0 = +M, 1 = -M, 2 = +D, 3 = -D
+n0 = f_poolN(e1.n0, e2.n0, e3.n0)
+n1 = f_poolN(e1.n1, e2.n1, e3.n1)
+n2 = f_poolN(e1.n2, e2.n2, e3.n2)
+n3 = f_poolN(e1.n3, e2.n3, e3.n3)
+
+mean0 = f_pool(e1.m0, e2.m0, e3.m0, e1.n0, e2.n0, e3.n0)
+mean1 = f_pool(e1.m1, e2.m1, e3.m1, e1.n1, e2.n1, e3.n1)
+mean2 = f_pool(e1.m2, e2.m2, e3.m2, e1.n2, e2.n2, e3.n2)
+mean3 = f_pool(e1.m3, e2.m3, e3.m3, e1.n3, e2.n3, e3.n3)
+med0  = f_pool(e1.d0, e2.d0, e3.d0, e1.n0, e2.n0, e3.n0)
+med1  = f_pool(e1.d1, e2.d1, e3.d1, e1.n1, e2.n1, e3.n1)
+med2  = f_pool(e1.d2, e2.d2, e3.d2, e1.n2, e2.n2, e3.n2)
+med3  = f_pool(e1.d3, e2.d3, e3.d3, e1.n3, e2.n3, e3.n3)
+pct0  = f_pool(e1.p0, e2.p0, e3.p0, e1.n0, e2.n0, e3.n0)
+pct1  = f_pool(e1.p1, e2.p1, e3.p1, e1.n1, e2.n1, e3.n1)
+pct2  = f_pool(e1.p2, e2.p2, e3.p2, e1.n2, e2.n2, e3.n2)
+pct3  = f_pool(e1.p3, e2.p3, e3.p3, e1.n3, e2.n3, e3.n3)
+
+// Standard error of the mean: sd / sqrt(n). The honest width of the estimate.
+f_se(float sd, float n) => na(sd) or nz(n) < 2 ? na : sd / math.sqrt(n)
+se0 = f_se(e1.s0, e1.n0)
+se1 = f_se(e1.s1, e1.n1)
+se2 = f_se(e1.s2, e1.n2)
+se3 = f_se(e1.s3, e1.n3)
+
+smallestN = math.min(math.min(n0, n1), math.min(n2, n3))
+hasStats  = smallestN >= 5
+thin      = smallestN < minSample
+
+// ---- the premise, as rates ----
+// Of the periods that swept the prior period, how many closed back inside it.
+premBull = e1.swpBullN > 0 ? e1.c2BullN / e1.swpBullN : na
+premBear = e1.swpBearN > 0 ? e1.c2BearN / e1.swpBearN : na
+// After a confirmed C2, how often the expansion candle reached its target.
+expBullR = e1.expBullN > 0 ? e1.expBullD / e1.expBullN : na
+expBullQ = e1.expBullN > 0 ? e1.expBullP / e1.expBullN : na
+expBullU = e1.expBullN > 0 ? e1.expBullC / e1.expBullN : na
+expBearR = e1.expBearN > 0 ? e1.expBearD / e1.expBearN : na
+expBearQ = e1.expBearN > 0 ? e1.expBearP / e1.expBearN : na
+expBearU = e1.expBearN > 0 ? e1.expBearC / e1.expBearN : na
+// The rate the target label carries, matched to the statistic it is drawn on.
+tgtRateBull = tgtStat == 'Percentile' ? expBullQ : expBullR
+tgtRateBear = tgtStat == 'Percentile' ? expBearQ : expBearR
+
+//#endregion
+
+//#region [PERIOD ANCHOR AND LEVELS]
+
+// One boundary drives everything: the structure's candles and the map's levels
+// are anchored to the same open.
+periodChanged = ta.change(time(htf)) != 0
+
+var float curO      = na
+var int   startTime = na
+if periodChanged
+    curO := open
+    startTime := time
+
+appliedAtr = transform == "Log + ATR" ? chartAtrP : na
+
+lvlPMm = f_lvl(transform, mean0, curO, appliedAtr, true)
+lvlPMd = f_lvl(transform, med0,  curO, appliedAtr, true)
+lvlPMp = f_lvl(transform, pct0,  curO, appliedAtr, true)
+lvlNMm = f_lvl(transform, mean1, curO, appliedAtr, false)
+lvlNMd = f_lvl(transform, med1,  curO, appliedAtr, false)
+lvlNMp = f_lvl(transform, pct1,  curO, appliedAtr, false)
+lvlPDm = f_lvl(transform, mean2, curO, appliedAtr, true)
+lvlPDd = f_lvl(transform, med2,  curO, appliedAtr, true)
+lvlPDp = f_lvl(transform, pct2,  curO, appliedAtr, true)
+lvlNDm = f_lvl(transform, mean3, curO, appliedAtr, false)
+lvlNDd = f_lvl(transform, med3,  curO, appliedAtr, false)
+lvlNDp = f_lvl(transform, pct3,  curO, appliedAtr, false)
+
+// The level a confirmed setup expands into, and the level its C2 was expected to
+// have swept. Bullish structure reads the geometrically LOWER manipulation line,
+// which is the one Pro+ names "+ Manipulation" — the naming convention and the
+// model's direction are the same statement.
+tgtPxBull = tgtStat == 'Percentile' ? lvlPDp : lvlPDd
+tgtPxBear = tgtStat == 'Percentile' ? lvlNDp : lvlNDd
+
+// ===================== Timing accumulators (chart TF) =========================
+// Declared here rather than with the sequencing block below because the phase
+// markers are drawn at the period open and read them. They are written to
+// further down, so a marker drawn now reflects strictly completed periods —
+// walk-forward, same as the dashboard row it mirrors.
+var float seqN    = 0.0
+var float seqMwin = 0.0
+var float seqDwin = 0.0
+var float sumHiFr = 0.0
+var float sumLoFr = 0.0
+var float sumMFr  = 0.0
+var float mFrN    = 0.0
+var float extN    = 0.0
+
+// Depth: of the confirmed C2s seen on this chart, how many reached the
+// manipulation level that had been projected for that period.
+var float depthBullN   = 0.0
+var float depthBullHit = 0.0
+var float depthBearN   = 0.0
+var float depthBearHit = 0.0
+
+//#endregion
+
+//#region [LEVEL MAP DRAWING]
+
+// Colours are carried alongside the drawings because Pine can read a line's
+// coordinates back but not its colour, and a completed period has to be dimmed
+// from whatever colour it was originally given.
+type LevelGroup
+    array<line>     lines
+    array<color>    lineCols
+    array<linefill> fills
+    array<label>    labels
+    array<color>    labelCols
+    array<box>      boxes
+    array<color>    boxCols
+
+var array<LevelGroup> groups = array.new<LevelGroup>()
+var LevelGroup active = na
+
+f_newGroup() =>
+    LevelGroup.new(array.new<line>(), array.new<color>(), array.new<linefill>(),
+         array.new<label>(), array.new<color>(), array.new<box>(), array.new<color>())
+
+// x is a TIMESTAMP throughout this layer, not a bar index.
+mkLine(int x, float y, color c, string st, int w) =>
+    na(y) ? na : line.new(x, y, x + projMs, y, xloc=xloc.bar_time, color=c, style=st, width=w)
+
+// Transparent-background label with coloured text, set left of its anchor.
+mkLabel(int x, float y, string txt, color c) =>
+    na(y) ? na : label.new(x, y, txt, xloc=xloc.bar_time, style=label.style_label_left,
+         color=color.new(color.black, 100), textcolor=c, size=lvlLbl, textalign=text.align_left)
+
+f_add(LevelGroup g, line ln, color c) =>
+    if not na(ln)
+        array.push(g.lines, ln)
+        array.push(g.lineCols, c)
+
+f_addLbl(LevelGroup g, label lb, color c) =>
+    if not na(lb)
+        array.push(g.labels, lb)
+        array.push(g.labelCols, c)
+
+// Fade every drawing a group owns. Called on the previous period's group once a
+// new period opens, so the running map reads first without losing the record.
+f_dim(LevelGroup g) =>
+    if not na(g)
+        if array.size(g.lines) > 0
+            for i = 0 to array.size(g.lines) - 1
+                line.set_color(array.get(g.lines, i), color.new(array.get(g.lineCols, i), 70))
+        if array.size(g.labels) > 0
+            for i = 0 to array.size(g.labels) - 1
+                label.set_textcolor(array.get(g.labels, i), color.new(array.get(g.labelCols, i), 70))
+        if array.size(g.boxes) > 0
+            for i = 0 to array.size(g.boxes) - 1
+                box.set_bgcolor(array.get(g.boxes, i), color.new(array.get(g.boxCols, i), 80))
+    true
+
+// Band edges for a Zones-mode level, built from the same standard deviation the
+// dashboard already reports as ±SE. The ratio is widened in ratio space and then
+// converted to price, so the band respects the selected excursion measure.
+f_bandHi(float ratio, float sd, bool up) =>
+    na(ratio) or na(sd) or sd <= 0 ? float(na) : f_lvl(transform, ratio + bandMult * sd, curO, appliedAtr, up)
+
+f_bandLo(float ratio, float sd, bool up) =>
+    na(ratio) or na(sd) or sd <= 0 ? float(na) : f_lvl(transform, math.max(0.0, ratio - bandMult * sd), curO, appliedAtr, up)
+
+// Draw one side of one level family: mean, median and percentile.
+f_drawSet(LevelGroup g, int x, float vm, float vd, float vp, float bHi, float bLo, color col, int li) =>
+    line lm = showMean ? mkLine(x, vm, col, line.style_solid, lvlWidth) : na
+    line ld = showMed ? mkLine(x, vd, col, medStyle, lvlWidth) : na
+    line lp = showPct ? mkLine(x, vp, col, line.style_dotted, lvlWidth) : na
+    f_add(g, lm, col)
+    f_add(g, ld, col)
+    f_add(g, lp, col)
+    if drawMode == "Zones" and not na(bHi) and not na(bLo)
+        array.push(g.boxes, box.new(x, math.max(bHi, bLo), x + projMs, math.min(bHi, bLo),
+             xloc=xloc.bar_time, border_color=color.new(col, 100), bgcolor=color.new(col, 55)))
+        array.push(g.boxCols, color.new(col, 55))
+    else if showFill and not na(lm) and not na(ld)
+        array.push(g.fills, linefill.new(lm, ld, color.new(col, 86)))
+    if lblMode != "None"
+        float pShown = (li == 1 or li == 3) ? pctM : pctD
+        f_addLbl(g, showMean ? mkLabel(x, vm, f_lblTxt(li, "mu", vm), col) : na, col)
+        f_addLbl(g, showMed ? mkLabel(x, vd, f_lblTxt(li, "~", vd), col) : na, col)
+        f_addLbl(g, showPct ? mkLabel(x, vp, f_lblTxt(li, "p" + str.tostring(pShown, "#"), vp), col) : na, col)
+
+// Vertical marker at the average point inside the period where a phase has
+// historically completed, spanning the pair of levels it belongs to.
+f_timeMark(LevelGroup g, int x0, float frac, float yA, float yB, string tag) =>
+    if showTime and not na(frac) and not na(yA) and not na(yB)
+        int xm = x0 + int(math.round(frac * periodMs))
+        array.push(g.lines, line.new(xm, yA, xm, yB, xloc=xloc.bar_time, color=colTime, style=line.style_dotted, width=lvlWidth))
+        array.push(g.lineCols, colTime)
+        if showTimeL
+            label lb = label.new(xm, math.min(yA, yB), tag + " " + f_stamp(xm), xloc=xloc.bar_time,
+                 style=label.style_label_up, color=color.new(color.black, 100),
+                 textcolor=colTime, size=lvlLbl)
+            array.push(g.labels, lb)
+            array.push(g.labelCols, colTime)
+    true
+
+// ==================== Build a fresh map at each new period ====================
+if periodChanged and hasStats
+    g = f_newGroup()
+    if showO
+        f_add(g, mkLine(startTime, curO, colO, line.style_solid, lvlWidth), colO)
+        if lblMode != "None"
+            f_addLbl(g, mkLabel(startTime, curO, f_lblTxt(2, "", curO), colO), colO)
+    // Drawn top of the map to the bottom: +D, +M, open, -M, -D.
+    if showD
+        f_drawSet(g, startTime, lvlPDm, lvlPDd, lvlPDp, f_bandHi(med2, e1.s2, true), f_bandLo(med2, e1.s2, true), colD, 0)
+    if showM
+        f_drawSet(g, startTime, lvlPMm, lvlPMd, lvlPMp, f_bandHi(med0, e1.s0, true), f_bandLo(med0, e1.s0, true), colM, 1)
+        f_drawSet(g, startTime, lvlNMm, lvlNMd, lvlNMp, f_bandHi(med1, e1.s1, false), f_bandLo(med1, e1.s1, false), colM, 3)
+    if showD
+        f_drawSet(g, startTime, lvlNDm, lvlNDd, lvlNDp, f_bandHi(med3, e1.s3, false), f_bandLo(med3, e1.s3, false), colD, 4)
+    // Phase timing, from the same walk-forward accumulators the dashboard reports.
+    f_timeMark(g, startTime, mFrN > 0 ? sumMFr / mFrN : float(na), lvlPMd, lvlNMd, "M")
+    f_timeMark(g, startTime, extN > 0 ? sumHiFr / extN : float(na), lvlPDd, lvlNDd, "H")
+    f_timeMark(g, startTime, extN > 0 ? sumLoFr / extN : float(na), lvlPDd, lvlNDd, "L")
+
+    if histDim
+        f_dim(active)
+    array.push(groups, g)
+    active := g
+    if array.size(groups) > periodsShow
+        old = array.shift(groups)
+        for fl in old.fills
+            linefill.delete(fl)
+        for ln in old.lines
+            line.delete(ln)
+        for lb in old.labels
+            label.delete(lb)
+        for bx in old.boxes
+            box.delete(bx)
+
+if not na(active)
+    // "Period end" runs to the projected close of the period, or to the current
+    // bar once the period has overrun it. All of this is in milliseconds.
+    int periodEnd = startTime + int(periodMs)
+    rightX = extendTo == "Last bar" ? time :
+         extendTo == "Fixed bars" ? time + extBars * barMs :
+         periodEnd > time ? periodEnd : time
+    for ln in active.lines
+        // level lines are horizontal; the vertical timing markers keep their x
+        if line.get_y1(ln) == line.get_y2(ln)
+            line.set_x2(ln, rightX)
+    if array.size(active.labels) > 0
+        for i = 0 to array.size(active.labels) - 1
+            if array.get(active.labelCols, i) != colTime
+                label.set_x(array.get(active.labels, i), rightX)
+    for bx in active.boxes
+        box.set_right(bx, rightX)
+
+//#endregion
+
+//#region [STRUCTURE — TYPES AND STATE]
+
+type HtfCandle
+    float o
+    float h
+    float l
+    float c
+    int   hBar
+    int   lBar
+    box   body
+    line  wickUp
+    line  wickDown
+    line  eqLine
+    int   midX
+    line  sweepLine   = na
+    bool  triggerBuy  = false
+    bool  triggerSell = false
+
+type PeriodState
+    float prevHigh        = na
+    float prevLow         = na
+    int   prevHighBar     = na
+    int   prevLowBar      = na
+    float prevPrevHigh    = na
+    float prevPrevLow     = na
+    int   prevPrevHighBar = na
+    int   prevPrevLowBar  = na
+    bool  prevC2Buy       = false
+    bool  prevC2Sell      = false
+
+type StdDevData
+    array<line>  lines
+    array<label> labels
+
+type C2Setup
+    bool  isBull
+    float extreme
+    int   phase     = 1
+    bool  dead      = false
+    label c2Lbl
+    box   c3Box     = na
+    line  c3Dash    = na
+    float cisdLevel     = na
+    int   cisdIndex     = na
+    bool  cisdConfirmed = false
+    line  cisdLine      = na
+    label cisdLabel     = na
+    StdDevData stdDevData = na
+    box   c4Box     = na
+    line  c4Dash    = na
+    label c4Lbl     = na
+    float c4Top     = na
+    float c4Bottom  = na
+    bool  c4Invalid = false
+    // The statistical target this setup expands into.
+    line  tgtLine   = na
+    label tgtLbl    = na
+    float tgtPx     = na
+
+type SetupRecord
+    C2Setup setup
+    int     creationBar
+
+type EarlyCisdRecord
+    line  ln
+    label lbl
+    int   barIndex
+
+// Provisional C2 marker for the HTF candle that is still forming.
+type EarlySweep
+    bool  isBull
+    float extreme
+    int   extremeBar
+    label lbl
+    line  ln
+
+var array<HtfCandle>      htfCandles           = array.new<HtfCandle>()
+var array<line>           vLines               = array.new<line>()
+var array<line>           hLines               = array.new<line>()
+var array<line>           lLines               = array.new<line>()
+var PeriodState           state                = PeriodState.new()
+var C2Setup               buySetup             = na
+var C2Setup               sellSetup            = na
+var array<SetupRecord>    setupRecords         = array.new<SetupRecord>()
+var array<EarlyCisdRecord> bullEarlyCisdRecords = array.new<EarlyCisdRecord>()
+var array<EarlyCisdRecord> bearEarlyCisdRecords = array.new<EarlyCisdRecord>()
+var EarlySweep            bullEarlySweep       = na
+var EarlySweep            bearEarlySweep       = na
+var int                   htfOpenBar           = na
+var line                  htfOpenLn            = na
+
+//#endregion
+
+//#region [STRUCTURE — HELPERS]
+
+directionalLabel(int xBar, float yPrice, string txt, bool bullish) =>
+    label.new(xBar, yPrice, text=txt, xloc=xloc.bar_index, yloc=yloc.price, style=bullish ? label.style_label_up : label.style_label_down, color=na, textcolor=color.gray, size=structSize, text_font_family=font.family_monospace)
+
+eqLineColor() => showEQ ? eqColor : noColor
+
+drawSweepLine(int fromBar, float fromPrice, int toBar) =>
+    line ln = showSweep ? line.new(fromBar, fromPrice, toBar, fromPrice, color=sweepColor, style=lineStyleFromStr(sweepStyle), width=sweepWidth) : na
+    ln
+
+newLHLine(float price) =>
+    line.new(bar_index, price, bar_index, price, xloc.bar_index, extend.none, lhColor, lineStyleFromStr(lhStyle), lhWidth)
+
+updateLHLine(line ln, float price) =>
+    line.set_xy1(ln, line.get_x1(ln), price)
+    line.set_xy2(ln, bar_index, price)
+    line.set_color(ln, lhColor)
+    line.set_style(ln, lineStyleFromStr(lhStyle))
+    line.set_width(ln, lhWidth)
+
+method delete(HtfCandle c) =>
+    box.delete(c.body)
+    line.delete(c.wickUp)
+    line.delete(c.wickDown)
+    line.delete(c.eqLine)
+    line.delete(c.sweepLine)
+
+method update(HtfCandle c, float curH, float curL, float curC, int curBar) =>
+    if curH > c.h
+        c.h    := curH
+        c.hBar := curBar
+    if curL < c.l
+        c.l    := curL
+        c.lBar := curBar
+    c.c := curC
+    c
+
+method draw(HtfCandle c, int leftBar) =>
+    bool  isBull = c.c >= c.o
+    int   midX   = leftBar + 1
+    float eqPx   = (c.h + c.l) / 2
+    box.set_left(c.body, leftBar)
+    box.set_right(c.body, leftBar + 2)
+    box.set_top(c.body, math.max(c.o, c.c))
+    box.set_bottom(c.body, math.min(c.o, c.c))
+    box.set_bgcolor(c.body, isBull ? bullBody : bearBody)
+    box.set_border_color(c.body, isBull ? borderBull : borderBear)
+    line.set_x1(c.wickUp, midX)
+    line.set_x2(c.wickUp, midX)
+    line.set_y1(c.wickUp, c.h)
+    line.set_y2(c.wickUp, math.max(c.o, c.c))
+    line.set_color(c.wickUp, isBull ? wickBull : wickBear)
+    line.set_x1(c.wickDown, midX)
+    line.set_x2(c.wickDown, midX)
+    line.set_y1(c.wickDown, c.l)
+    line.set_y2(c.wickDown, math.min(c.o, c.c))
+    line.set_color(c.wickDown, isBull ? wickBull : wickBear)
+    line.set_x1(c.eqLine, midX)
+    line.set_x2(c.eqLine, midX)
+    line.set_y1(c.eqLine, eqPx)
+    line.set_y2(c.eqLine, eqPx)
+    line.set_color(c.eqLine, eqLineColor())
+    line.set_style(c.eqLine, lineStyleFromStr(eqStyle))
+    line.set_width(c.eqLine, eqWidth)
+    c.midX := midX
+
+newHtfCandle() =>
+    HtfCandle.new(open, high, low, close, bar_index, bar_index,
+         box.new(bar_index, high, bar_index, low, border_color=borderBull, border_width=1),
+         line.new(bar_index, high, bar_index, high, color=wickBull),
+         line.new(bar_index, low, bar_index, low, color=wickBull),
+         line.new(bar_index, high, bar_index, high, color=noColor),
+         na)
+
+drawEarlyCisd(bool isBull, float level, int idx, int confirmBar) =>
+    array<EarlyCisdRecord> target = isBull ? bullEarlyCisdRecords : bearEarlyCisdRecords
+    if showEarlyCisd
+        ln = line.new(idx, level, confirmBar + 3, level, color=earlyCisdColor, style=lineStyleFromStr(earlyCisdStyle), width=earlyCisdWidth)
+        label lbl = na
+        if showLabels
+            lbl := label.new(confirmBar + 3, level, isBull ? '+CISD' : '-CISD', xloc=xloc.bar_index, style=label.style_label_left, color=na, textcolor=earlyCisdColor, size=structSize, text_font_family=font.family_monospace)
+        target.push(EarlyCisdRecord.new(ln, lbl, confirmBar))
+    if showAlerts and showEarlyCisdAlerts
+        alert((isBull ? 'Bullish' : 'Bearish') + ' Early CISD confirmed on ' + syminfo.ticker, alert.freq_once_per_bar)
+
+pruneEarlyCisd(array<EarlyCisdRecord> recs, int thresholdBar) =>
+    if not na(thresholdBar)
+        while recs.size() > 0 and recs.first().barIndex < thresholdBar
+            evicted = recs.shift()
+            line.delete(evicted.ln)
+            if not na(evicted.lbl)
+                label.delete(evicted.lbl)
+
+consumeLastEarlyCisd(array<EarlyCisdRecord> recs) =>
+    if recs.size() > 0
+        evicted = recs.pop()
+        line.delete(evicted.ln)
+        if not na(evicted.lbl)
+            label.delete(evicted.lbl)
+
+parseFloats(string src) =>
+    var out = array.new<float>()
+    array.clear(out)
+    for part in str.split(str.replace_all(src, ' ', ''), ',')
+        v = str.tonumber(part)
+        if not na(v)
+            out.push(v)
+    out
+
+createStdDevProjections(C2Setup s, int confirmBar) =>
+    if showStdDev
+        devs = parseFloats(stdDevInput)
+        if devs.size() > 0
+            off     = bar_index - s.cisdIndex
+            useWick = stdDevCalc == 'Wick'
+
+            level0 = s.cisdLevel
+            level1 = s.extreme
+            if not useWick
+                for j = 0 to 50
+                    if s.isBull ? low[j] == s.extreme : high[j] == s.extreme
+                        level1 := s.isBull ? math.min(open[j], close[j]) : math.max(open[j], close[j])
+                        break
+
+            leftBar = s.cisdIndex
+            if s.cisdIndex < bar_index
+                prevBetter = s.isBull
+                     ? (useWick ? high[off + 1] > high[off] : math.max(open[off + 1], close[off + 1]) > math.max(open[off], close[off]))
+                     : (useWick ? low[off + 1]  < low[off]  : math.min(open[off + 1], close[off + 1]) < math.min(open[off], close[off]))
+                if prevBetter
+                    leftBar := s.cisdIndex - 1
+
+            rightBar   = confirmBar + 3
+            priceRange = s.isBull ? level0 - level1 : level1 - level0
+            lns        = array.new<line>()
+            lbs        = array.new<label>()
+
+            for dev in devs
+                devPrice = s.isBull ? level0 - priceRange * dev : level0 + priceRange * dev
+                lns.push(line.new(leftBar, devPrice, rightBar, devPrice, xloc=xloc.bar_index, color=stdDevColor, width=stdDevWidth, style=lineStyleFromStr(stdDevStyle)))
+                if showLabels
+                    lbs.push(label.new(rightBar, devPrice, str.tostring(dev) + '  ' + str.tostring(devPrice, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=na, textcolor=stdDevColor, size=structSize, text_font_family=font.family_monospace))
+
+            s.stdDevData := StdDevData.new(lns, lbs)
+
+confirmCisd(C2Setup s, int confirmBar) =>
+    s.cisdConfirmed := true
+    showLine = s.isBull ? showBullCisd : showBearCisd
+    clr      = s.isBull ? cisdBullColor : cisdBearColor
+    lnStyle  = s.isBull ? cisdBullStyle : cisdBearStyle
+    lnWidth  = s.isBull ? cisdBullWidth : cisdBearWidth
+    if showLine
+        s.cisdLine := line.new(s.cisdIndex, s.cisdLevel, confirmBar + 3, s.cisdLevel, color=clr, style=lineStyleFromStr(lnStyle), width=lnWidth)
+        if showLabels
+            s.cisdLabel := label.new(confirmBar + 3, s.cisdLevel, s.isBull ? '+CISD' : '-CISD', xloc=xloc.bar_index, style=label.style_label_left, color=na, textcolor=clr, size=structSize, text_font_family=font.family_monospace)
+    createStdDevProjections(s, confirmBar)
+
+//#endregion
+
+//#region [STRUCTURE — SETUP LIFECYCLE]
+
+drawPhase(bool isBull, bool isC4) =>
+    mid   = (state.prevHigh + state.prevLow) / 2
+    top   = math.max(open, mid)
+    bot   = math.min(open, mid)
+    yDash = isBull ? bot : top
+    bxCol = isBull ? tSpotBullColor : tSpotBearColor
+    box   bx   = showTSpot ? box.new(bar_index, top, bar_index, bot, border_color=na, bgcolor=bxCol) : na
+    line  dash = showEQ ? line.new(bar_index, yDash, bar_index, yDash, color=eqColor, width=eqWidth, style=lineStyleFromStr(eqStyle)) : na
+    label lbl  = na
+    if isC4 and showTSpot and showLabels and validTf
+        lbl := directionalLabel(bar_index + 2, isBull ? bot : top, 'C4', isBull)
+    [bx, dash, lbl, top, bot]
+
+// The join between the two halves. A confirmed C2 says the expansion is due;
+// the projected distribution level of the period now opening says where it is
+// due to reach, and the rate says how often it got there after a C2 like this.
+drawTarget(C2Setup s) =>
+    float px = s.isBull ? tgtPxBull : tgtPxBear
+    float rt = s.isBull ? tgtRateBull : tgtRateBear
+    if showTgt and not na(px) and hasStats
+        s.tgtPx   := px
+        s.tgtLine := line.new(bar_index, px, bar_index + 3, px, xloc=xloc.bar_index, color=colD, style=lineStyleFromStr(tgtStyle), width=tgtWidth)
+        if showLabels
+            string txt = (s.isBull ? '+D ' : '-D ') + str.tostring(px, format.mintick) + (na(rt) ? '' : '   ' + f_rate(rt))
+            s.tgtLbl := label.new(bar_index + 3, px, txt, xloc=xloc.bar_index, style=label.style_label_left, color=na, textcolor=colD, size=structSize, text_font_family=font.family_monospace)
+    s
+
+deleteTarget(C2Setup s) =>
+    if not na(s.tgtLine)
+        line.delete(s.tgtLine)
+        s.tgtLine := na
+    if not na(s.tgtLbl)
+        label.delete(s.tgtLbl)
+        s.tgtLbl := na
+    s.tgtPx := na
+    s
+
+deleteSetupVisuals(C2Setup s) =>
+    if not na(s)
+        if not na(s.c2Lbl)
+            label.delete(s.c2Lbl)
+        if not na(s.cisdLine)
+            line.delete(s.cisdLine)
+        if not na(s.cisdLabel)
+            label.delete(s.cisdLabel)
+        if not na(s.c3Box)
+            box.delete(s.c3Box)
+        if not na(s.c3Dash)
+            line.delete(s.c3Dash)
+        if not na(s.c4Box)
+            box.delete(s.c4Box)
+        if not na(s.c4Dash)
+            line.delete(s.c4Dash)
+        if not na(s.c4Lbl)
+            label.delete(s.c4Lbl)
+        if not na(s.tgtLine)
+            line.delete(s.tgtLine)
+        if not na(s.tgtLbl)
+            label.delete(s.tgtLbl)
+        if not na(s.stdDevData)
+            if not na(s.stdDevData.lines)
+                for ln in s.stdDevData.lines
+                    line.delete(ln)
+            if not na(s.stdDevData.labels)
+                for lb in s.stdDevData.labels
+                    label.delete(lb)
+
+registerRecord(C2Setup s) =>
+    setupRecords.push(SetupRecord.new(s, bar_index))
+    while showHistory > 0 and setupRecords.size() > showHistory
+        evicted = setupRecords.shift()
+        deleteSetupVisuals(evicted.setup)
+    earliestVisibleBar = setupRecords.size() > 0 ? setupRecords.first().creationBar : na
+    pruneEarlyCisd(bullEarlyCisdRecords, earliestVisibleBar)
+    pruneEarlyCisd(bearEarlyCisdRecords, earliestVisibleBar)
+
+// Draws the provisional C2 marker: the swept C1 level plus a label pinned to the
+// running extreme of the HTF candle that is still forming.
+newEarlySweep(bool isBull, float extremePrice, int extremeBar, float sweptLevel, int sweptBar) =>
+    line ln = line.new(sweptBar, sweptLevel, bar_index, sweptLevel, xloc.bar_index, extend.none, earlyC2Color, lineStyleFromStr(earlyC2Style), earlyC2Width)
+    label lbl = na
+    if showLabels and validTf
+        lbl := label.new(extremeBar, extremePrice, text='C2', xloc=xloc.bar_index, yloc=yloc.price, style=isBull ? label.style_label_up : label.style_label_down, color=na, textcolor=earlyC2Color, size=structSize, text_font_family=font.family_monospace)
+    EarlySweep.new(isBull, extremePrice, extremeBar, lbl, ln)
+
+method trackExtreme(EarlySweep s, float extremePrice, int extremeBar) =>
+    if not na(s)
+        line.set_x2(s.ln, bar_index)
+        extended = s.isBull ? extremePrice < s.extreme : extremePrice > s.extreme
+        if extended
+            s.extreme    := extremePrice
+            s.extremeBar := extremeBar
+            if not na(s.lbl)
+                label.set_xy(s.lbl, extremeBar, extremePrice)
+    s
+
+clearEarlySweep(EarlySweep s) =>
+    if not na(s)
+        line.delete(s.ln)
+        if not na(s.lbl)
+            label.delete(s.lbl)
+    EarlySweep cleared = na
+    cleared
+
+newSetup(bool isBull, float extreme, label c2Lbl, float cisdLevel, int cisdIndex, bool cisdAlreadyConfirmed, int cisdConfirmBar) =>
+    s = C2Setup.new(isBull, extreme, 1, false, c2Lbl)
+    [bx, dash, _, _, _] = drawPhase(isBull, false)
+    s.c3Box     := bx
+    s.c3Dash    := dash
+    s.cisdLevel := cisdLevel
+    s.cisdIndex := cisdIndex
+    if cisdAlreadyConfirmed and not na(cisdLevel) and not na(cisdIndex) and not na(cisdConfirmBar)
+        confirmCisd(s, cisdConfirmBar)
+    drawTarget(s)
+    registerRecord(s)
+    s
+
+method advanceToC4(C2Setup s) =>
+    if not na(s.c3Box)
+        box.set_right(s.c3Box, bar_index)
+        line.set_x2(s.c3Dash, bar_index)
+    [bx, dash, lbl, top, bot] = drawPhase(s.isBull, true)
+    s.c4Box     := bx
+    s.c4Dash    := dash
+    s.c4Lbl     := lbl
+    s.c4Top     := top
+    s.c4Bottom  := bot
+    s.phase     := 2
+    s.c4Invalid := false
+    s
+
+method finish(C2Setup s) =>
+    if not na(s.c4Box)
+        box.set_right(s.c4Box, bar_index)
+        line.set_x2(s.c4Dash, bar_index)
+    s.phase := 0
+    s
+
+method deleteStdDev(C2Setup s) =>
+    if not na(s.stdDevData)
+        if not na(s.stdDevData.lines)
+            for ln in s.stdDevData.lines
+                line.delete(ln)
+        if not na(s.stdDevData.labels)
+            for lb in s.stdDevData.labels
+                label.delete(lb)
+        s.stdDevData := na
+    s
+
+method extendAndCheck(C2Setup s) =>
+    if not na(s) and not s.dead and s.phase != 0
+        box  extBox  = s.phase == 1 ? s.c3Box : s.c4Box
+        line extDash = s.phase == 1 ? s.c3Dash : s.c4Dash
+        if not na(extBox)
+            box.set_right(extBox, bar_index)
+            line.set_x2(extDash, bar_index)
+        if not na(s.tgtLine)
+            line.set_x2(s.tgtLine, bar_index + 3)
+            if not na(s.tgtLbl)
+                label.set_x(s.tgtLbl, bar_index + 3)
+
+        c2Breach = s.isBull ? low < s.extreme : high > s.extreme
+        if c2Breach
+            if not na(s.c2Lbl)
+                label.set_text(s.c2Lbl, 'XC2')
+                label.set_textcolor(s.c2Lbl, s.phase == 2 ? color.orange : color.red)
+            if not na(s.c3Box)
+                box.delete(s.c3Box)
+                s.c3Box := na
+            if not na(s.c3Dash)
+                line.delete(s.c3Dash)
+                s.c3Dash := na
+            if not na(s.c4Box)
+                box.delete(s.c4Box)
+                s.c4Box := na
+            if not na(s.c4Dash)
+                line.delete(s.c4Dash)
+                s.c4Dash := na
+            if not na(s.c4Lbl)
+                label.delete(s.c4Lbl)
+                s.c4Lbl := na
+            // The target rested on the C2 holding. It did not, so it goes.
+            deleteTarget(s)
+            s.deleteStdDev()
+            s.dead  := true
+            s.phase := 0
+    s
+
+method checkC4Invalid(C2Setup s) =>
+    if not na(s) and not s.dead and s.phase == 2 and not s.c4Invalid
+        invalid = s.isBull ? close[1] < s.c4Bottom : close[1] > s.c4Top
+        if invalid
+            s.c4Invalid := true
+            if not na(s.c4Lbl)
+                label.set_text(s.c4Lbl, 'XC4')
+                label.set_textcolor(s.c4Lbl, color.red)
+            if not na(s.c4Dash)
+                line.set_color(s.c4Dash, color.red)
+            if not na(s.c4Box)
+                box.delete(s.c4Box)
+                s.c4Box := na
+    s
+
+method checkCisdConfirm(C2Setup s) =>
+    if not na(s) and not s.dead and not s.cisdConfirmed and s.phase != 0 and not na(s.cisdLevel) and not na(s.cisdIndex)
+        confirmed = s.isBull ? close > s.cisdLevel : close < s.cisdLevel
+        if confirmed
+            confirmCisd(s, bar_index)
+    s
+
+// Has the running setup already reached the level it was given? A setup that
+// died took its target with it, so only a live one can answer yes.
+method tgtReached(C2Setup s) =>
+    bool hit = false
+    if not na(s) and not s.dead and s.phase != 0 and not na(s.tgtPx)
+        hit := s.isBull ? high >= s.tgtPx : low <= s.tgtPx
+    hit
+
+markTrigger(bool trigger, bool allow, int idx, bool isBuy) =>
+    if trigger and allow and htfCandles.size() > idx
+        c = htfCandles.get(idx)
+        if isBuy
+            c.triggerBuy := true
+        else
+            c.triggerSell := true
+
+//#endregion
+
+//#region [STRUCTURE — LOGIC]
+
+// ---- higher timeframe, aggregated from chart bars ----
+// Not requested with lookahead: everything below is evaluated from bars that
+// have printed, so the same conditions hold on history and in real time.
+var float o0 = open
+var float h0 = high
+var float l0 = low
+var float o1 = open
+var float h1 = high
+var float l1 = low
+var int   h0Bar = bar_index
+var int   l0Bar = bar_index
+var int   h1Bar = na
+var int   l1Bar = na
+var int   periodsSeen = 0
+
+if periodChanged
+    periodsSeen += 1
+    o1 := o0[1]
+    h1 := h0[1]
+    l1 := l0[1]
+    h1Bar := h0Bar[1]
+    l1Bar := l0Bar[1]
+    o0 := open
+    h0 := high
+    l0 := low
+    h0Bar := bar_index
+    l0Bar := bar_index
+
+if high >= h0
+    h0    := high
+    h0Bar := bar_index
+if low <= l0
+    l0    := low
+    l0Bar := bar_index
+
+// C1 must be a period tracked end to end, so the first (partial) period in the
+// loaded history is never used as the swept candle.
+htfReady = periodsSeen >= 2
+
+// The model's own conditions: C2 runs C1's extreme and closes back inside it.
+c2Buy  = htfReady and not na(l1) and l0 < l1 and close > l1
+c2Sell = htfReady and not na(h1) and h0 > h1 and close < h1
+
+bool barUp   = close > open
+bool barDn   = close < open
+bool barFlat = close == open
+
+// ---- CISD levels on the chart timeframe ----
+var float bullLevelFixed = na
+var int   bullIndexFixed = na
+var float bearLevelFixed = na
+var int   bearIndexFixed = na
+
+if low == l0 and low < l1
+    if (barDn[0] or barFlat[0]) and (barUp[1] or barFlat[1]) and not (barFlat[0] and barFlat[1])
+        bullLevelFixed := open
+        bullIndexFixed := bar_index
+    else
+        for i = 2 to 10
+            if low[i] < low
+                break
+            if (barUp[i] or barFlat[i]) and barDn[i - 1]
+                b = i - 1
+                bullLevelFixed := open[b]
+                bullIndexFixed := bar_index - b
+                for j = b to 0
+                    if open[j] > bullLevelFixed and barDn[j]
+                        bullLevelFixed := open[j]
+                        bullIndexFixed := bar_index - j
+                if bullLevelFixed < open
+                    bullLevelFixed := close > open ? high : open
+                    bullIndexFixed := bar_index
+                break
+
+if high == h0 and high > h1
+    if (barUp[0] or barFlat[0]) and (barDn[1] or barFlat[1]) and not (barFlat[0] and barFlat[1])
+        bearLevelFixed := open
+        bearIndexFixed := bar_index
+    else
+        for i = 2 to 10
+            if high[i] > high
+                break
+            if (barDn[i] or barFlat[i]) and barUp[i - 1]
+                yb = i - 1
+                bearLevelFixed := open[yb]
+                bearIndexFixed := bar_index - yb
+                for j = yb to 0
+                    if open[j] < bearLevelFixed and barUp[j]
+                        bearLevelFixed := open[j]
+                        bearIndexFixed := bar_index - j
+                if bearLevelFixed > open
+                    bearLevelFixed := close < open ? low : open
+                    bearIndexFixed := bar_index
+                break
+
+var bool bullReclaimed  = false
+var int  bullReclaimBar = na
+var bool bearReclaimed  = false
+var int  bearReclaimBar = na
+
+bullPeriodSweep = not na(l1) and l0 < l1
+bearPeriodSweep = not na(h1) and h0 > h1
+
+newBullLevel = not na(bullIndexFixed) and (na(bullIndexFixed[1]) or bullIndexFixed != bullIndexFixed[1])
+if newBullLevel
+    bullReclaimed  := false
+    bullReclaimBar := na
+if not na(bullLevelFixed) and not bullReclaimed and close > bullLevelFixed
+    bullReclaimed  := true
+    bullReclaimBar := bar_index
+    if bullPeriodSweep
+        drawEarlyCisd(true, bullLevelFixed, bullIndexFixed, bar_index)
+
+newBearLevel = not na(bearIndexFixed) and (na(bearIndexFixed[1]) or bearIndexFixed != bearIndexFixed[1])
+if newBearLevel
+    bearReclaimed  := false
+    bearReclaimBar := na
+if not na(bearLevelFixed) and not bearReclaimed and close < bearLevelFixed
+    bearReclaimed  := true
+    bearReclaimBar := bar_index
+    if bearPeriodSweep
+        drawEarlyCisd(false, bearLevelFixed, bearIndexFixed, bar_index)
+
+// ---- early C2: mark the sweep while the candle is still forming ----
+// The marker lives for one HTF period only. At the close it is cleared, and the
+// confirmed setup below redraws it permanently if the candle closed back inside.
+var bool bullSweptPeriod = false
+var bool bearSweptPeriod = false
+
+if periodChanged
+    bullEarlySweep  := clearEarlySweep(bullEarlySweep)
+    bearEarlySweep  := clearEarlySweep(bearEarlySweep)
+    bullSweptPeriod := false
+    bearSweptPeriod := false
+
+if bullPeriodSweep and allowBuy and htfReady and not na(l1Bar)
+    if not bullSweptPeriod
+        bullSweptPeriod := true
+        if showEarlyC2
+            bullEarlySweep := newEarlySweep(true, l0, l0Bar, l1, l1Bar)
+        if showAlerts and showEarlyC2Alerts
+            alert('Bullish C2 sweep forming on ' + syminfo.ticker, alert.freq_once_per_bar)
+    else
+        bullEarlySweep := bullEarlySweep.trackExtreme(l0, l0Bar)
+
+if bearPeriodSweep and allowSell and htfReady and not na(h1Bar)
+    if not bearSweptPeriod
+        bearSweptPeriod := true
+        if showEarlyC2
+            bearEarlySweep := newEarlySweep(false, h0, h0Bar, h1, h1Bar)
+        if showAlerts and showEarlyC2Alerts
+            alert('Bearish C2 sweep forming on ' + syminfo.ticker, alert.freq_once_per_bar)
+    else
+        bearEarlySweep := bearEarlySweep.trackExtreme(h0, h0Bar)
+
+// ---- HTF candle preview ----
+candleOffset = candleOffsetIn + 10
+
+if periodChanged
+    if htfCandles.size() > 0
+        newest             = htfCandles.first()
+        state.prevHigh    := newest.h
+        state.prevLow     := newest.l
+        state.prevHighBar := newest.hBar
+        state.prevLowBar  := newest.lBar
+    if htfCandles.size() > 1
+        prior                  = htfCandles.get(1)
+        state.prevPrevHigh    := prior.h
+        state.prevPrevLow     := prior.l
+        state.prevPrevHighBar := prior.hBar
+        state.prevPrevLowBar  := prior.lBar
+    htfCandles.unshift(newHtfCandle())
+    while htfCandles.size() > htfCandleCount
+        htfCandles.pop().delete()
+    htfOpenBar := bar_index
+    if showLH
+        if hLines.size() > 0
+            line.set_x2(hLines.first(), bar_index)
+            line.set_x2(lLines.first(), bar_index)
+        hLines.unshift(newLHLine(high))
+        lLines.unshift(newLHLine(low))
+        while hLines.size() > htfCandleCount
+            line.delete(hLines.pop())
+        while lLines.size() > htfCandleCount
+            line.delete(lLines.pop())
+else if htfCandles.size() > 0
+    htfCandles.set(0, htfCandles.first().update(high, low, close, bar_index))
+
+if showLH and htfCandles.size() > 0 and hLines.size() > 0
+    curCandle = htfCandles.first()
+    updateLHLine(hLines.first(), curCandle.h)
+    updateLHLine(lLines.first(), curCandle.l)
+
+if periodChanged
+    state.prevC2Buy  := c2Buy[1]
+    state.prevC2Sell := c2Sell[1]
+
+c2BuyTrigger  = periodChanged and state.prevC2Buy
+c2SellTrigger = periodChanged and state.prevC2Sell
+
+// ---- depth: did the confirmed C2 reach the manipulation level projected for it?
+// lockNM / lockPM below hold the levels that were in force during the period
+// that just closed, so they are read one bar back.
+var float lockPM = na
+var float lockNM = na
+var float lockPD = na
+var float lockND = na
+
+if c2BuyTrigger and allowBuy and not na(lockNM[1])
+    depthBullN += 1.0
+    if not na(l0[1]) and l0[1] <= lockNM[1]
+        depthBullHit += 1.0
+if c2SellTrigger and allowSell and not na(lockPM[1])
+    depthBearN += 1.0
+    if not na(h0[1]) and h0[1] >= lockPM[1]
+        depthBearHit += 1.0
+
+if c2BuyTrigger and allowBuy and bullReclaimed[1]
+    consumeLastEarlyCisd(bullEarlyCisdRecords)
+
+if c2SellTrigger and allowSell and bearReclaimed[1]
+    consumeLastEarlyCisd(bearEarlyCisdRecords)
+
+processC2(bool trigger, bool allow, bool isBull, float extremePrice, int extremeBar, float sweepFromPrice, int sweepFromBar, float cisdLevel, int cisdIndex, bool cisdAlreadyConfirmed, int cisdConfirmBar, C2Setup existing) =>
+    C2Setup result = existing
+    if trigger and allow
+        label lbl = (validTf and showLabels) ? directionalLabel(extremeBar, extremePrice, 'C2', isBull) : na
+        drawSweepLine(sweepFromBar, sweepFromPrice, bar_index)
+        result := newSetup(isBull, extremePrice, lbl, cisdLevel, cisdIndex, cisdAlreadyConfirmed, cisdConfirmBar)
+    else if periodChanged and not na(existing) and not existing.dead
+        result := existing.phase == 1 ? existing.advanceToC4() : existing.phase == 2 ? existing.finish() : existing
+    result
+
+buySetup  := processC2(c2BuyTrigger, allowBuy, true, state.prevLow, state.prevLowBar, state.prevPrevLow, state.prevPrevLowBar, bullLevelFixed[1], bullIndexFixed[1], bullReclaimed[1], bullReclaimBar[1], buySetup)
+sellSetup := processC2(c2SellTrigger, allowSell, false, state.prevHigh, state.prevHighBar, state.prevPrevHigh, state.prevPrevHighBar, bearLevelFixed[1], bearIndexFixed[1], bearReclaimed[1], bearReclaimBar[1], sellSetup)
+
+markTrigger(c2BuyTrigger, allowBuy, 2, true)
+markTrigger(c2SellTrigger, allowSell, 2, false)
+
+buySetup  := buySetup.extendAndCheck()
+sellSetup := sellSetup.extendAndCheck()
+
+buySetup  := buySetup.checkC4Invalid()
+sellSetup := sellSetup.checkC4Invalid()
+
+buySetup  := buySetup.checkCisdConfirm()
+sellSetup := sellSetup.checkCisdConfirm()
+
+if showVlines and periodChanged
+    vLines.unshift(line.new(bar_index, low - ta.tr, bar_index, high + ta.tr, xloc.bar_index, extend.both, lineColor, lineStyleFromStr(lineStyle), lineWidth))
+    while vLines.size() > htfCandleCount
+        line.delete(vLines.pop())
+
+//#endregion
+
+//#region [SEQUENCING AND TIMING (chart TF)]
+// Intra-period ordering is invisible on higher-timeframe bars, so this is
+// measured on the chart's own bars and carries its own smaller sample.
+var int   pBars  = 0
+var int   hiBar  = 0
+var int   loBar  = 0
+var float pHi    = na
+var float pLo    = na
+var bool  tagM   = false
+var bool  tagD   = false
+var int   firstM = -1
+var int   firstD = -1
+
+if periodChanged
+    if pBars > 1 and not na(pHi)
+        float span = math.max(1.0, float(pBars - 1))
+        sumHiFr += float(hiBar) / span
+        sumLoFr += float(loBar) / span
+        extN += 1.0
+        if firstM >= 0 or firstD >= 0
+            seqN += 1.0
+            if firstM >= 0 and (firstD < 0 or firstM < firstD)
+                seqMwin += 1.0
+            else if firstD >= 0
+                seqDwin += 1.0
+        if firstM >= 0
+            sumMFr += float(firstM) / span
+            mFrN += 1.0
+    pBars := 0
+    hiBar := 0
+    loBar := 0
+    pHi := high
+    pLo := low
+    tagM := false
+    tagD := false
+    firstM := -1
+    firstD := -1
+    lockPM := lvlPMd
+    lockNM := lvlNMd
+    lockPD := lvlPDd
+    lockND := lvlNDd
+else
+    pBars += 1
+    if na(pHi) or high > pHi
+        pHi := high
+        hiBar := pBars
+    if na(pLo) or low < pLo
+        pLo := low
+        loBar := pBars
+
+hitPMnow = not na(lockPM) and high >= lockPM
+hitNMnow = not na(lockNM) and low <= lockNM
+hitPDnow = not na(lockPD) and high >= lockPD
+hitNDnow = not na(lockND) and low <= lockND
+
+newTagM = (hitPMnow or hitNMnow) and not tagM
+newTagD = (hitPDnow or hitNDnow) and not tagD
+if newTagM
+    tagM := true
+    firstM := pBars
+if newTagD
+    tagD := true
+    firstD := pBars
+
+// A manipulation is only "confirmed" once price closes back through the level it
+// swept — the reversal, not the touch, is the signal.
+confM = tagM and ((hitPMnow and close < lockPM) or (hitNMnow and close > lockNM))
+
+//#endregion
+
+//#region [ALERTS]
+
+// The two halves alert as one: a confirmed C2 carries the target it just earned.
+tgtMsgBull = na(tgtPxBull) ? "" : " — +D target " + str.tostring(tgtPxBull, format.mintick) + (na(tgtRateBull) ? "" : ", reached " + f_rate(tgtRateBull) + " of the time after a bull C2")
+tgtMsgBear = na(tgtPxBear) ? "" : " — -D target " + str.tostring(tgtPxBear, format.mintick) + (na(tgtRateBear) ? "" : ", reached " + f_rate(tgtRateBear) + " of the time after a bear C2")
+
+tgtHitBull = buySetup.tgtReached()
+tgtHitBear = sellSetup.tgtReached()
+var bool tgtDoneBull = false
+var bool tgtDoneBear = false
+if c2BuyTrigger
+    tgtDoneBull := false
+if c2SellTrigger
+    tgtDoneBear := false
+newTgtBull = tgtHitBull and not tgtDoneBull
+newTgtBear = tgtHitBear and not tgtDoneBear
+if newTgtBull
+    tgtDoneBull := true
+if newTgtBear
+    tgtDoneBear := true
+
+alertcondition(newTagM, "Manipulation level tagged", "Price reached a manipulation level")
+alertcondition(newTagD, "Distribution level tagged", "Price reached a distribution target")
+alertcondition(confM,   "Manipulation confirmed",    "Price swept a manipulation level and closed back through")
+alertcondition(c2BuyTrigger,  "Bullish C2 confirmed", "A bullish C2 closed back inside Candle 1")
+alertcondition(c2SellTrigger, "Bearish C2 confirmed", "A bearish C2 closed back inside Candle 1")
+alertcondition(newTgtBull or newTgtBear, "Expansion target reached", "Price reached the distribution target of a confirmed C2")
+
+if showAlerts
+    if alertLevels and newTagM
+        alert("Manipulation level tagged on " + syminfo.ticker + " (" + tfDisp + " projection)", alert.freq_once_per_bar)
+    if alertLevels and newTagD
+        alert("Distribution target tagged on " + syminfo.ticker + " (" + tfDisp + " projection)", alert.freq_once_per_bar)
+    if alertLevels and confM
+        alert("Manipulation CONFIRMED on " + syminfo.ticker + " — swept and closed back through", alert.freq_once_per_bar)
+    if alertC2 and c2BuyTrigger and allowBuy
+        alert("Bullish C2 formed on " + syminfo.ticker + tgtMsgBull, alert.freq_once_per_bar)
+    if alertC2 and c2SellTrigger and allowSell
+        alert("Bearish C2 formed on " + syminfo.ticker + tgtMsgBear, alert.freq_once_per_bar)
+    if alertC2 and (newTgtBull or newTgtBear)
+        alert("Expansion target reached on " + syminfo.ticker + " (" + tfDisp + ")", alert.freq_once_per_bar)
+
+//#endregion
+
+//#region [CONFLUENCE]
+// Where levels from different timeframes stack up is where reactions cluster.
+var array<box> cfBoxes = array.new<box>()
+
+f_lvlsOf(Res s, float atrp, float o) =>
+    array<float> a = array.new<float>()
+    float ap = transform == "Log + ATR" ? atrp : na
+    array.push(a, f_lvl(transform, s.d0, o, ap, true))
+    array.push(a, f_lvl(transform, s.p0, o, ap, true))
+    array.push(a, f_lvl(transform, s.d1, o, ap, false))
+    array.push(a, f_lvl(transform, s.p1, o, ap, false))
+    array.push(a, f_lvl(transform, s.d2, o, ap, true))
+    array.push(a, f_lvl(transform, s.p2, o, ap, true))
+    array.push(a, f_lvl(transform, s.d3, o, ap, false))
+    array.push(a, f_lvl(transform, s.p3, o, ap, false))
+    a
+
+if barstate.islast and (cf2On or cf3On)
+    for bx in cfBoxes
+        box.delete(bx)
+    array.clear(cfBoxes)
+    array<float> base = f_lvlsOf(e1, chartAtrP, curO)
+    array<float> other = array.new<float>()
+    if cf2On
+        array<float> b2 = f_lvlsOf(eB, chartAtrB, curO)
+        for v in b2
+            array.push(other, v)
+    if cf3On
+        array<float> b3 = f_lvlsOf(eC, chartAtrC, curO)
+        for v in b3
+            array.push(other, v)
+    int x1 = math.max(0, bar_index - cfBars)
+    for a in base
+        if not na(a)
+            for b in other
+                if not na(b) and math.abs(a - b) / a * 100.0 <= cfTol
+                    float lo = math.min(a, b)
+                    float hi = math.max(a, b)
+                    float pad = a * cfTol / 100.0 * 0.5
+                    array.push(cfBoxes, box.new(x1, hi + pad, bar_index + cfBars, lo - pad,
+                         border_color=color.new(color.yellow, 60), bgcolor=cfCol, xloc=xloc.bar_index))
+                    break
+
+//#endregion
+
+//#region [HTF PREVIEW]
+
+if (barstate.islast or barstate.isrealtime) and validTf and htfCandles.size() > 0 and not hideHtf
+    n = htfCandles.size()
+    for i = n - 1 to 0
+        htfCandles.get(i).draw(bar_index + candleOffset + candleSpacing * (n - 1 - i))
+    // The period open the map is anchored to, carried across to the preview.
+    if showO and not na(htfOpenBar) and not na(curO)
+        curOpenX2 = box.get_right(htfCandles.first().body)
+        if na(htfOpenLn)
+            htfOpenLn := line.new(htfOpenBar, curO, curOpenX2, curO, xloc.bar_index, extend.none, colO, lineStyleFromStr(htfOpenStyle), htfOpenWidth)
+        else
+            line.set_xy1(htfOpenLn, htfOpenBar, curO)
+            line.set_xy2(htfOpenLn, curOpenX2, curO)
+            line.set_color(htfOpenLn, colO)
+            line.set_style(htfOpenLn, lineStyleFromStr(htfOpenStyle))
+            line.set_width(htfOpenLn, htfOpenWidth)
+    for i = n - 1 to 0
+        c = htfCandles.get(i)
+        if i > 0
+            nextC = htfCandles.get(i - 1)
+            line.set_x2(c.eqLine, nextC.midX)
+        if showSweep and (c.triggerBuy or c.triggerSell) and i > 0
+            nextC = htfCandles.get(i - 1)
+            price = c.triggerBuy ? c.l : c.h
+            if na(c.sweepLine)
+                c.sweepLine := line.new(c.midX, price, nextC.midX, price, color=sweepColor, style=lineStyleFromStr(sweepStyle), width=sweepWidth)
+            else
+                line.set_xy1(c.sweepLine, c.midX, price)
+                line.set_xy2(c.sweepLine, nextC.midX, price)
+                line.set_color(c.sweepLine, sweepColor)
+                line.set_style(c.sweepLine, lineStyleFromStr(sweepStyle))
+                line.set_width(c.sweepLine, sweepWidth)
+
+if (barstate.islast or barstate.isrealtime) and showStdDev and setupRecords.size() > 0
+    int  nHtf     = htfCandles.size()
+    bool htfShown = validTf and not hideHtf and nHtf > 0
+    int  devLineX = bar_index + 2
+    int  devLblX  = htfShown ? bar_index + candleOffset + candleSpacing * (nHtf - 1) + 2 + stdDevLabelGap : bar_index + 2 + stdDevLabelGap
+    for rec in setupRecords
+        s = rec.setup
+        if not na(s) and not na(s.stdDevData)
+            if not na(s.stdDevData.lines)
+                for ln in s.stdDevData.lines
+                    line.set_x2(ln, devLineX)
+            if not na(s.stdDevData.labels)
+                for lb in s.stdDevData.labels
+                    label.set_x(lb, devLblX)
+                    label.set_style(lb, label.style_label_left)
+
+//#endregion
+
+//#region [DASHBOARD]
+// One panel for both halves. The level rows read top of the map to the bottom
+// (+DIS, +MAN, OPEN, -MAN, -DIS) so they sit in the order the lines do on the
+// chart; the model rows underneath say whether the structure that leads into
+// them actually delivers.
+
+f_tablePos(string p) =>
+    switch p
+        "bottom_left"  => position.bottom_left
+        "bottom_right" => position.bottom_right
+        "top_center"   => position.top_center
+        "top_left"     => position.top_left
+        "top_right"    => position.top_right
+        "middle_left"  => position.middle_left
+        "middle_right" => position.middle_right
+        => position.bottom_center
+
+posSel  = f_tablePos(tblPos)
+sizeSel = tblSize == "auto" ? size.auto : tblSize == "small" ? size.small : tblSize == "normal" ? size.normal : size.tiny
+
+// Units follow the measure: ATR mode is dimensionless, the rest are percentages.
+f_ratio(float v) =>
+    na(v) ? "—" : transform == "Log + ATR" ? str.tostring(v, "#.##") + "x" : str.tostring(v * 100, "#.##") + "%"
+
+f_ratioSe(float v, float se) =>
+    na(v) ? "—" : f_ratio(v) + (na(se) ? "" : " ±" + (transform == "Log + ATR" ? str.tostring(se, "#.##") : str.tostring(se * 100, "#.##")))
+
+var table t = table.new(posSel, 8, 16, border_width=1,
+     border_color=color.new(color.gray, 60), frame_width=1, frame_color=color.new(color.gray, 60))
+
+// A thin sample dims its rows rather than flooding them, so the panel stays
+// readable while still saying plainly that the numbers are not yet evidence.
+txtC  = thin ? color.new(tblTxtCol, 55) : tblTxtCol
+dimC  = color.new(tblTxtCol, 45)
+warnC = color.new(color.orange, 0)
+
+f_blank(int r, int fromCol) =>
+    for c = fromCol to 7
+        table.cell(t, c, r, "", bgcolor=tblBgCol)
+
+// One level row: tag, projected price, then the statistics behind it.
+f_lvlRow(int r, int li, float px, float mn, float md, float pc, float se, float nn,
+         float rr, float hh, float rrp, float hhp, color tagCol) =>
+    table.cell(t, 0, r, f_levelTag(li), text_color=thin ? color.new(tagCol, 55) : tagCol,
+         text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol)
+    table.cell(t, 1, r, f_price(px), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, r, f_ratioSe(mn, se), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, r, f_ratio(md), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, r, f_ratio(pc), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, r, f_rate(rr), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol,
+         tooltip="percentile level reach: " + f_rate(rrp))
+    table.cell(t, 6, r, f_rate(hh), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol,
+         tooltip="percentile level hold: " + f_rate(hhp))
+    table.cell(t, 7, r, str.tostring(nn, "#"), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+
+// Which phase is live, and on which side.
+f_phaseTxt(C2Setup s) =>
+    string r = "—"
+    if not na(s)
+        r := s.dead ? "XC2" : s.phase == 1 ? "C3" : s.phase == 2 ? (s.c4Invalid ? "XC4" : "C4") : "done"
+    r
+
+if barstate.islast and showTbl
+    // ---- header strip ----
+    table.cell(t, 0, 0, "EmpModel [Pro+]", text_color=tblBgCol, bgcolor=tblTxtCol, text_size=sizeSel, text_halign=text.align_left)
+    table.cell(t, 1, 0, ltfDisp + "-" + tfDisp, text_color=tblBgCol, bgcolor=tblTxtCol, text_size=sizeSel, tooltip="Fractal: the lower timeframe you read the entry on, and the higher timeframe both the structure and the statistics run on.")
+    table.cell(t, 2, 0, biasFilter, text_color=tblBgCol, bgcolor=tblTxtCol, text_size=sizeSel)
+    table.cell(t, 3, 0, syminfo.ticker, text_color=tblBgCol, bgcolor=tblTxtCol, text_size=sizeSel)
+    table.cell(t, 4, 0, str.format_time(time_close, "dd MMM yyyy", syminfo.timezone), text_color=tblBgCol, bgcolor=tblTxtCol, text_size=sizeSel)
+    table.cell(t, 5, 0, "buy " + f_phaseTxt(buySetup), text_color=tblBgCol, bgcolor=tblTxtCol, text_size=sizeSel, tooltip="Phase of the live bullish setup: C3 is the expansion candle, C4 the one after it, XC2 a setup whose C2 extreme was breached.")
+    table.cell(t, 6, 0, "sell " + f_phaseTxt(sellSetup), text_color=tblBgCol, bgcolor=tblTxtCol, text_size=sizeSel)
+    table.cell(t, 7, 0, "", bgcolor=tblTxtCol)
+
+    // ---- level statistics ----
+    table.cell(t, 0, 1, tfDisp, text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Measure: " + transform + (uncondMode ? " · unconditional" : " · conditional") + (recOn ? " · half-life " + str.tostring(halfLife) : "") + (condMode != "None" ? " · conditioned on " + condMode : ""))
+    table.cell(t, 1, 1, "Price",    text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="The median level, which is the line the reach and hold columns are measured against.")
+    table.cell(t, 2, 1, "Mean ±SE", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 1, "Median",   text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, 1, "Pctile",   text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, 1, "Reach",    text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="How often price TOUCHED the median level. This is the number you want for setting targets.")
+    table.cell(t, 6, 1, "Hold",     text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Of the times it was reached, how often price closed back through it — the reversal rate.")
+    table.cell(t, 7, 1, "n",        text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+
+    f_lvlRow(2, 0, lvlPDd, mean2, med2, pct2, se2, n2, e1.rd2, e1.hd2, e1.rp2, e1.hp2, colD)
+    f_lvlRow(3, 1, lvlPMd, mean0, med0, pct0, se0, n0, e1.rd0, e1.hd0, e1.rp0, e1.hp0, colM)
+
+    table.cell(t, 0, 4, f_levelTag(2), text_color=colO, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol)
+    table.cell(t, 1, 4, f_price(curO), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    f_blank(4, 2)
+
+    f_lvlRow(5, 3, lvlNMd, mean1, med1, pct1, se1, n1, e1.rd1, e1.hd1, e1.rp1, e1.hp1, colM)
+    f_lvlRow(6, 4, lvlNDd, mean3, med3, pct3, se3, n3, e1.rd3, e1.hd3, e1.rp3, e1.hp3, colD)
+
+    // ---- typical range implied by the median levels ----
+    if showRange
+        float rngUp = na(lvlPDd) or na(lvlNMd) ? float(na) : lvlPDd - lvlNMd
+        float rngDn = na(lvlPMd) or na(lvlNDd) ? float(na) : lvlPMd - lvlNDd
+        float rng   = na(rngUp) or na(rngDn) ? float(na) : (rngUp + rngDn) / 2.0
+        table.cell(t, 0, 7, "RNG", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Average of the up-close range (+MAN to +DIS) and the down-close range (-MAN to -DIS), both taken from the median levels.")
+        table.cell(t, 1, 7, f_price(rng), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        f_blank(7, 2)
+    else
+        f_blank(7, 0)
+
+    // ---- whipsaw / volatility ----
+    table.cell(t, 0, 8, "both-side", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="How often BOTH manipulation levels were tagged in the same period — the whipsaw rate, i.e. how often this model's premise fails.")
+    table.cell(t, 1, 8, f_rate(e1.bothR), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 8, "vol", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 8, na(chartAtrP) ? "—" : str.tostring(chartAtrP * 100, "#.##") + "%", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Current ATR as a percentage of price on the higher timeframe. In 'Log + ATR' mode this is the scale every stored ratio is multiplied by.")
+    table.cell(t, 4, 8, "scored", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, 8, str.tostring(e1.evalN, "#"), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Periods scored walk-forward for the reach/hold columns, over the same rolling window as the ratios.")
+    f_blank(8, 6)
+
+    // ---- source / sample health ----
+    nFeeds = 1 + (use2 ? 1 : 0) + (use3 ? 1 : 0)
+    srcTip = statSym1 + (use2 ? "\n" + sym2 : "") + (use3 ? "\n" + sym3 : "")
+    table.cell(t, 0, 9, "Source", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol)
+    table.cell(t, 1, 9, useCustomFeed ? statSym1 : "Chart", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip=srcTip)
+    table.cell(t, 2, 9, nFeeds > 1 ? "+" + str.tostring(nFeeds - 1) + " pooled" : "", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip=srcTip)
+    table.cell(t, 3, 9, tfInverted ? "CHART > HTF" : thin ? "THIN SAMPLE" : "", text_color=(tfInverted or thin) ? warnC : dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip=tfInverted ? "Your chart timeframe is coarser than the higher timeframe, so every chart bar registers as a new period and the levels are meaningless. Pick a finer chart timeframe." : thin ? "At least one level has fewer than " + str.tostring(minSample) + " samples. Treat these levels as indicative only." : "")
+    f_blank(9, 4)
+
+    // ---- sequencing & timing ----
+    if showSeq
+        table.cell(t, 0, 10, "Sequence", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Measured on the chart timeframe over " + str.tostring(seqN, "#") + " periods — a much smaller sample than the level statistics above.")
+        table.cell(t, 1, 10, "M first", text_color=colM, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 2, 10, seqN > 0 ? f_rate(seqMwin / seqN) : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 3, 10, "D first", text_color=colD, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 4, 10, seqN > 0 ? f_rate(seqDwin / seqN) : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 5, 10, "n=" + str.tostring(seqN, "#"), text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        f_blank(10, 6)
+
+        table.cell(t, 0, 11, "Timing", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Average position within the period, as a fraction of its length, at which each event printed. These are the fractions the chart's vertical phase markers are drawn from.")
+        table.cell(t, 1, 11, "high at", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 2, 11, extN > 0 ? str.tostring(sumHiFr / extN * 100, "#") + "%" : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 3, 11, "low at", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 4, 11, extN > 0 ? str.tostring(sumLoFr / extN * 100, "#") + "%" : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 5, 11, "M tag at", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 6, 11, mFrN > 0 ? str.tostring(sumMFr / mFrN * 100, "#") + "%" : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 7, 11, "", bgcolor=tblBgCol)
+    else
+        f_blank(10, 0)
+        f_blank(11, 0)
+
+    // ---- the model's premise ----
+    // Of the periods that ran the prior period's extreme, how many closed back
+    // inside it. That is the whole difference between a stop hunt and a break.
+    table.cell(t, 0, 12, "Premise", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Swept: periods that took the prior period's low (bull) or high (bear).\nC2: of those, how many CLOSED back inside it — the Expansion Model's premise, measured on this instrument.\nDepth: of the confirmed C2s seen on this chart, how often the sweep reached the manipulation level that had been projected for it.")
+    table.cell(t, 1, 12, "bull C2", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 12, f_rate(premBull), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="n=" + str.tostring(e1.swpBullN, "#") + " sweeps")
+    table.cell(t, 3, 12, "bear C2", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, 12, f_rate(premBear), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="n=" + str.tostring(e1.swpBearN, "#") + " sweeps")
+    table.cell(t, 5, 12, "depth", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 6, 12, depthBullN > 0 ? f_rate(depthBullHit / depthBullN) : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Bullish C2s that reached the +MAN level, of " + str.tostring(depthBullN, "#") + " seen on this chart.")
+    table.cell(t, 7, 12, depthBearN > 0 ? f_rate(depthBearHit / depthBearN) : "—", text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Bearish C2s that reached the -MAN level, of " + str.tostring(depthBearN, "#") + " seen on this chart.")
+
+    // ---- and whether the structure buys you anything ----
+    // Each conditional rate is printed against the unconditional reach of the
+    // same level, so the sequence has to beat the base rate rather than be
+    // assumed to.
+    table.cell(t, 0, 13, "Expansion", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="After a confirmed C2, how often the NEXT period reached its distribution target — against the unconditional reach rate of the same level, which is what you would get by ignoring the structure entirely. If the two are equal, the sequence is telling you nothing here.")
+    table.cell(t, 1, 13, "after +C2", text_color=colD, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 13, f_rate(expBullR), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Reached the +DIS median. Percentile level: " + f_rate(expBullQ) + ". Closed up: " + f_rate(expBullU) + ".")
+    table.cell(t, 3, 13, "vs " + f_rate(e1.rd2), text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Unconditional reach of the +DIS median.")
+    table.cell(t, 4, 13, "after -C2", text_color=colD, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, 13, f_rate(expBearR), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Reached the -DIS median. Percentile level: " + f_rate(expBearQ) + ". Closed down: " + f_rate(expBearU) + ".")
+    table.cell(t, 6, 13, "vs " + f_rate(e1.rd3), text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Unconditional reach of the -DIS median.")
+    table.cell(t, 7, 13, str.tostring(e1.expBullN + e1.expBearN, "#"), text_color=txtC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Expansion candles scored. Both sides pooled.")
+
+    // ---- the one warning that stops the structure working at all ----
+    if not validTf
+        table.cell(t, 0, 14, "⚠ Switch to " + ltfDisp + " or lower (now: " + tfLabel(curTfCode()) + ")", text_color=color.new(#ffffff, 0), bgcolor=color.new(#cc0000, 0), text_size=sizeSel, text_halign=text.align_left)
+        f_blank(14, 1)
+    else
+        f_blank(14, 0)
+
+//#endregion
