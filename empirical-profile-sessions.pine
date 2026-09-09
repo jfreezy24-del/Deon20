@@ -1,8 +1,8 @@
 //@version=6
 // =============================================================================
-// OHLC Projection Levels — Sessions
+// Empirical Profile — Sessions
 // -----------------------------------------------------------------------------
-// The session edition of ohlc-projection-levels.pine. Same statistical model —
+// The session edition of empirical-profile.pine. Same statistical model —
 // manipulation and distribution excursions measured from the period open and
 // projected as levels with a stated probability — but the period is a TRADING
 // SESSION rather than a fixed timeframe:
@@ -70,7 +70,7 @@
 // As with any historical tool, past behaviour is not future performance.
 // =============================================================================
 
-indicator("OHLC Projection Levels — Sessions", shorttitle="OHLC Proj+ SESS",
+indicator("Empirical Profile — Sessions", shorttitle="EmProfile SESS",
      overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
 // ================================== Inputs ===================================
