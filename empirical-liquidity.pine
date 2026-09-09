@@ -27,10 +27,38 @@
 //            stops sitting above it
 //   Prior    the previous day's, week's or month's high and low
 //   Session  the high and low of the Asian, London or New York session
+//   C1       the previous higher-timeframe candle's high and low — the levels
+//            the Expansion Model calls Candle 1
 //
 //   A Swing is promoted to an Equal the moment a second pivot lands within
 //   tolerance of it, rather than a second overlapping pool being created. One
 //   price, one pool, with a touch count.
+//
+// THE EXPANSION MODEL, MEASURED
+//   Static's Expansion Model reads the higher timeframe as a sequence: Candle 1
+//   holds the liquidity, Candle 2 runs it and closes back inside Candle 1's
+//   range, and the candle after that expands. The model draws that sequence. It
+//   does not tell you how often the sequence actually completes.
+//
+//   The C1 rows at the bottom of the table do, using the model's own conditions
+//   rather than an approximation of them:
+//
+//     sweep        l0 < l1  /  h0 > h1
+//     confirmed C2 currentL < prevL1 and currentC > prevL1
+//                  currentH > prevH1 and currentC < prevH1
+//     targets      50%  = Candle 1's equilibrium
+//                  100% = Candle 1's opposite side
+//
+//   which gives four numbers: how often Candle 1 gets swept at all, how often
+//   that sweep closes back inside (the premise), and how often expansion then
+//   reaches the halfway and full targets. The Fractal selector mirrors the
+//   model's pairing table, so the levels judged here are the ones it draws.
+//
+//   The higher timeframe is aggregated from chart bars rather than requested
+//   with lookahead. The Expansion Model uses lookahead_on to draw the FORMING
+//   candle, which is correct for drawing and would be fatal for measurement —
+//   it would let a historical bar see its own future. Every candle judged here
+//   is fully closed first.
 //
 // WHAT IS MEASURED, AND HOW HONESTLY
 //   Every pool resolves exactly once, and only after it has had a fair chance:
@@ -86,6 +114,12 @@ tzL      = input.string("Europe/London", "", group=grpSess, inline="l")
 hrsN     = input.session("0930-1600", "New York", group=grpSess, inline="n")
 tzN      = input.string("America/New_York", "", group=grpSess, inline="n")
 
+grpC1    = "Expansion Model (C1)"
+useC1    = input.bool(true, "Track C1 levels", group=grpC1, tooltip="The previous higher-timeframe candle's high and low — the levels the Expansion Model calls Candle 1, and the ones its C2 sweep fires on.\n\nThese are added as pools like any other source, so they draw, stack and age the same way. The dedicated rows at the bottom of the table then report whether the model's premise actually holds on this instrument.")
+fractalSel = input.string("Auto", "Fractal", options=["Custom","Auto","1m-15m","3m-30m","5m-1H","15m-4H","1H-1D","4H-1W","1D-1W"], group=grpC1, tooltip="Mirrors the Expansion Model's pairing exactly, so the C1 levels measured here are the same ones it draws.")
+customHTF = input.timeframe("60", "Custom HTF", group=grpC1, tooltip="Only used when Fractal is set to Custom.")
+expWindow = input.int(3, "Expansion window (HTF candles)", minval=1, maxval=20, group=grpC1, tooltip="After a confirmed C2, how many higher-timeframe candles price has to reach the targets. The model's own expansion leg is the candle immediately after the closure, so 2 to 3 is the honest test; longer windows flatter the result.")
+
 grpRule  = "Sweep & reversal"
 sweepBy  = input.string("Wick", "A pool is swept by", options=["Wick","Close"], group=grpRule, tooltip="Wick: any trade through the price takes the liquidity. This is the literal reading and the default.\n\nClose: the bar must close beyond it. Stricter, fewer sweeps, and it will under-count the stop hunts this script is built to find.")
 revBars  = input.int(12, "Reversal window (bars)", minval=1, maxval=500, group=grpRule, tooltip="After a sweep, how long price has to close back through the pool for it to count as a reversal rather than a break. Measured in chart bars, so it scales with your timeframe.")
@@ -124,20 +158,22 @@ labelSize = lblSize == "small" ? size.small : lblSize == "normal" ? size.normal 
 barMs     = timeframe.in_seconds(timeframe.period) * 1000
 
 // Pool kinds. Index into every statistics array below.
-// 0 = Swing, 1 = Equal, 2 = Prior period, 3 = Session
+// 0 = Swing, 1 = Equal, 2 = Prior period, 3 = Session, 4 = Expansion Model C1
 f_kindName(int k) =>
     switch k
         0 => "Swing"
         1 => "Equal"
         2 => "Prior"
-        => "Session"
+        3 => "Session"
+        => "C1"
 
 f_kindTag(int k, bool isHigh) =>
     switch k
         0 => isHigh ? "SWH" : "SWL"
         1 => isHigh ? "EQH" : "EQL"
         2 => isHigh ? "PH"  : "PL"
-        => isHigh ? "SH" : "SL"
+        3 => isHigh ? "SH"  : "SL"
+        => isHigh ? "C1H" : "C1L"
 
 // ================================== Types =====================================
 // One resting-liquidity pool. Everything the statistics need travels with the
@@ -161,10 +197,10 @@ type Pool
 var array<Pool> pools = array.new<Pool>()
 
 // Per-kind tallies. Resolved is the denominator that maturity protects.
-var array<float> nResolved = array.new<float>(4, 0)
-var array<float> nSwept    = array.new<float>(4, 0)
-var array<float> nRev      = array.new<float>(4, 0)
-var array<float> nLive     = array.new<float>(4, 0)
+var array<float> nResolved = array.new<float>(5, 0)
+var array<float> nSwept    = array.new<float>(5, 0)
+var array<float> nRev      = array.new<float>(5, 0)
+var array<float> nLive     = array.new<float>(5, 0)
 
 var array<box> stackBoxes = array.new<box>()
 
@@ -310,6 +346,139 @@ if useSess and sessL and not inL and inL[1]
 if useSess and sessN and not inN and inN[1]
     f_addPool(nH, 3, true,  bar_index, time, "NY")
     f_addPool(nL, 3, false, bar_index, time, "NY")
+
+// ===================== Expansion Model: C1 levels and premise =================
+// Mirrors the Expansion Model's own definitions, so what is measured here is
+// the same thing that script fires on:
+//
+//     sweep (early C2)   l0 < l1                       the forming candle takes
+//                        h0 > h1                       the prior candle's extreme
+//
+//     confirmed C2       currentL < prevL1 and currentC > prevL1
+//                        currentH > prevH1 and currentC < prevH1
+//                                                      swept AND closed back
+//                                                      inside Candle 1's range
+//
+//     expansion targets  50%  = Candle 1's equilibrium
+//                        100% = Candle 1's opposite side
+//
+// The higher timeframe is aggregated here from chart bars rather than requested
+// with lookahead, because the Expansion Model uses lookahead_on to draw the
+// FORMING candle and that would leak future data into a historical measurement.
+// Every candle below is fully closed before it is judged.
+
+f_autoHtf() =>
+    switch timeframe.period
+        "1"   => "15"
+        "3"   => "30"
+        "5"   => "60"
+        "15"  => "240"
+        "60"  => "1D"
+        "240" => "1W"
+        "1D"  => "1M"
+        =>       "1M"
+
+htfTf = switch fractalSel
+    "1m-15m" => "15"
+    "3m-30m" => "30"
+    "5m-1H"  => "60"
+    "15m-4H" => "240"
+    "1H-1D"  => "1D"
+    "4H-1W"  => "1W"
+    "1D-1W"  => "1W"
+    "Custom" => customHTF
+    =>          f_autoHtf()
+
+htfNew = ta.change(time(htfTf)) != 0
+
+// curH/L/C is the candle still forming; prv is the one before it. When a period
+// closes, cur has just become Candle 2 and prv is its Candle 1.
+var float curH = na
+var float curL = na
+var float curC = na
+var float prvH = na
+var float prvL = na
+var int   htfSeen = 0
+
+// A pending expansion test, opened by a confirmed C2 and settled after the
+// expansion window has run.
+type ExpTest
+    int   dir
+    float eq
+    float opp
+    int   left
+    bool  hitEq
+    bool  hitOpp
+
+var array<ExpTest> exps = array.new<ExpTest>()
+
+var float c1Judged   = 0.0   // Candle 1 levels that have had their Candle 2
+var float c1Swept    = 0.0   // ... of those, taken by the next candle
+var float c1C2       = 0.0   // ... of those sweeps, closed back inside
+var float expJudged  = 0.0   // confirmed C2s whose window has run out
+var float expEq      = 0.0   // ... that reached Candle 1's equilibrium
+var float expOpp     = 0.0   // ... that reached Candle 1's opposite side
+
+// --- run the live expansion tests on every chart bar -------------------------
+if array.size(exps) > 0
+    for i = 0 to array.size(exps) - 1
+        ExpTest e = array.get(exps, i)
+        if e.dir == 1
+            e.hitEq  := e.hitEq or high >= e.eq
+            e.hitOpp := e.hitOpp or high >= e.opp
+        else
+            e.hitEq  := e.hitEq or low <= e.eq
+            e.hitOpp := e.hitOpp or low <= e.opp
+
+if htfNew
+    // ---- judge the candle that just closed against the one before it --------
+    // htfSeen >= 3 so that BOTH candles in the pair were tracked end to end.
+    // The first period in loaded history starts mid-candle and its extremes are
+    // not the real ones.
+    if useC1 and htfSeen >= 3 and not na(prvH) and not na(prvL) and not na(curH)
+        c1Judged += 1.0
+        bool sweptL = curL < prvL
+        bool sweptH = curH > prvH
+        if sweptL or sweptH
+            c1Swept += 1.0
+        bool c2Buy  = curL < prvL and curC > prvL
+        bool c2Sell = curH > prvH and curC < prvH
+        if c2Buy or c2Sell
+            c1C2 += 1.0
+            // targets are measured off Candle 1, which is prv
+            float eqLvl = (prvH + prvL) / 2.0
+            array.push(exps, ExpTest.new(dir = c2Buy ? 1 : -1, eq = eqLvl,
+                 opp = c2Buy ? prvH : prvL, left = expWindow,
+                 hitEq = false, hitOpp = false))
+
+    // ---- settle any expansion test whose window has now run out -------------
+    if array.size(exps) > 0
+        for i = array.size(exps) - 1 to 0
+            ExpTest e = array.get(exps, i)
+            e.left := e.left - 1
+            if e.left <= 0
+                expJudged += 1.0
+                if e.hitEq
+                    expEq += 1.0
+                if e.hitOpp
+                    expOpp += 1.0
+                array.remove(exps, i)
+
+    // ---- the candle that just closed becomes the next Candle 1 --------------
+    if useC1 and not na(curH) and htfSeen >= 2
+        f_addPool(curH, 4, true,  bar_index, time, htfTf)
+        f_addPool(curL, 4, false, bar_index, time, htfTf)
+
+    prvH := curH
+    prvL := curL
+    curH := high
+    curL := low
+    curC := close
+    htfSeen += 1
+else
+    curH := na(curH) ? high : math.max(curH, high)
+    curL := na(curL) ? low  : math.min(curL, low)
+    curC := close
 
 // ========================= Sweep, reversal, maturity ==========================
 // One pass per bar over the live pools. A pool resolves exactly once: swept the
@@ -489,7 +658,7 @@ sizeSel = tblSize == "auto" ? size.auto : tblSize == "small" ? size.small : tblS
 f_rate(float num, float den) =>
     den > 0 ? str.tostring(math.round(num / den * 100)) + "%" : "—"
 
-var table t = table.new(posSel, 5, 9, border_width=1,
+var table t = table.new(posSel, 6, 12, border_width=1,
      border_color=color.new(color.gray, 60), frame_width=1, frame_color=color.new(color.gray, 60))
 
 f_statRow(int r, int k) =>
@@ -500,6 +669,7 @@ f_statRow(int r, int k) =>
     table.cell(t, 2, r, f_rate(array.get(nSwept, k), res), text_color=c, text_size=sizeSel, bgcolor=tblBgCol)
     table.cell(t, 3, r, f_rate(array.get(nRev, k), array.get(nSwept, k)), text_color=c, text_size=sizeSel, bgcolor=tblBgCol)
     table.cell(t, 4, r, str.tostring(res, "#"), text_color=c, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, r, "", bgcolor=tblBgCol)
 
 if barstate.islast and showTbl
     dimC = color.new(tblTxtCol, 45)
@@ -508,23 +678,46 @@ if barstate.islast and showTbl
     table.cell(t, 2, 0, "Swept", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="How often a pool of this kind eventually gets taken.")
     table.cell(t, 3, 0, "Rev",   text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Of the pools that were swept, how often price closed back through inside the reversal window — the stop-hunt rate, as opposed to a genuine break.")
     table.cell(t, 4, 0, "n",     text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 5, 0, "",      bgcolor=tblBgCol)
 
     f_statRow(1, 0)
     f_statRow(2, 1)
     f_statRow(3, 2)
     f_statRow(4, 3)
+    if useC1
+        f_statRow(5, 4)
 
     // draw: which side is holding more unswept liquidity
     float tot = liqAbove + liqBelow
     string bias = tot == 0 ? "—" : liqAbove > liqBelow ? "upside" : liqBelow > liqAbove ? "downside" : "balanced"
-    table.cell(t, 0, 5, "Draw", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Unswept pools above price versus below it. The heavier side is the simplest honest reading of where the market is being pulled, and it is not a signal on its own.")
-    table.cell(t, 1, 5, str.tostring(liqAbove, "#") + " up", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
-    table.cell(t, 2, 5, str.tostring(liqBelow, "#") + " dn", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
-    table.cell(t, 3, 5, bias, text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
-    table.cell(t, 4, 5, "", bgcolor=tblBgCol)
-
-    table.cell(t, 0, 6, "Stacks", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Groups of " + str.tostring(stackMin) + "+ unswept pools sitting within " + str.tostring(stackTol) + "% of each other. These are the prices worth lining up against an Empirical Profile level.")
-    table.cell(t, 1, 6, str.tostring(stackCount, "#"), text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
-    table.cell(t, 2, 6, "pivot", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
-    table.cell(t, 3, 6, str.tostring(pivLen), text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 0, 6, "Draw", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Unswept pools above price versus below it. The heavier side is the simplest honest reading of where the market is being pulled, and it is not a signal on its own.")
+    table.cell(t, 1, 6, str.tostring(liqAbove, "#") + " up", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 6, str.tostring(liqBelow, "#") + " dn", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 6, bias, text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
     table.cell(t, 4, 6, "", bgcolor=tblBgCol)
+    table.cell(t, 5, 6, "", bgcolor=tblBgCol)
+
+    table.cell(t, 0, 7, "Stacks", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Groups of " + str.tostring(stackMin) + "+ unswept pools sitting within " + str.tostring(stackTol) + "% of each other. These are the prices worth lining up against an Empirical Profile level.")
+    table.cell(t, 1, 7, str.tostring(stackCount, "#"), text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 7, "pivot", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 7, str.tostring(pivLen), text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, 7, "", bgcolor=tblBgCol)
+    table.cell(t, 5, 7, "", bgcolor=tblBgCol)
+
+    // ---- Expansion Model premise, measured -------------------------------
+    // Does a C1 sweep actually close back inside, and does expansion follow?
+    if useC1
+        color eC = c1Judged < minN ? color.new(tblTxtCol, 55) : tblTxtCol
+        table.cell(t, 0, 9,  "Expansion", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="The Expansion Model's own premise, measured on this instrument using its exact conditions. Every candle below is fully closed before it is judged, and the higher timeframe is aggregated from chart bars rather than requested with lookahead, so nothing here sees the future.")
+        table.cell(t, 1, 9,  "Swept", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="How often a Candle 2 takes out Candle 1's high or low at all — the early C2 sweep.")
+        table.cell(t, 2, 9,  "C2",    text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Of those sweeps, how often the candle CLOSED back inside Candle 1's range. This is the model's premise: a high number means the sweep usually reverses rather than breaks.")
+        table.cell(t, 3, 9,  "EQ",    text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Of confirmed C2s, how often price then reached Candle 1's equilibrium — the model's 50% target.")
+        table.cell(t, 4, 9,  "Opp",   text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Of confirmed C2s, how often price reached Candle 1's opposite side — the model's 100% target, the full range of the swept candle.")
+        table.cell(t, 5, 9,  "n",     text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+
+        table.cell(t, 0, 10, htfTf, text_color=eC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Higher timeframe in use, from the Fractal setting.")
+        table.cell(t, 1, 10, f_rate(c1Swept, c1Judged), text_color=eC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 2, 10, f_rate(c1C2, c1Swept),     text_color=eC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 3, 10, f_rate(expEq, expJudged),  text_color=eC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 4, 10, f_rate(expOpp, expJudged), text_color=eC, text_size=sizeSel, bgcolor=tblBgCol)
+        table.cell(t, 5, 10, str.tostring(c1Judged, "#") + "/" + str.tostring(expJudged, "#"), text_color=eC, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Candle pairs judged / confirmed C2s whose expansion window has run out.")
