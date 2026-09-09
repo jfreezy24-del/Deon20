@@ -1,0 +1,530 @@
+//@version=6
+// =============================================================================
+// Empirical Liquidity
+// -----------------------------------------------------------------------------
+// A map of resting liquidity in which every pool carries a MEASURED sweep rate
+// and reversal rate, rather than being drawn and left to the eye.
+//
+// It is the structural counterpart to Empirical Profile. That script answers
+// "how far does this period usually travel, and when" from the distribution of
+// past excursions. It cannot answer whether anything is actually resting at the
+// level it draws — its levels are statistical, not structural. This script
+// answers only that question, from the opposite direction:
+//
+//     Empirical Profile   a price the market has historically REACHED
+//     Empirical Liquidity a price where orders are actually RESTING
+//
+// Run both. Where an unswept pool sits on a projected level, two independent
+// systems name the same price, and that is the confluence worth trading. This
+// script does not read Empirical Profile and does not depend on it; the two are
+// matched by eye, or by putting them on the same chart and watching the prices
+// line up.
+//
+// WHAT COUNTS AS A POOL
+//   Swing    a confirmed pivot high or low — one rejection, one set of stops
+//   Equal    two or more pivots within tolerance of each other. Equal highs and
+//            lows are the classic draw: the flatter the ceiling, the denser the
+//            stops sitting above it
+//   Prior    the previous day's, week's or month's high and low
+//   Session  the high and low of the Asian, London or New York session
+//
+//   A Swing is promoted to an Equal the moment a second pivot lands within
+//   tolerance of it, rather than a second overlapping pool being created. One
+//   price, one pool, with a touch count.
+//
+// WHAT IS MEASURED, AND HOW HONESTLY
+//   Every pool resolves exactly once, and only after it has had a fair chance:
+//
+//     swept      price traded through it (or closed through, your choice)
+//     unswept    it reached the maturity age without being touched
+//
+//   Sweep rate is swept / resolved, so pools too young to have been swept are
+//   excluded from the denominator instead of quietly depressing it. Reversal
+//   rate is measured only on pools that were actually swept: of those, how
+//   often price closed back through within the reversal window. That is the
+//   number that separates a stop hunt from a breakout, and it is the reason
+//   this script exists rather than another liquidity drawing tool.
+//
+//   Nothing repaints. A pool is born on a CONFIRMED pivot (pivLen bars after
+//   the fact) or at a completed period or session boundary, and its outcome is
+//   written once, forward in time, from bars that came after it.
+//
+// STACKS AND DRAW
+//   Unswept pools within tolerance of each other are grouped into a stack and
+//   shaded. Three pool types agreeing on one price is a stronger draw than any
+//   of them alone. The table also reports which side of price holds more
+//   unswept liquidity, which is the simplest honest reading of where the market
+//   is being pulled.
+//
+// As with any historical tool, past behaviour is not future performance. A
+// sweep rate is a description of what happened, not a promise.
+// =============================================================================
+
+indicator("Empirical Liquidity", shorttitle="EmLiquidity",
+     overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ================================== Inputs ===================================
+grpSrc   = "Pool sources"
+useSwing = input.bool(true,  "Swing highs / lows", group=grpSrc, inline="sw")
+pivLen   = input.int(8, "strength", minval=1, maxval=100, group=grpSrc, inline="sw", tooltip="Bars either side required to confirm a pivot. Higher means fewer, more significant swings. A pivot is only born pivLen bars after it printed, which is what keeps the script repaint-free.")
+useEqual = input.bool(true,  "Promote to Equal highs / lows", group=grpSrc, inline="eq")
+eqTol    = input.float(0.05, "tol %", minval=0.005, maxval=2.0, step=0.005, group=grpSrc, inline="eq", tooltip="How close a new pivot must sit to an existing pool to be treated as the same price rather than a new one. Widen it on noisy or high-priced instruments.")
+usePrior = input.bool(true,  "Prior period high / low", group=grpSrc)
+priorD   = input.bool(true,  "day", group=grpSrc, inline="pp")
+priorW   = input.bool(true,  "week", group=grpSrc, inline="pp")
+priorM   = input.bool(false, "month", group=grpSrc, inline="pp")
+useSess  = input.bool(false, "Session high / low", group=grpSrc)
+sessA    = input.bool(true,  "Asia", group=grpSrc, inline="ss")
+sessL    = input.bool(true,  "London", group=grpSrc, inline="ss")
+sessN    = input.bool(true,  "New York", group=grpSrc, inline="ss")
+
+grpSess  = "Session hours"
+hrsA     = input.session("0900-1800", "Asia", group=grpSess, inline="a")
+tzA      = input.string("Asia/Tokyo", "", group=grpSess, inline="a")
+hrsL     = input.session("0800-1630", "London", group=grpSess, inline="l")
+tzL      = input.string("Europe/London", "", group=grpSess, inline="l")
+hrsN     = input.session("0930-1600", "New York", group=grpSess, inline="n")
+tzN      = input.string("America/New_York", "", group=grpSess, inline="n")
+
+grpRule  = "Sweep & reversal"
+sweepBy  = input.string("Wick", "A pool is swept by", options=["Wick","Close"], group=grpRule, tooltip="Wick: any trade through the price takes the liquidity. This is the literal reading and the default.\n\nClose: the bar must close beyond it. Stricter, fewer sweeps, and it will under-count the stop hunts this script is built to find.")
+revBars  = input.int(12, "Reversal window (bars)", minval=1, maxval=500, group=grpRule, tooltip="After a sweep, how long price has to close back through the pool for it to count as a reversal rather than a break. Measured in chart bars, so it scales with your timeframe.")
+maturity = input.int(300, "Maturity (bars)", minval=20, maxval=5000, group=grpRule, tooltip="An untouched pool is called unswept once it reaches this age, and only then does it enter the sweep-rate denominator. Without this, every pool born last week would drag the rate down simply for being young.")
+
+grpZone  = "Stacks"
+stackOn  = input.bool(true, "Shade stacked liquidity", group=grpZone)
+stackTol = input.float(0.15, "Stack tolerance (%)", minval=0.01, maxval=5.0, step=0.01, group=grpZone, tooltip="How close unswept pools must sit to count as one stack.")
+stackMin = input.int(2, "Minimum pools in a stack", minval=2, maxval=10, group=grpZone)
+colStack = input.color(color.new(color.yellow, 85), "Stack shading", group=grpZone)
+
+grpDsp   = "Display"
+colUn    = input.color(color.new(color.red, 20), "Unswept", group=grpDsp, inline="c")
+colSw    = input.color(color.new(color.gray, 55), "Swept", group=grpDsp, inline="c")
+showSwept = input.bool(true, "Keep swept pools on the chart", group=grpDsp, tooltip="Swept pools fade to the swept colour and stop extending. They are the record of what the map got right, so they are worth leaving visible.")
+lnWidth  = input.int(1, "Line width", minval=1, maxval=4, group=grpDsp)
+lblMode  = input.string("Long", "Labels", options=["Long","Short","None"], group=grpDsp, tooltip="Long: 'Equal H x3  1234.50'. Short: 'EQH  1234.50'.")
+lblSize  = input.string("tiny", "Label size", options=["tiny","small","normal"], group=grpDsp)
+extBars  = input.int(20, "Extend right (bars)", minval=0, maxval=500, group=grpDsp)
+maxPools = input.int(120, "Maximum pools kept", minval=10, maxval=400, group=grpDsp, tooltip="Oldest resolved pools are deleted first. Their statistics are already banked, so trimming costs nothing but the drawing.")
+
+grpT     = "Table"
+showTbl  = input.bool(true, "Show statistics table", group=grpT)
+minN     = input.int(15, "Minimum sample to trust a rate", minval=3, maxval=500, group=grpT, tooltip="Below this a row dims. Prior-month pools in particular will sit here for a long time; that is an honest statement about the sample, not a fault.")
+tblPos   = input.string("bottom_center", "Position", options=["bottom_center","bottom_left","bottom_right","top_center","top_left","top_right","middle_left","middle_right"], group=grpT)
+tblSize  = input.string("tiny", "Text size", options=["auto","tiny","small","normal"], group=grpT)
+tblTxtCol = input.color(color.new(color.black, 0), "Text colour", group=grpT)
+tblBgCol  = input.color(color.new(color.white, 20), "Background", group=grpT)
+
+grpAl    = "Alerts"
+alertOn  = input.bool(true, "Enable alert() calls", group=grpAl, tooltip="Fires when a pool is swept, and again if price closes back through inside the reversal window.")
+alertMin = input.int(2, "Only alert on stacks of at least", minval=1, maxval=10, group=grpAl, tooltip="Set to 1 to alert on every pool. Higher values alert only where several pools sat together, which is where the reaction usually is.")
+
+// ============================ Presentation helpers ============================
+labelSize = lblSize == "small" ? size.small : lblSize == "normal" ? size.normal : size.tiny
+barMs     = timeframe.in_seconds(timeframe.period) * 1000
+
+// Pool kinds. Index into every statistics array below.
+// 0 = Swing, 1 = Equal, 2 = Prior period, 3 = Session
+f_kindName(int k) =>
+    switch k
+        0 => "Swing"
+        1 => "Equal"
+        2 => "Prior"
+        => "Session"
+
+f_kindTag(int k, bool isHigh) =>
+    switch k
+        0 => isHigh ? "SWH" : "SWL"
+        1 => isHigh ? "EQH" : "EQL"
+        2 => isHigh ? "PH"  : "PL"
+        => isHigh ? "SH" : "SL"
+
+// ================================== Types =====================================
+// One resting-liquidity pool. Everything the statistics need travels with the
+// pool itself, so a pool can be resolved long after the bar that created it.
+type Pool
+    float px
+    int   kind
+    bool  isHigh
+    int   born          // bar_index of the bar that created it
+    int   bornTime      // and its timestamp, for drawing
+    int   touches       // 1 for a swing, 2+ once promoted to an Equal
+    bool  swept
+    int   sweptTime     // timestamp of the sweep, not a bar index
+    bool  reversed
+    bool  resolved      // counted into the sweep-rate denominator
+    bool  revScored     // reversal window already settled
+    string src          // "1D", "1W", "NY" ... for the label
+    line  ln
+    label lb
+
+var array<Pool> pools = array.new<Pool>()
+
+// Per-kind tallies. Resolved is the denominator that maturity protects.
+var array<float> nResolved = array.new<float>(4, 0)
+var array<float> nSwept    = array.new<float>(4, 0)
+var array<float> nRev      = array.new<float>(4, 0)
+var array<float> nLive     = array.new<float>(4, 0)
+
+var array<box> stackBoxes = array.new<box>()
+
+// =============================== Pool helpers =================================
+f_poolColor(Pool p) => p.swept ? colSw : colUn
+
+f_poolText(Pool p) =>
+    string t = f_kindTag(p.kind, p.isHigh)
+    if lblMode == "Short"
+        t + "  " + str.tostring(p.px, format.mintick)
+    else
+        string extra = p.kind == 1 ? " x" + str.tostring(p.touches) : p.kind == 2 or p.kind == 3 ? " " + p.src : ""
+        f_kindName(p.kind) + (p.isHigh ? " H" : " L") + extra + "  " + str.tostring(p.px, format.mintick)
+
+// Redraw one pool. A live pool runs to the right edge; a swept one stops where
+// it was taken, which leaves the chart showing exactly what was consumed and
+// when.
+f_paint(Pool p) =>
+    int rightT = p.swept ? p.sweptTime : time + extBars * barMs
+    color c = f_poolColor(p)
+    if na(p.ln)
+        p.ln := line.new(p.bornTime, p.px, rightT, p.px, xloc=xloc.bar_time,
+             color=c, style=p.swept ? line.style_dotted : line.style_solid, width=lnWidth)
+    else
+        line.set_xy1(p.ln, p.bornTime, p.px)
+        line.set_xy2(p.ln, rightT, p.px)
+        line.set_color(p.ln, c)
+        line.set_style(p.ln, p.swept ? line.style_dotted : line.style_solid)
+        line.set_width(p.ln, lnWidth)
+    if lblMode != "None"
+        if na(p.lb)
+            p.lb := label.new(rightT, p.px, f_poolText(p), xloc=xloc.bar_time,
+                 style=label.style_label_left, color=color.new(color.black, 100),
+                 textcolor=c, size=labelSize, textalign=text.align_left)
+        else
+            label.set_xy(p.lb, rightT, p.px)
+            label.set_text(p.lb, f_poolText(p))
+            label.set_textcolor(p.lb, c)
+    else if not na(p.lb)
+        label.delete(p.lb)
+        p.lb := na
+    true
+
+f_erase(Pool p) =>
+    if not na(p.ln)
+        line.delete(p.ln)
+    if not na(p.lb)
+        label.delete(p.lb)
+    true
+
+// Is there already a pool at this price on this side? Returns its index, or -1.
+// This is what turns a repeated swing into an Equal instead of a second line.
+f_findNear(float px, bool isHigh) =>
+    int found = -1
+    if array.size(pools) > 0
+        for i = 0 to array.size(pools) - 1
+            Pool p = array.get(pools, i)
+            if not p.swept and p.isHigh == isHigh and px > 0
+                if math.abs(p.px - px) / px * 100.0 <= eqTol
+                    found := i
+                    break
+    found
+
+f_addPool(float px, int kind, bool isHigh, int bornBar, int bornTime, string src) =>
+    if not na(px) and px > 0
+        int near = useEqual ? f_findNear(px, isHigh) : -1
+        if near >= 0
+            // promote an existing pool rather than stacking a duplicate on it
+            Pool ex = array.get(pools, near)
+            ex.touches := ex.touches + 1
+            if ex.kind == 0
+                ex.kind := 1
+            f_paint(ex)
+        else
+            Pool p = Pool.new(px = px, kind = kind, isHigh = isHigh, born = bornBar,
+                 bornTime = bornTime, touches = 1, swept = false, sweptTime = 0,
+                 reversed = false, resolved = false, revScored = false, src = src)
+            array.push(pools, p)
+            array.set(nLive, kind, array.get(nLive, kind) + 1)
+            f_paint(p)
+    true
+
+// ============================== Pool creation =================================
+// --- swings -------------------------------------------------------------------
+ph = ta.pivothigh(pivLen, pivLen)
+pl = ta.pivotlow(pivLen, pivLen)
+if useSwing and not na(ph)
+    f_addPool(ph, 0, true, bar_index - pivLen, time[pivLen], "")
+if useSwing and not na(pl)
+    f_addPool(pl, 0, false, bar_index - pivLen, time[pivLen], "")
+
+// --- prior period extremes ----------------------------------------------------
+// [1] with lookahead off is the COMPLETED prior period, so nothing repaints.
+pdH = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+pdL = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_off)
+pwH = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_off)
+pwL = request.security(syminfo.tickerid, "W", low[1],  lookahead=barmerge.lookahead_off)
+pmH = request.security(syminfo.tickerid, "M", high[1], lookahead=barmerge.lookahead_off)
+pmL = request.security(syminfo.tickerid, "M", low[1],  lookahead=barmerge.lookahead_off)
+
+newD = ta.change(time("D")) != 0
+newW = ta.change(time("W")) != 0
+newM = ta.change(time("M")) != 0
+
+if usePrior and priorD and newD and bar_index > 0
+    f_addPool(pdH, 2, true,  bar_index, time, "1D")
+    f_addPool(pdL, 2, false, bar_index, time, "1D")
+if usePrior and priorW and newW and bar_index > 0
+    f_addPool(pwH, 2, true,  bar_index, time, "1W")
+    f_addPool(pwL, 2, false, bar_index, time, "1W")
+if usePrior and priorM and newM and bar_index > 0
+    f_addPool(pmH, 2, true,  bar_index, time, "1M")
+    f_addPool(pmL, 2, false, bar_index, time, "1M")
+
+// --- session extremes ---------------------------------------------------------
+inA = not na(time(timeframe.period, hrsA, tzA))
+inL = not na(time(timeframe.period, hrsL, tzL))
+inN = not na(time(timeframe.period, hrsN, tzN))
+
+var float aH = na
+var float aL = na
+var float lH = na
+var float lL = na
+var float nH = na
+var float nL = na
+
+if inA
+    aH := inA[1] ? math.max(nz(aH, high), high) : high
+    aL := inA[1] ? math.min(nz(aL, low), low) : low
+if inL
+    lH := inL[1] ? math.max(nz(lH, high), high) : high
+    lL := inL[1] ? math.min(nz(lL, low), low) : low
+if inN
+    nH := inN[1] ? math.max(nz(nH, high), high) : high
+    nL := inN[1] ? math.min(nz(nL, low), low) : low
+
+if useSess and sessA and not inA and inA[1]
+    f_addPool(aH, 3, true,  bar_index, time, "ASIA")
+    f_addPool(aL, 3, false, bar_index, time, "ASIA")
+if useSess and sessL and not inL and inL[1]
+    f_addPool(lH, 3, true,  bar_index, time, "LDN")
+    f_addPool(lL, 3, false, bar_index, time, "LDN")
+if useSess and sessN and not inN and inN[1]
+    f_addPool(nH, 3, true,  bar_index, time, "NY")
+    f_addPool(nL, 3, false, bar_index, time, "NY")
+
+// ========================= Sweep, reversal, maturity ==========================
+// One pass per bar over the live pools. A pool resolves exactly once: swept the
+// moment price takes it, unswept once it survives to maturity. The reversal
+// window is settled separately, afterwards, so a sweep is never retro-labelled.
+var float sweptNow  = 0.0
+var float revNow    = 0.0
+var string sweptTag = ""
+var float sweptPx   = na
+
+sweptNow := 0.0
+revNow   := 0.0
+
+if array.size(pools) > 0
+    for i = 0 to array.size(pools) - 1
+        Pool p = array.get(pools, i)
+        if not p.swept
+            bool taken = sweepBy == "Close" ? (p.isHigh ? close > p.px : close < p.px)
+                 : (p.isHigh ? high >= p.px : low <= p.px)
+            if taken and bar_index > p.born
+                p.swept := true
+                p.sweptTime := time
+                array.set(nLive, p.kind, math.max(0.0, array.get(nLive, p.kind) - 1))
+                if not p.resolved
+                    p.resolved := true
+                    array.set(nResolved, p.kind, array.get(nResolved, p.kind) + 1)
+                    array.set(nSwept, p.kind, array.get(nSwept, p.kind) + 1)
+                sweptNow += 1.0
+                sweptTag := f_kindTag(p.kind, p.isHigh)
+                sweptPx  := p.px
+                // The classic stop hunt takes the pool with a wick and closes
+                // back through on the SAME bar, so settle the reversal here
+                // rather than waiting for the next one and missing it.
+                if p.isHigh ? close < p.px : close > p.px
+                    p.reversed := true
+                    p.revScored := true
+                    array.set(nRev, p.kind, array.get(nRev, p.kind) + 1)
+                    revNow += 1.0
+                f_paint(p)
+            else if not p.resolved and bar_index - p.born >= maturity
+                // survived long enough to count as genuinely untouched
+                p.resolved := true
+                array.set(nResolved, p.kind, array.get(nResolved, p.kind) + 1)
+        else if not p.revScored
+            // settle the reversal window on a pool that was already swept
+            bool back = p.isHigh ? close < p.px : close > p.px
+            if back
+                p.reversed := true
+                p.revScored := true
+                array.set(nRev, p.kind, array.get(nRev, p.kind) + 1)
+                revNow += 1.0
+            else if (time - p.sweptTime) > revBars * barMs
+                p.revScored := true
+
+// ---- keep the pool list inside the drawing budget ----------------------------
+// Oldest resolved pools go first; their statistics are already banked.
+if array.size(pools) > maxPools
+    int over = array.size(pools) - maxPools
+    int removed = 0
+    int idx = 0
+    while removed < over and idx < array.size(pools)
+        Pool p = array.get(pools, idx)
+        // fully settled: resolved, and either never swept or its reversal
+        // window has already closed. A matured-unswept pool never sets
+        // revScored, so it has to be admitted here explicitly.
+        if p.resolved and (not p.swept or p.revScored)
+            f_erase(p)
+            array.remove(pools, idx)
+            removed += 1
+        else
+            idx += 1
+    // if everything is still live, drop from the front regardless
+    while array.size(pools) > maxPools
+        Pool p = array.shift(pools)
+        if not p.swept
+            array.set(nLive, p.kind, math.max(0.0, array.get(nLive, p.kind) - 1))
+        f_erase(p)
+
+// ---- repaint the live pools so they follow the right edge --------------------
+if barstate.islast and array.size(pools) > 0
+    for i = 0 to array.size(pools) - 1
+        Pool p = array.get(pools, i)
+        if p.swept and not showSwept
+            f_erase(p)
+            p.ln := na
+            p.lb := na
+        else
+            f_paint(p)
+
+// ================================== Stacks ====================================
+// Unswept pools sitting on top of each other. Three types agreeing on one price
+// is a stronger draw than any of them alone, and it is the shape most worth
+// lining up against an Empirical Profile level.
+var float stackCount = 0.0
+var float liqAbove   = 0.0
+var float liqBelow   = 0.0
+
+if barstate.islast
+    for b in stackBoxes
+        box.delete(b)
+    array.clear(stackBoxes)
+    stackCount := 0.0
+    liqAbove := 0.0
+    liqBelow := 0.0
+
+    // collect live pool prices
+    array<float> live = array.new<float>()
+    if array.size(pools) > 0
+        for i = 0 to array.size(pools) - 1
+            Pool p = array.get(pools, i)
+            if not p.swept
+                array.push(live, p.px)
+                if p.px > close
+                    liqAbove += 1.0
+                else
+                    liqBelow += 1.0
+
+    if stackOn and array.size(live) >= stackMin
+        array.sort(live, order.ascending)
+        int i = 0
+        while i < array.size(live)
+            float lo = array.get(live, i)
+            int j = i
+            // walk forward while the next price is still inside tolerance
+            while j + 1 < array.size(live) and (array.get(live, j + 1) - lo) / lo * 100.0 <= stackTol
+                j += 1
+            int count = j - i + 1
+            if count >= stackMin
+                float hi = array.get(live, j)
+                float pad = lo * stackTol / 100.0 * 0.25
+                array.push(stackBoxes, box.new(time - extBars * barMs, hi + pad,
+                     time + extBars * barMs, lo - pad, xloc=xloc.bar_time,
+                     border_color=color.new(color.yellow, 70), bgcolor=colStack))
+                stackCount += 1.0
+            i := j + 1
+
+// ================================== Alerts ====================================
+// Stack size at the swept price decides whether the sweep is worth waking for.
+f_stackAt(float px) =>
+    float c = 0.0
+    if not na(px) and px > 0 and array.size(pools) > 0
+        for i = 0 to array.size(pools) - 1
+            Pool p = array.get(pools, i)
+            if math.abs(p.px - px) / px * 100.0 <= stackTol
+                c += 1.0
+    c
+
+sweepAlert = sweptNow > 0 and f_stackAt(sweptPx) >= alertMin
+revAlert   = revNow > 0
+
+alertcondition(sweptNow > 0, "Liquidity swept", "A resting liquidity pool was taken")
+alertcondition(revNow > 0,   "Sweep reversed",  "Price closed back through a swept pool")
+
+if alertOn
+    if sweepAlert
+        alert("Liquidity swept on " + syminfo.ticker + " — " + sweptTag + " at " +
+             str.tostring(sweptPx, format.mintick), alert.freq_once_per_bar)
+    if revAlert
+        alert("Sweep REVERSED on " + syminfo.ticker + " — price closed back through",
+             alert.freq_once_per_bar)
+
+// ================================== Table =====================================
+f_tablePos(string p) =>
+    switch p
+        "bottom_left"  => position.bottom_left
+        "bottom_right" => position.bottom_right
+        "top_center"   => position.top_center
+        "top_left"     => position.top_left
+        "top_right"    => position.top_right
+        "middle_left"  => position.middle_left
+        "middle_right" => position.middle_right
+        => position.bottom_center
+
+posSel  = f_tablePos(tblPos)
+sizeSel = tblSize == "auto" ? size.auto : tblSize == "small" ? size.small : tblSize == "normal" ? size.normal : size.tiny
+
+f_rate(float num, float den) =>
+    den > 0 ? str.tostring(math.round(num / den * 100)) + "%" : "—"
+
+var table t = table.new(posSel, 5, 9, border_width=1,
+     border_color=color.new(color.gray, 60), frame_width=1, frame_color=color.new(color.gray, 60))
+
+f_statRow(int r, int k) =>
+    float res = array.get(nResolved, k)
+    color c = res < minN ? color.new(tblTxtCol, 55) : tblTxtCol
+    table.cell(t, 0, r, f_kindName(k), text_color=c, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol)
+    table.cell(t, 1, r, str.tostring(array.get(nLive, k), "#"), text_color=c, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, r, f_rate(array.get(nSwept, k), res), text_color=c, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, r, f_rate(array.get(nRev, k), array.get(nSwept, k)), text_color=c, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, r, str.tostring(res, "#"), text_color=c, text_size=sizeSel, bgcolor=tblBgCol)
+
+if barstate.islast and showTbl
+    dimC = color.new(tblTxtCol, 45)
+    table.cell(t, 0, 0, "EmLiquidity", text_color=tblTxtCol, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Sweep rate is swept / resolved, where a pool resolves when it is taken or when it reaches the maturity age untouched. Reversal rate is measured only on pools that were actually swept.")
+    table.cell(t, 1, 0, "Live",  text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Unswept pools of this kind currently on the chart.")
+    table.cell(t, 2, 0, "Swept", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="How often a pool of this kind eventually gets taken.")
+    table.cell(t, 3, 0, "Rev",   text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol, tooltip="Of the pools that were swept, how often price closed back through inside the reversal window — the stop-hunt rate, as opposed to a genuine break.")
+    table.cell(t, 4, 0, "n",     text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+
+    f_statRow(1, 0)
+    f_statRow(2, 1)
+    f_statRow(3, 2)
+    f_statRow(4, 3)
+
+    // draw: which side is holding more unswept liquidity
+    float tot = liqAbove + liqBelow
+    string bias = tot == 0 ? "—" : liqAbove > liqBelow ? "upside" : liqBelow > liqAbove ? "downside" : "balanced"
+    table.cell(t, 0, 5, "Draw", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Unswept pools above price versus below it. The heavier side is the simplest honest reading of where the market is being pulled, and it is not a signal on its own.")
+    table.cell(t, 1, 5, str.tostring(liqAbove, "#") + " up", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 5, str.tostring(liqBelow, "#") + " dn", text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 5, bias, text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, 5, "", bgcolor=tblBgCol)
+
+    table.cell(t, 0, 6, "Stacks", text_color=dimC, text_size=sizeSel, text_halign=text.align_left, bgcolor=tblBgCol, tooltip="Groups of " + str.tostring(stackMin) + "+ unswept pools sitting within " + str.tostring(stackTol) + "% of each other. These are the prices worth lining up against an Empirical Profile level.")
+    table.cell(t, 1, 6, str.tostring(stackCount, "#"), text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 2, 6, "pivot", text_color=dimC, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 3, 6, str.tostring(pivLen), text_color=tblTxtCol, text_size=sizeSel, bgcolor=tblBgCol)
+    table.cell(t, 4, 6, "", bgcolor=tblBgCol)
