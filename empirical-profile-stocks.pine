@@ -1,6 +1,6 @@
 //@version=6
 // =============================================================================
-// OHLC Projection Levels — Adaptive Edition (STOCKS)
+// Empirical Profile — Stocks
 // -----------------------------------------------------------------------------
 // Anchors to each period's OPEN (4H/1D/1W/1M/1Y) and projects statistical
 // levels around it, derived from the deepest higher-timeframe history the
@@ -80,7 +80,7 @@
 //   session, so prefer 1D and higher for equities.
 // =============================================================================
 
-indicator("OHLC Projection Levels — Adaptive (Stocks)", shorttitle="OHLC Proj+ STK",
+indicator("Empirical Profile — Stocks", shorttitle="EmProfile STK",
      overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
 // ================================== Inputs ===================================
