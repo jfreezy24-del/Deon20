@@ -1,0 +1,592 @@
+//@version=6
+// =============================================================================
+// Liquidity, MSS & FVG
+// -----------------------------------------------------------------------------
+// A three-stage ICT-style sequence, drawn only when all three stages line up:
+//
+//  1. LIQUIDITY. Swing highs/lows are taken from a higher timeframe (default
+//     15m) via request.security, so the pools that matter on the HTF stay
+//     visible while you execute on a lower chart. A pool is drawn as soon as its
+//     pivot confirms and its line extends bar by bar while the level rests, so
+//     you can see what price is reaching for before it gets there. The line
+//     stops extending on the bar that takes the pool (Buyside = high above a HTF
+//     swing high, Sellside = low below a HTF swing low), leaving a finished
+//     segment that spans the level's whole life. Swept pools restyle and fade so
+//     the levels still in play are the ones that draw the eye.
+//
+//  2. MARKET STRUCTURE SHIFT. A sweep alone is not a signal. After a sweep the
+//     script watches, for a bounded number of bars, for price to break the most
+//     recent opposing chart-timeframe pivot — up after an SSL sweep, down after
+//     a BSL sweep. That pivot must still be unbroken, or price already trading
+//     above it would "confirm" a break of a level that was never structure.
+//     Break confirmation is by close or by wick. If no break lands inside the
+//     waiting window, the setup expires and nothing is drawn.
+//
+//  3. DISPLACEMENT FVG. The leg that produced the MSS is scanned for fair value
+//     gaps (3-bar imbalances), which are the entries the MSS earns.
+//
+// Every drawing is owned by the swing point that produced it, so when a pool
+// ages out of the tracked history its line, label, MSS and FVGs are deleted
+// together instead of accumulating.
+// =============================================================================
+indicator("Liquidity, MSS & FVG", shorttitle="Liquidity, MSS & FVG", overlay=true,
+     max_lines_count=500, max_labels_count=500, max_bars_back=5000)
+
+type SwingPoint
+    float price
+    int   barIndex
+    bool  taken         = false
+    bool  visualsDrawn  = false
+    bool  pendingMSS    = false
+    line  poolLine      = na
+    label poolLabel     = na
+    line  mssLine       = na
+    label mssLabel      = na
+    box   mssBox        = na
+    array<box> fvgBoxes = na
+
+grpLiquidity        = "LIQUIDITY ENGINE"
+i_liqTF             = input.timeframe("15", "Liquidity Timeframe          ", inline="liq_tf", group=grpLiquidity, tooltip="Higher timeframe used to detect Buyside/Sellside Liquidity swing points (BSL/SSL).")
+i_swingLen          = input.int(40, "Lookback", minval=2, maxval=50, inline="liq_tf", group=grpLiquidity, tooltip="Pivot lookback (left/right bars) on the higher timeframe.")
+i_maxSwings         = input.int(8, "Max Tracked Swings (History)", minval=1, maxval=100, group=grpLiquidity, tooltip="Maximum number of recent liquidity levels kept on chart. Oldest are automatically purged along with their MSS/FVG drawings.")
+
+grpStyle            = "LIQUIDITY VISUALS & STYLING"
+i_showSweepLines    = input.bool(true, "Liquidity Lines  ", inline="liq_ln", group=grpStyle)
+i_lineStyle         = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="liq_ln", group=grpStyle, tooltip="Style of a pool while it is still resting — liquidity price has not taken yet.")
+i_lineWidth         = input.int(1, "", minval=1, maxval=4, inline="liq_ln", group=grpStyle)
+i_sweptStyle        = input.string("Dotted", "Once Swept       ", options=["Solid", "Dashed", "Dotted"], inline="liq_sw", group=grpStyle, tooltip="Style a pool switches to on the bar that takes it, so resting liquidity and spent liquidity read differently at a glance.")
+i_sweptFade         = input.int(70, "Fade", minval=0, maxval=95, inline="liq_sw", group=grpStyle, tooltip="Transparency applied to a swept pool's line. Its label text fades by half as much, so the text stays readable while the line recedes.")
+i_showLiqLabels     = input.bool(true, "Text Labels      ", inline="liq_lbl", group=grpStyle)
+i_labelSize         = input.string("Small", "", options=["Tiny", "Small", "Normal"], inline="liq_lbl", group=grpStyle)
+i_showLiqPrice      = input.bool(true, "Price", inline="liq_lbl", group=grpStyle, tooltip="Append the pool's price to its label, after the Buy/Sell Side Liquidity text.")
+i_bslColor          = input.color(color.new(#4e5057, 0), "Buy Side (BSL)   ", inline="liq_col", group=grpStyle)
+i_sslColor          = input.color(color.new(#4e5057, 0), "Sell Side (SSL)", inline="liq_col", group=grpStyle)
+
+grpMSS              = "MARKET STRUCTURE SHIFT (MSS)"
+i_enableMSS         = input.bool(true, "Enable MSS Confirmation After Sweep", group=grpMSS, tooltip="Look for and draw Market Structure Shift (MSS) only after a valid liquidity sweep.")
+i_mssConfirm        = input.string("Close", "Break Confirmation", options=["Close", "Wick"], inline="mss_conf", group=grpMSS)
+i_mssMaxBars        = input.int(20, "Max Waiting Bars", minval=1, maxval=500, inline="mss_conf", group=grpMSS, tooltip="Maximum number of bars allowed after a sweep before the MSS search expires.")
+i_mssLeft           = input.int(5, "MSS Pivot Left", minval=1, inline="mss_piv", group=grpMSS)
+i_mssRight          = input.int(5, "Right", minval=1, inline="mss_piv", group=grpMSS)
+i_bullMssCol        = input.color(color.new(#2962FF, 0), "MSS Line Colors  Bull", inline="mss_ln", group=grpMSS)
+i_bearMssCol        = input.color(color.new(#FF5252, 0), "Bear", inline="mss_ln", group=grpMSS)
+i_mssLineStyle      = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="mss_ln", group=grpMSS)
+i_mssLineWidth      = input.int(1, "", minval=1, maxval=4, inline="mss_ln", group=grpMSS)
+i_showMssBox        = input.bool(true, "MSS Zone Box     Bull", inline="mss_bx", group=grpMSS)
+i_bullBoxCol        = input.color(color.new(#ff9800, 0), "", inline="mss_bx", group=grpMSS)
+i_bearBoxCol        = input.color(color.new(#ff9800, 0), "Bear", inline="mss_bx", group=grpMSS)
+i_mssBoxTransp      = input.int(93, "Transp", minval=0, maxval=98, inline="mss_bx", group=grpMSS)
+
+grpMssFvg           = "MSS DISPLACEMENT FVGS"
+i_showMssFvg        = input.bool(true, "Show Displacement FVGs", inline="fvg_main", group=grpMssFvg)
+i_maxMssFvgCount    = input.int(4, "Max FVGs to Draw", minval=1, maxval=50, inline="fvg_main", group=grpMssFvg, tooltip="Maximum number of FVGs to draw on the MSS displacement leg.")
+i_fvgBullColor      = input.color(color.new(#2962FF, 0), "FVG Colors         Bull", inline="fvg_col", group=grpMssFvg)
+i_fvgBearColor      = input.color(color.new(#FF5252, 0), "Bear", inline="fvg_col", group=grpMssFvg)
+i_fvgTransp         = input.int(65, "Transparency", minval=0, maxval=98, inline="fvg_col", group=grpMssFvg)
+i_fvgBorderWidth    = input.int(0, "Border Width", minval=0, maxval=3, inline="fvg_col", group=grpMssFvg, tooltip="Set to 0 for a soft, borderless translucent box look.")
+i_extendFvg         = input.bool(false, "Extend FVGs Right ", inline="fvg_ext", group=grpMssFvg)
+i_fvgExtendBars     = input.int(5, "Extension Bars", minval=1, maxval=100, inline="fvg_ext", group=grpMssFvg, tooltip="Number of additional bars to extend the FVG box forward.")
+
+grpTable            = "DASHBOARD HUD TABLE"
+i_showTable         = input.bool(true, "Show Info HUD Table", inline="tbl_1", group=grpTable)
+i_tablePosition     = input.string("Top Right", "", options=["Top Right", "Top Left", "Top Center", "Bottom Right", "Bottom Left", "Bottom Center"], inline="tbl_1", group=grpTable)
+i_tblHeaderSize     = input.string("Normal", "Title Size", options=["Small", "Normal", "Large"], inline="tbl_sz", group=grpTable)
+i_tblRowSize        = input.string("Small", "Info Size", options=["Tiny", "Small", "Normal"], inline="tbl_sz", group=grpTable)
+i_tblBgCol          = input.color(color.new(#e2e2e2, 10), "Theme Colors     Bg", inline="tbl_col", group=grpTable)
+i_tblTextCol        = input.color(color.new(#000000, 0), "Text", inline="tbl_col", group=grpTable)
+i_tblBorderCol      = input.color(color.new(#000000, 0), "Border", inline="tbl_col", group=grpTable)
+i_tblFrameW         = input.int(2, "Frame Width", minval=0, maxval=10, inline="tbl_w", group=grpTable)
+i_tblBorderW        = input.int(1, "Inner Border", minval=0, maxval=10, inline="tbl_w", group=grpTable)
+
+grpAlerts           = "ALERTS"
+i_alertOnSweep      = input.bool(true, "Alert on Liquidity Sweep", group=grpAlerts)
+i_alertOnMSS        = input.bool(true, "Alert on MSS Formation", group=grpAlerts)
+
+var array<SwingPoint> bslArray = array.new<SwingPoint>()
+var array<SwingPoint> sslArray = array.new<SwingPoint>()
+
+var array<float> mssHighPrices = array.new_float()
+var array<int>   mssHighBars   = array.new_int()
+var array<float> mssLowPrices  = array.new_float()
+var array<int>   mssLowBars    = array.new_int()
+
+var bool waitingForBullMSS = false
+var int  sslSweepBarIndex  = na
+var bool waitingForBearMSS = false
+var int  bslSweepBarIndex  = na
+
+var SwingPoint activeBullSP = na
+var SwingPoint activeBearSP = na
+
+f_secReq(_tf, _src) =>
+    request.security(syminfo.tickerid, _tf, _src, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+f_labelSize(_s) =>
+    _s == "Tiny" ? size.tiny : _s == "Small" ? size.small : _s == "Large" ? size.large : size.normal
+
+f_lineStyleChoice(_s) =>
+    _s == "Dotted" ? line.style_dotted : _s == "Dashed" ? line.style_dashed : line.style_solid
+
+// Draws a pool the moment its pivot confirms, so resting liquidity is visible
+// ahead of price rather than only in hindsight. The line starts at the pivot bar
+// and is extended each bar by f_extendPool until the pool is taken.
+f_drawPool(SwingPoint sp, bool isBuySide) =>
+    color col = isBuySide ? i_bslColor : i_sslColor
+    if i_showSweepLines
+        sp.poolLine := line.new(
+             x1 = sp.barIndex, y1 = sp.price, x2 = bar_index, y2 = sp.price,
+             color = color.new(col, 35),
+             width = i_lineWidth,
+             style = f_lineStyleChoice(i_lineStyle))
+
+    // format.mintick rounds to the symbol's own tick, so the printed price is one
+    // a real order could rest at rather than a raw float tail.
+    string poolText = isBuySide ? "𝗕𝘂𝘆 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆" : "𝗦𝗲𝗹𝗹 𝗦𝗶𝗱𝗲 𝗟𝗶𝗾𝘂𝗶𝗱𝗶𝘁𝘆"
+    if i_showLiqPrice
+        poolText := poolText + "  " + str.tostring(sp.price, format.mintick)
+
+    if i_showLiqLabels
+        sp.poolLabel := label.new(
+             x = math.max(sp.barIndex, bar_index - 8), y = sp.price,
+             text = poolText,
+             style = isBuySide ? label.style_label_down : label.style_label_up,
+             color = color.new(color.black, 100),
+             textcolor = color.new(col, 10), size = f_labelSize(i_labelSize))
+    sp.visualsDrawn := true
+
+// Walks the pool's right edge forward to the current bar. Called every bar while
+// the pool is live, and once more on the sweep bar, which is where it stops.
+f_extendPool(SwingPoint sp) =>
+    if not na(sp.poolLine)
+        line.set_x2(sp.poolLine, bar_index)
+    if not na(sp.poolLabel)
+        label.set_x(sp.poolLabel, math.max(sp.barIndex, bar_index - 8))
+
+// Restyles a pool on the bar that takes it: spent liquidity recedes so the
+// levels still in play stay the ones that draw the eye. The label fades at half
+// the line's rate, since text goes unreadable well before a line does.
+f_markPoolSwept(SwingPoint sp, bool isBuySide) =>
+    color col = isBuySide ? i_bslColor : i_sslColor
+    if not na(sp.poolLine)
+        line.set_color(sp.poolLine, color.new(col, i_sweptFade))
+        line.set_style(sp.poolLine, f_lineStyleChoice(i_sweptStyle))
+    if not na(sp.poolLabel)
+        label.set_textcolor(sp.poolLabel, color.new(col, i_sweptFade / 2))
+
+f_deleteSwingVisuals(SwingPoint sp) =>
+    if not na(sp.poolLine)
+        line.delete(sp.poolLine)
+    if not na(sp.poolLabel)
+        label.delete(sp.poolLabel)
+    if not na(sp.mssLine)
+        line.delete(sp.mssLine)
+    if not na(sp.mssLabel)
+        label.delete(sp.mssLabel)
+    if not na(sp.mssBox)
+        box.delete(sp.mssBox)
+    if not na(sp.fvgBoxes)
+        while array.size(sp.fvgBoxes) > 0
+            box.delete(array.shift(sp.fvgBoxes))
+
+// Evicts oldest pools beyond maxLen, deleting everything they own. A pool whose
+// MSS search is still open is never evicted: its drawings are not all created
+// yet, so deleting it now would leave the MSS and FVGs drawn later untracked and
+// undeletable. The hold is bounded by i_mssMaxBars, after which the pool becomes
+// evictable again and the array catches up.
+f_trimSwingArray(arr, maxLen) =>
+    bool keepTrimming = true
+    while array.size(arr) > maxLen and keepTrimming
+        SwingPoint oldest = array.get(arr, 0)
+        keepTrimming := not oldest.pendingMSS
+        if keepTrimming
+            f_deleteSwingVisuals(array.shift(arr))
+
+f_findExactHighBar(float val) =>
+    int targetBar = bar_index
+    float minDiff = 1e10
+    for i = 0 to 150
+        diff = math.abs(high[i] - val)
+        if diff < minDiff
+            minDiff := diff
+            targetBar := bar_index - i
+        if diff == 0
+            break
+    targetBar
+
+f_findExactLowBar(float val) =>
+    int targetBar = bar_index
+    float minDiff = 1e10
+    for i = 0 to 150
+        diff = math.abs(low[i] - val)
+        if diff < minDiff
+            minDiff := diff
+            targetBar := bar_index - i
+        if diff == 0
+            break
+    targetBar
+
+f_formatTimeframe(string _tf) =>
+    float val = str.tonumber(_tf)
+    string result = _tf
+    if not na(val)
+        if val >= 1440
+            result := str.tostring(math.round(val / 1440)) + "D"
+        else if val >= 60
+            result := str.tostring(math.round(val / 60)) + "H"
+        else
+            result := str.tostring(math.round(val)) + "m"
+    else
+        if _tf == "D" or _tf == "1D"
+            result := "1D"
+        else if _tf == "W" or _tf == "1W"
+            result := "1W"
+        else if _tf == "M" or _tf == "1M"
+            result := "1M"
+    result
+
+f_tablePosOf(_pos) =>
+    switch _pos
+        "Top Right"     => position.top_right
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Bottom Right"  => position.bottom_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        =>                 position.top_right
+
+liq_high = f_secReq(i_liqTF, high)
+liq_low  = f_secReq(i_liqTF, low)
+
+pivotHighVal = ta.pivothigh(liq_high, i_swingLen, i_swingLen)
+pivotLowVal  = ta.pivotlow(liq_low,   i_swingLen, i_swingLen)
+
+if not na(pivotHighVal)
+    exactBar = f_findExactHighBar(pivotHighVal)
+    sp = SwingPoint.new(price = pivotHighVal, barIndex = exactBar, taken = false)
+    f_drawPool(sp, true)
+    array.push(bslArray, sp)
+    f_trimSwingArray(bslArray, i_maxSwings)
+
+if not na(pivotLowVal)
+    exactBar = f_findExactLowBar(pivotLowVal)
+    sp = SwingPoint.new(price = pivotLowVal, barIndex = exactBar, taken = false)
+    f_drawPool(sp, false)
+    array.push(sslArray, sp)
+    f_trimSwingArray(sslArray, i_maxSwings)
+
+bool bslSweptThisBar = false
+bool sslSweptThisBar = false
+bool bullMSSConfirmedThisBar = false
+bool bearMSSConfirmedThisBar = false
+
+if array.size(bslArray) > 0
+    for i = array.size(bslArray) - 1 to 0
+        SwingPoint sp = array.get(bslArray, i)
+        bool sweptNow = not sp.taken and high > sp.price and bar_index > sp.barIndex
+
+        // Live pool: walk its right edge up to the current bar.
+        if not sp.taken and not sweptNow
+            f_extendPool(sp)
+
+        if sweptNow
+            sp.taken := true
+            bslSweptThisBar := true
+
+            waitingForBearMSS := true
+            bslSweepBarIndex  := bar_index
+            if not na(activeBearSP)
+                activeBearSP.pendingMSS := false
+            activeBearSP      := sp
+            sp.pendingMSS     := i_enableMSS
+
+            // Final extension, so the line ends on the bar that took it.
+            f_extendPool(sp)
+            f_markPoolSwept(sp, true)
+
+            if i_alertOnSweep
+                alert("Buy Side Liquidity Swept @ " + str.tostring(sp.price), alert.freq_once_per_bar_close)
+
+if array.size(sslArray) > 0
+    for i = array.size(sslArray) - 1 to 0
+        SwingPoint sp = array.get(sslArray, i)
+        bool sweptNow = not sp.taken and low < sp.price and bar_index > sp.barIndex
+
+        // Live pool: walk its right edge up to the current bar.
+        if not sp.taken and not sweptNow
+            f_extendPool(sp)
+
+        if sweptNow
+            sp.taken := true
+            sslSweptThisBar := true
+
+            waitingForBullMSS := true
+            sslSweepBarIndex  := bar_index
+            if not na(activeBullSP)
+                activeBullSP.pendingMSS := false
+            activeBullSP      := sp
+            sp.pendingMSS     := i_enableMSS
+
+            // Final extension, so the line ends on the bar that took it.
+            f_extendPool(sp)
+            f_markPoolSwept(sp, false)
+
+            if i_alertOnSweep
+                alert("Sell Side Liquidity Swept @ " + str.tostring(sp.price), alert.freq_once_per_bar_close)
+
+phLocal = ta.pivothigh(high, i_mssLeft, i_mssRight)
+plLocal = ta.pivotlow(low,   i_mssLeft, i_mssRight)
+
+if not na(phLocal)
+    array.push(mssHighPrices, phLocal)
+    array.push(mssHighBars, bar_index - i_mssRight)
+
+if not na(plLocal)
+    array.push(mssLowPrices, plLocal)
+    array.push(mssLowBars, bar_index - i_mssRight)
+
+if i_enableMSS
+    if waitingForBullMSS and not na(sslSweepBarIndex) and (bar_index - sslSweepBarIndex > i_mssMaxBars)
+        waitingForBullMSS := false
+        sslSweepBarIndex  := na
+        if not na(activeBullSP)
+            activeBullSP.pendingMSS := false
+        activeBullSP      := na
+
+    if waitingForBearMSS and not na(bslSweepBarIndex) and (bar_index - bslSweepBarIndex > i_mssMaxBars)
+        waitingForBearMSS := false
+        bslSweepBarIndex  := na
+        if not na(activeBearSP)
+            activeBearSP.pendingMSS := false
+        activeBearSP      := na
+
+    if waitingForBullMSS and not na(sslSweepBarIndex) and (bar_index - sslSweepBarIndex <= i_mssMaxBars)
+        int targetHBar = na
+        float targetHPrice = na
+        if array.size(mssHighBars) > 0
+            for k = array.size(mssHighBars) - 1 to 0
+                int hb = array.get(mssHighBars, k)
+                if hb < bar_index and (bar_index - hb <= i_mssMaxBars + i_mssRight)
+                    targetHBar := hb
+                    targetHPrice := array.get(mssHighPrices, k)
+                    break
+
+        bool breakUp = (i_mssConfirm == "Close" ? close : high) > targetHPrice
+
+        // The most recent pivot high is not automatically unbroken structure. In a
+        // leg that already traded above it, price sits above the pivot before the
+        // sweep even happens, and breakUp would be true the instant the pool is
+        // taken — an MSS on a level that was never structure. Require the pivot to
+        // be virgin, measured the same way the break is confirmed.
+        bool pivotIntact = true
+        if breakUp and not na(targetHBar) and bar_index > targetHBar + 1
+            for j = targetHBar + 1 to bar_index - 1
+                float priorBreak = i_mssConfirm == "Close" ? close[bar_index - j] : high[bar_index - j]
+                if priorBreak > targetHPrice
+                    pivotIntact := false
+                    break
+
+        if breakUp and pivotIntact and not na(targetHBar) and bar_index > targetHBar
+            bullMSSConfirmedThisBar := true
+            waitingForBullMSS := false
+            int sweepOriginBar = sslSweepBarIndex
+            sslSweepBarIndex  := na
+
+            if i_alertOnMSS
+                alert("Bullish MSS Formed @ " + str.tostring(close), alert.freq_once_per_bar_close)
+
+            mLine = line.new(x1 = targetHBar, y1 = targetHPrice, x2 = bar_index, y2 = targetHPrice,
+                             color = i_bullMssCol, width = i_mssLineWidth, style = f_lineStyleChoice(i_mssLineStyle))
+
+            mLabel = label.new(x = math.round((targetHBar + bar_index) / 2), y = targetHPrice, text = "𝗠𝗦𝗦",
+                               style = label.style_label_down, color = color.new(color.black, 100),
+                               textcolor = i_bullMssCol, size = f_labelSize(i_labelSize))
+
+            if not na(activeBullSP)
+                activeBullSP.mssLine  := mLine
+                activeBullSP.mssLabel := mLabel
+                activeBullSP.fvgBoxes := array.new_box()
+                // Search resolved: everything this pool owns is created on this
+                // bar, so it is safe to evict again (trimming runs after this).
+                activeBullSP.pendingMSS := false
+
+            if i_showMssFvg
+                int fvgFound = 0
+                int startScan = nz(sweepOriginBar, targetHBar)
+                int lookbackDepth = math.min(math.max(bar_index - startScan + 3, 3), i_mssMaxBars + 5)
+                for b = 0 to lookbackDepth - 3
+                    if fvgFound >= i_maxMssFvgCount
+                        break
+                    if low[b] > high[b + 2]
+                        int fvgRight = (bar_index - b) + (i_extendFvg ? i_fvgExtendBars : 0)
+                        color borderCol = i_fvgBorderWidth == 0 ? color.new(color.black, 100) : color.new(i_fvgBullColor, 40)
+                        fvgBox = box.new(
+                             left = bar_index - b - 2, top = low[b],
+                             right = fvgRight, bottom = high[b + 2],
+                             bgcolor = color.new(i_fvgBullColor, i_fvgTransp),
+                             border_color = borderCol,
+                             border_width = i_fvgBorderWidth)
+                        if not na(activeBullSP)
+                            if not na(activeBullSP.fvgBoxes)
+                                array.push(activeBullSP.fvgBoxes, fvgBox)
+                        fvgFound += 1
+
+            if i_showMssBox
+                int lBar = na
+                float lPrice = na
+                if array.size(mssLowBars) > 0
+                    for m = array.size(mssLowBars) - 1 to 0
+                        int lb = array.get(mssLowBars, m)
+                        if lb < targetHBar
+                            lBar := lb
+                            lPrice := array.get(mssLowPrices, m)
+                            break
+
+                float aPrice = low
+                int aBar = bar_index
+                if bar_index > targetHBar + 1
+                    for j = targetHBar + 1 to bar_index - 1
+                        if low[bar_index - j] < aPrice
+                            aPrice := low[bar_index - j]
+                            aBar := j
+
+                if not na(lBar)
+                    float minP = math.min(lPrice, math.min(targetHPrice, math.min(aPrice, close)))
+                    float maxP = math.max(lPrice, math.max(targetHPrice, math.max(aPrice, close)))
+                    int minB = math.min(lBar, math.min(targetHBar, math.min(aBar, bar_index)))
+                    mBox = box.new(left = minB, top = maxP, right = bar_index, bottom = minP, bgcolor = color.new(i_bullBoxCol, i_mssBoxTransp), border_color = color.new(color.black, 100), border_width = 0)
+                    if not na(activeBullSP)
+                        activeBullSP.mssBox := mBox
+
+    if waitingForBearMSS and not na(bslSweepBarIndex) and (bar_index - bslSweepBarIndex <= i_mssMaxBars)
+        int targetLBar = na
+        float targetLPrice = na
+        if array.size(mssLowBars) > 0
+            for k = array.size(mssLowBars) - 1 to 0
+                int lb = array.get(mssLowBars, k)
+                if lb < bar_index and (bar_index - lb <= i_mssMaxBars + i_mssRight)
+                    targetLBar := lb
+                    targetLPrice := array.get(mssLowPrices, k)
+                    break
+
+        bool breakDown = (i_mssConfirm == "Close" ? close : low) < targetLPrice
+
+        // Mirror of the bullish guard: the pivot low must still be unbroken, or a
+        // leg that already traded below it would confirm an MSS on the sweep bar.
+        bool pivotIntact = true
+        if breakDown and not na(targetLBar) and bar_index > targetLBar + 1
+            for j = targetLBar + 1 to bar_index - 1
+                float priorBreak = i_mssConfirm == "Close" ? close[bar_index - j] : low[bar_index - j]
+                if priorBreak < targetLPrice
+                    pivotIntact := false
+                    break
+
+        if breakDown and pivotIntact and not na(targetLBar) and bar_index > targetLBar
+            bearMSSConfirmedThisBar := true
+            waitingForBearMSS := false
+            int sweepOriginBar = bslSweepBarIndex
+            bslSweepBarIndex  := na
+
+            if i_alertOnMSS
+                alert("Bearish MSS Formed @ " + str.tostring(close), alert.freq_once_per_bar_close)
+
+            mLine = line.new(x1 = targetLBar, y1 = targetLPrice, x2 = bar_index, y2 = targetLPrice,
+                             color = i_bearMssCol, width = i_mssLineWidth, style = f_lineStyleChoice(i_mssLineStyle))
+
+            mLabel = label.new(x = math.round((targetLBar + bar_index) / 2), y = targetLPrice, text = "𝗠𝗦𝗦",
+                               style = label.style_label_up, color = color.new(color.black, 100),
+                               textcolor = i_bearMssCol, size = f_labelSize(i_labelSize))
+
+            if not na(activeBearSP)
+                activeBearSP.mssLine  := mLine
+                activeBearSP.mssLabel := mLabel
+                activeBearSP.fvgBoxes := array.new_box()
+                activeBearSP.pendingMSS := false
+
+            if i_showMssFvg
+                int fvgFound = 0
+                int startScan = nz(sweepOriginBar, targetLBar)
+                int lookbackDepth = math.min(math.max(bar_index - startScan + 3, 3), i_mssMaxBars + 5)
+                for b = 0 to lookbackDepth - 3
+                    if fvgFound >= i_maxMssFvgCount
+                        break
+                    if high[b] < low[b + 2]
+                        int fvgRight = (bar_index - b) + (i_extendFvg ? i_fvgExtendBars : 0)
+                        color borderCol = i_fvgBorderWidth == 0 ? color.new(color.black, 100) : color.new(i_fvgBearColor, 40)
+                        fvgBox = box.new(
+                             left = bar_index - b - 2, top = low[b + 2],
+                             right = fvgRight, bottom = high[b],
+                             bgcolor = color.new(i_fvgBearColor, i_fvgTransp),
+                             border_color = borderCol,
+                             border_width = i_fvgBorderWidth)
+                        if not na(activeBearSP)
+                            if not na(activeBearSP.fvgBoxes)
+                                array.push(activeBearSP.fvgBoxes, fvgBox)
+                        fvgFound += 1
+
+            if i_showMssBox
+                int hBar = na
+                float hPrice = na
+                if array.size(mssHighBars) > 0
+                    for m = array.size(mssHighBars) - 1 to 0
+                        int hb = array.get(mssHighBars, m)
+                        if hb < targetLBar
+                            hBar := hb
+                            hPrice := array.get(mssHighPrices, m)
+                            break
+
+                float aPrice = high
+                int aBar = bar_index
+                if bar_index > targetLBar + 1
+                    for j = targetLBar + 1 to bar_index - 1
+                        if high[bar_index - j] > aPrice
+                            aPrice := high[bar_index - j]
+                            aBar := j
+
+                if not na(hBar)
+                    float minP = math.min(hPrice, math.min(targetLPrice, math.min(aPrice, close)))
+                    float maxP = math.max(hPrice, math.max(targetLPrice, math.max(aPrice, close)))
+                    int minB = math.min(hBar, math.min(targetLBar, math.min(aBar, bar_index)))
+                    mBox = box.new(left = minB, top = maxP, right = bar_index, bottom = minP, bgcolor = color.new(i_bearBoxCol, i_mssBoxTransp), border_color = color.new(color.black, 100), border_width = 0)
+                    if not na(activeBearSP)
+                        activeBearSP.mssBox := mBox
+
+f_trimSwingArray(bslArray, i_maxSwings)
+f_trimSwingArray(sslArray, i_maxSwings)
+
+while array.size(mssHighBars) > 50
+    array.shift(mssHighBars)
+    array.shift(mssHighPrices)
+
+while array.size(mssLowBars) > 50
+    array.shift(mssLowBars)
+    array.shift(mssLowPrices)
+
+var table hud = na
+
+if i_showTable
+    if barstate.islast
+        chartTF = timeframe.isminutes ? (timeframe.multiplier >= 60 ? str.tostring(math.round(timeframe.multiplier / 60)) + "H" : str.tostring(timeframe.multiplier) + "m") : timeframe.period
+
+        bigSize = f_labelSize(i_tblHeaderSize)
+        rowSize = f_labelSize(i_tblRowSize)
+        string fullDate = str.format("{0,date,EEEE, MMM dd, yyyy}", time)
+
+        if na(hud)
+            hud := table.new(
+                 f_tablePosOf(i_tablePosition), 1, 3,
+                 bgcolor = i_tblBgCol,
+                 frame_width = i_tblFrameW,
+                 frame_color = i_tblBorderCol,
+                 border_width = i_tblBorderW,
+                 border_color = i_tblBorderCol)
+
+        table.cell(hud, 0, 0, fullDate, text_color = i_tblTextCol, text_size = rowSize, text_halign = text.align_center)
+        table.cell(hud, 0, 1, syminfo.ticker + " • " + chartTF, text_color = i_tblTextCol, text_size = bigSize, text_halign = text.align_center)
+        table.cell(hud, 0, 2, "Higher TF: " + f_formatTimeframe(i_liqTF) + " • Swing: " + str.tostring(i_swingLen), text_color = i_tblTextCol, text_size = rowSize, text_halign = text.align_center)
+    else if not na(hud)
+        table.clear(hud, 0, 0, 0, 2)
+
+alertcondition(bslSweptThisBar, title="Buyside Liquidity (BSL) Swept", message="{{ticker}}: Buyside Liquidity (BSL) swept on {{interval}}")
+alertcondition(sslSweptThisBar, title="Sellside Liquidity (SSL) Swept", message="{{ticker}}: Sellside Liquidity (SSL) swept on {{interval}}")
+alertcondition(bullMSSConfirmedThisBar, title="Bullish MSS (After SSL Sweep)", message="{{ticker}}: Bullish Market Structure Shift confirmed after SSL Sweep on {{interval}}")
+alertcondition(bearMSSConfirmedThisBar, title="Bearish MSS (After BSL Sweep)", message="{{ticker}}: Bearish Market Structure Shift confirmed after BSL Sweep on {{interval}}")
