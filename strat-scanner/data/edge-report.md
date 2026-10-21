@@ -1,16 +1,16 @@
 # Edge Report — live signal record
 
-_Generated 2026-10-20_ · **1286** settled signals from 2026-08-17 to 2026-10-20 · 42 open, 54 pending (excluded)
+_Generated 2026-10-21_ · **1323** settled signals from 2026-08-17 to 2026-10-21 · 36 open, 56 pending (excluded)
 
 Forward record of every signal published at confidence ≥ 50 on D/W/M structure across 35 symbols, resolved against daily bars. Out-of-sample by construction: each signal was enrolled when it was published, before its outcome existed. The trigger stays actionable for 1 bar(s) of its own timeframe and trades are held at most 6. Compare against `calibration.md`, which measures the same engine over history — a large gap between the two is a live-run problem, not a strategy one.
 
 ## Headline
 
-- **69%** of published signals actually triggered (887 of 1286) — the rest expired unfilled.
+- **69%** of published signals actually triggered (909 of 1323) — the rest expired unfilled.
 - Of those trades, **73%** reached target 1, 23% stopped out, 4% timed out.
-- **Expectancy +3.40R per trade taken**, +2.34R per signal published.
-- Promised **0.72R** to target 1 on average; delivered **+3.40R**.
-- Trades ran **4.09R** in favour at best and **0.64R** against at worst; **1%** went on to extended magnitude.
+- **Expectancy +3.32R per trade taken**, +2.28R per signal published.
+- Promised **0.72R** to target 1 on average; delivered **+3.32R**.
+- Trades ran **4.01R** in favour at best and **0.64R** against at worst; **1%** went on to extended magnitude.
 
 ## Does confidence mean anything?
 
@@ -18,12 +18,12 @@ The score is ordinal, not a probability — the only claim it makes is that a hi
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 45–54 | 611 | 64% | 393 | 80% | +3.27 | +2.10 | +1284.70 |
-| 55–64 | 541 | 72% | 387 | 68% | +4.47 | +3.20 | +1729.42 |
-| 65–74 (High) | 119 | 80% | 95 | 65% | +0.01 | +0.01 | +0.82 |
+| 45–54 | 629 | 64% | 401 | 80% | +3.20 | +2.04 | +1284.07 |
+| 55–64 | 554 | 71% | 396 | 68% | +4.37 | +3.12 | +1728.62 |
+| 65–74 (High) | 125 | 80% | 100 | 66% | +0.02 | +0.01 | +1.68 |
 | 75+ (High) | 15 | 80% | 12 | 67% | +0.04 | +0.03 | +0.52 |
 
-Spearman rank correlation between confidence and realised R: **0.021** — **no relationship** — confidence is currently decoration; the score is not ranking anything.
+Spearman rank correlation between confidence and realised R: **0.018** — **no relationship** — confidence is currently decoration; the score is not ranking anything.
 
 ## Which confidence terms are earning their weight?
 
@@ -31,18 +31,18 @@ Mean R per signal when a term fired versus when it did not. A term should lift r
 
 | Factor | Fired (n) | R/signal | Did not (n) | R/signal | Lift | Win% w/ vs w/o |
 | --- | --- | --- | --- | --- | --- | --- |
-| `compression` | 371 | +5.16 | 915 | +1.21 | +3.95 | 76% vs 72% |
-| `ftfc-aligned` | 275 | +4.71 | 1011 | +1.70 | +3.01 | 69% vs 74% |
-| `ftfc-opposed` | 275 | +4.71 | 1011 | +1.70 | +3.01 | 69% vs 74% |
-| `base` | 1286 | +2.34 | 0 | +0.00 | +2.34 | 73% vs 0% |
-| `rr-poor` | 888 | +2.76 | 398 | +1.42 | +1.33 | 85% vs 38% |
-| `close-location` | 680 | +2.56 | 606 | +2.10 | +0.46 | 76% vs 69% |
-| `reversal-backed` | 748 | +2.44 | 538 | +2.22 | +0.22 | 78% vs 66% |
-| `rr-ok` | 367 | +1.54 | 919 | +2.66 | -1.12 | 38% vs 83% |
-| `rr-strong` | 31 | +0.00 | 1255 | +2.40 | -2.40 | 33% vs 74% |
-| `volume` | 265 | +0.05 | 1021 | +2.94 | -2.89 | 64% vs 75% |
-| `ftfc-full` | 1010 | +1.70 | 276 | +4.69 | -2.99 | 74% vs 69% |
-| `in-force` | 617 | -0.03 | 669 | +4.53 | -4.56 | 75% vs 69% |
+| `compression` | 383 | +5.00 | 940 | +1.17 | +3.82 | 76% vs 72% |
+| `ftfc-aligned` | 281 | +4.61 | 1042 | +1.65 | +2.96 | 69% vs 74% |
+| `ftfc-opposed` | 281 | +4.61 | 1042 | +1.65 | +2.96 | 69% vs 74% |
+| `base` | 1323 | +2.28 | 0 | +0.00 | +2.28 | 73% vs 0% |
+| `rr-poor` | 915 | +2.68 | 408 | +1.38 | +1.29 | 85% vs 37% |
+| `close-location` | 697 | +2.50 | 626 | +2.03 | +0.47 | 75% vs 69% |
+| `reversal-backed` | 771 | +2.37 | 552 | +2.16 | +0.21 | 78% vs 66% |
+| `rr-ok` | 377 | +1.50 | 946 | +2.59 | -1.09 | 37% vs 83% |
+| `rr-strong` | 31 | +0.00 | 1292 | +2.33 | -2.33 | 33% vs 74% |
+| `volume` | 270 | +0.05 | 1053 | +2.85 | -2.80 | 64% vs 75% |
+| `ftfc-full` | 1041 | +1.65 | 282 | +4.59 | -2.94 | 74% vs 69% |
+| `in-force` | 637 | -0.02 | 686 | +4.42 | -4.44 | 75% vs 68% |
 
 ## By pattern
 
@@ -50,22 +50,22 @@ Which setups to keep taking, and which to stop.
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2-2 Reversal | 382 | 74% | 284 | 77% | -0.05 | -0.03 | -12.98 |
-| 2-2 Continuation | 324 | 64% | 208 | 58% | +2.73 | +1.75 | +566.92 |
-| 2-1-2 Reversal | 148 | 71% | 105 | 74% | -0.04 | -0.03 | -4.19 |
-| 2-1-2 Continuation | 129 | 72% | 93 | 77% | +6.60 | +4.76 | +614.22 |
-| Rev Strat (1-2-2) Reversal | 98 | 59% | 58 | 83% | +0.02 | +0.01 | +1.17 |
-| 3-1-2 Reversal | 61 | 59% | 36 | 81% | +36.07 | +21.29 | +1298.49 |
-| 3-2-2 Reversal | 60 | 62% | 37 | 84% | +14.63 | +9.02 | +541.23 |
-| 3-2 Continuation | 51 | 76% | 39 | 79% | +0.17 | +0.13 | +6.46 |
-| 1-1-2 Continuation | 33 | 82% | 27 | 70% | +0.15 | +0.13 | +4.16 |
+| 2-2 Reversal | 394 | 74% | 291 | 77% | -0.04 | -0.03 | -12.65 |
+| 2-2 Continuation | 330 | 64% | 212 | 58% | +2.67 | +1.71 | +565.58 |
+| 2-1-2 Reversal | 150 | 71% | 106 | 75% | -0.04 | -0.03 | -4.19 |
+| 2-1-2 Continuation | 134 | 72% | 96 | 78% | +6.40 | +4.59 | +614.84 |
+| Rev Strat (1-2-2) Reversal | 100 | 59% | 59 | 83% | +0.02 | +0.01 | +1.42 |
+| 3-1-2 Reversal | 65 | 62% | 40 | 80% | +32.47 | +19.98 | +1298.65 |
+| 3-2-2 Reversal | 63 | 59% | 37 | 84% | +14.63 | +8.59 | +541.23 |
+| 3-2 Continuation | 53 | 77% | 41 | 76% | +0.14 | +0.11 | +5.86 |
+| 1-1-2 Continuation | 34 | 79% | 27 | 70% | +0.15 | +0.12 | +4.16 |
 
 ## By timeframe
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D | 801 | 65% | 520 | 72% | -0.02 | -0.01 | -11.68 |
-| W | 354 | 73% | 257 | 78% | +2.24 | +1.62 | +574.51 |
+| D | 827 | 65% | 540 | 72% | -0.02 | -0.01 | -12.27 |
+| W | 365 | 71% | 259 | 78% | +2.22 | +1.57 | +574.53 |
 | M | 131 | 84% | 110 | 65% | +22.30 | +18.72 | +2452.64 |
 
 ## By timeframe continuity
@@ -74,23 +74,23 @@ FTFC is the single heaviest term in the model (24 points). This is where it is s
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Full continuity | 1010 | 66% | 668 | 74% | +2.57 | +1.70 | +1720.09 |
-| Mixed | 275 | 80% | 219 | 69% | +5.91 | +4.71 | +1295.37 |
+| Full continuity | 1041 | 66% | 684 | 74% | +2.51 | +1.65 | +1719.71 |
+| Mixed | 281 | 80% | 225 | 69% | +5.76 | +4.61 | +1295.19 |
 | Flat / unknown | 1 | 0% | 0 | — | — | +0.00 | +0.00 |
 
 ## Reversal vs continuation
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Continuation | 537 | 68% | 367 | 66% | +3.25 | +2.22 | +1191.76 |
-| Reversal | 749 | 69% | 520 | 78% | +3.51 | +2.43 | +1823.71 |
+| Continuation | 551 | 68% | 376 | 66% | +3.17 | +2.16 | +1190.44 |
+| Reversal | 772 | 69% | 533 | 78% | +3.42 | +2.36 | +1824.46 |
 
 ## Compression vs directional trigger
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Directional trigger bar | 915 | 68% | 626 | 72% | +1.76 | +1.21 | +1102.79 |
-| Inside-bar compression (X-1-?) | 371 | 70% | 261 | 76% | +7.33 | +5.16 | +1912.67 |
+| Directional trigger bar | 940 | 68% | 640 | 72% | +1.72 | +1.17 | +1101.44 |
+| Inside-bar compression (X-1-?) | 383 | 70% | 269 | 76% | +7.11 | +5.00 | +1913.46 |
 
 ## By symbol
 
@@ -98,40 +98,40 @@ Ordered by R per signal. Thin samples — read as a hint, not a verdict.
 
 |  | n | Trig% | Trades | Win% | Avg R | R/signal | Total R |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| JUP-USD | 52 | 21% | 11 | 100% | +275.81 | +58.34 | +3033.94 |
-| LTC-USD | 22 | 86% | 19 | 89% | +0.34 | +0.29 | +6.47 |
-| TLT | 37 | 73% | 27 | 78% | +0.34 | +0.25 | +9.26 |
-| AMD | 42 | 79% | 33 | 79% | +0.18 | +0.14 | +6.03 |
+| JUP-USD | 54 | 20% | 11 | 100% | +275.81 | +56.18 | +3033.94 |
+| LTC-USD | 23 | 87% | 20 | 85% | +0.30 | +0.26 | +6.08 |
+| TLT | 38 | 74% | 28 | 79% | +0.34 | +0.25 | +9.58 |
+| AMD | 43 | 77% | 33 | 79% | +0.18 | +0.14 | +6.03 |
 | XLI | 41 | 63% | 26 | 92% | +0.17 | +0.11 | +4.31 |
 | META | 45 | 51% | 23 | 78% | +0.15 | +0.07 | +3.35 |
+| DIA | 44 | 82% | 36 | 86% | +0.09 | +0.07 | +3.19 |
 | AMZN | 38 | 79% | 30 | 83% | +0.09 | +0.07 | +2.59 |
-| DIA | 43 | 81% | 35 | 86% | +0.08 | +0.06 | +2.72 |
 | XLU | 45 | 78% | 35 | 63% | +0.06 | +0.05 | +2.24 |
-| ETH-USD | 28 | 79% | 22 | 77% | +0.05 | +0.04 | +1.15 |
 | XLK | 41 | 66% | 27 | 81% | +0.04 | +0.03 | +1.13 |
-| SMH | 42 | 62% | 26 | 73% | +0.04 | +0.02 | +1.00 |
-| EURUSD=X | 41 | 7% | 3 | 67% | +0.16 | +0.01 | +0.48 |
+| SMH | 43 | 63% | 27 | 74% | +0.04 | +0.02 | +1.02 |
+| EURUSD=X | 43 | 7% | 3 | 67% | +0.16 | +0.01 | +0.48 |
+| XLF | 47 | 79% | 37 | 73% | +0.01 | +0.01 | +0.48 |
 | BTC-USD | 28 | 93% | 26 | 73% | +0.01 | +0.01 | +0.18 |
-| XLF | 46 | 78% | 36 | 72% | +0.01 | +0.00 | +0.19 |
-| GLD | 43 | 67% | 29 | 83% | +0.00 | +0.00 | +0.07 |
+| GLD | 44 | 68% | 30 | 83% | +0.00 | +0.00 | +0.07 |
+| IWM | 45 | 67% | 30 | 70% | +0.00 | +0.00 | +0.06 |
+| ETH-USD | 30 | 80% | 24 | 71% | -0.01 | -0.01 | -0.21 |
 | SOL-USD | 32 | 78% | 25 | 68% | -0.01 | -0.01 | -0.27 |
-| XRP-USD | 38 | 63% | 24 | 71% | -0.02 | -0.01 | -0.47 |
 | XLC | 38 | 79% | 30 | 87% | -0.02 | -0.02 | -0.61 |
-| IWM | 44 | 66% | 29 | 69% | -0.03 | -0.02 | -0.85 |
-| MSFT | 31 | 84% | 26 | 77% | -0.04 | -0.03 | -1.06 |
-| SPY | 33 | 70% | 23 | 65% | -0.05 | -0.04 | -1.18 |
-| HYPE-USD | 26 | 81% | 21 | 57% | -0.05 | -0.04 | -0.96 |
-| XLY | 35 | 89% | 31 | 77% | -0.06 | -0.06 | -2.00 |
-| AAPL | 36 | 78% | 28 | 71% | -0.10 | -0.08 | -2.74 |
-| TSLA | 37 | 76% | 28 | 75% | -0.13 | -0.10 | -3.62 |
-| DOGE-USD | 33 | 70% | 23 | 48% | -0.15 | -0.10 | -3.34 |
-| XLP | 41 | 66% | 27 | 63% | -0.17 | -0.11 | -4.47 |
+| XRP-USD | 39 | 64% | 25 | 68% | -0.03 | -0.02 | -0.78 |
+| MSFT | 32 | 84% | 27 | 78% | -0.03 | -0.03 | -0.82 |
+| HYPE-USD | 28 | 82% | 23 | 57% | -0.04 | -0.03 | -0.89 |
+| XLY | 37 | 86% | 32 | 78% | -0.06 | -0.05 | -2.00 |
+| SPY | 35 | 69% | 24 | 63% | -0.09 | -0.06 | -2.18 |
+| AAPL | 38 | 74% | 28 | 71% | -0.10 | -0.07 | -2.74 |
+| TSLA | 39 | 74% | 29 | 76% | -0.12 | -0.09 | -3.61 |
+| XLP | 42 | 64% | 27 | 63% | -0.17 | -0.11 | -4.47 |
+| DOGE-USD | 35 | 71% | 25 | 48% | -0.17 | -0.12 | -4.16 |
+| XLV | 39 | 74% | 29 | 66% | -0.17 | -0.13 | -4.97 |
+| GC=F | 42 | 64% | 27 | 74% | -0.20 | -0.13 | -5.35 |
 | QQQ | 37 | 73% | 27 | 63% | -0.18 | -0.13 | -4.81 |
-| GC=F | 40 | 65% | 26 | 73% | -0.21 | -0.13 | -5.36 |
-| XLV | 37 | 76% | 28 | 64% | -0.19 | -0.14 | -5.22 |
-| NVDA | 40 | 63% | 25 | 64% | -0.30 | -0.19 | -7.41 |
-| XLE | 41 | 73% | 30 | 60% | -0.27 | -0.20 | -8.03 |
-| GOOGL | 33 | 85% | 28 | 61% | -0.26 | -0.22 | -7.23 |
+| XLE | 43 | 72% | 31 | 61% | -0.24 | -0.17 | -7.48 |
+| NVDA | 41 | 61% | 25 | 64% | -0.30 | -0.18 | -7.41 |
+| GOOGL | 34 | 85% | 29 | 62% | -0.24 | -0.21 | -7.09 |
 
 ---
 
