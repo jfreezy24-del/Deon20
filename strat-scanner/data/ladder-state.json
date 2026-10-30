@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": "2026-10-29",
+  "lastCheckedOn": "2026-10-30",
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
@@ -65,7 +65,7 @@
           "timeframe": "W",
           "placedOn": "2026-10-26",
           "pricedOn": "2026-10-26",
-          "filledOn": null
+          "filledOn": "2026-10-29"
         },
         {
           "price": 94.4587,
@@ -237,7 +237,7 @@
           "timeframe": "W",
           "placedOn": "2026-10-26",
           "pricedOn": "2026-10-26",
-          "filledOn": null
+          "filledOn": "2026-10-29"
         },
         {
           "price": 0.056373,
@@ -315,7 +315,7 @@
           "timeframe": "W",
           "placedOn": "2026-10-26",
           "pricedOn": "2026-10-26",
-          "filledOn": null
+          "filledOn": "2026-10-29"
         },
         {
           "price": 74908.81,
@@ -479,7 +479,7 @@
           "timeframe": "W",
           "placedOn": "2026-10-26",
           "pricedOn": "2026-10-26",
-          "filledOn": null
+          "filledOn": "2026-10-29"
         },
         {
           "price": 1740.66,
@@ -643,7 +643,7 @@
           "timeframe": "M",
           "placedOn": "2026-10-05",
           "pricedOn": "2026-10-05",
-          "filledOn": null
+          "filledOn": "2026-10-29"
         },
         {
           "price": 7.1742,
@@ -780,7 +780,7 @@
           "timeframe": "M",
           "placedOn": "2026-10-05",
           "pricedOn": "2026-10-05",
-          "filledOn": null
+          "filledOn": "2026-10-29"
         },
         {
           "price": 0.171129,
