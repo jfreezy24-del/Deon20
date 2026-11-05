@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": "2026-11-04",
+  "lastCheckedOn": "2026-11-05",
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
@@ -351,7 +351,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-02",
           "pricedOn": "2026-11-02",
-          "filledOn": null
+          "filledOn": "2026-11-04"
         },
         {
           "price": 62216.21,
@@ -455,7 +455,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-02",
           "pricedOn": "2026-11-02",
-          "filledOn": null
+          "filledOn": "2026-11-04"
         },
         {
           "price": 39.2775,
