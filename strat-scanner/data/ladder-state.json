@@ -4,7 +4,7 @@
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 75.681,
@@ -86,6 +86,15 @@
           "filledOn": "2026-11-02"
         },
         {
+          "price": 85.0653,
+          "allocationPct": 20,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 69.976,
           "allocationPct": 24,
           "source": "Weekly pivot low",
@@ -116,7 +125,7 @@
     },
     "AVAX-USD": {
       "symbol": "AVAX-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 6.35,
@@ -190,8 +199,17 @@
           "filledOn": "2026-11-08"
         },
         {
+          "price": 7.7753,
+          "allocationPct": 28,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 6.0437,
-          "allocationPct": 27,
+          "allocationPct": 34,
           "source": "Weekly pivot low",
           "timeframe": "W",
           "placedOn": "2026-09-01",
@@ -200,7 +218,7 @@
         },
         {
           "price": 5.6774,
-          "allocationPct": 29,
+          "allocationPct": 38,
           "source": "Weekly pivot low",
           "timeframe": "W",
           "placedOn": "2026-11-02",
@@ -211,7 +229,7 @@
     },
     "DOGE-USD": {
       "symbol": "DOGE-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 0.069462,
@@ -276,10 +294,19 @@
           "filledOn": "2026-11-05"
         },
         {
+          "price": 0.067705,
+          "allocationPct": 45,
+          "source": "Weekly pivot low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 0.056373,
-          "allocationPct": 38,
-          "source": "Monthly pivot low",
-          "timeframe": "M",
+          "allocationPct": 55,
+          "source": "Weekly pivot low",
+          "timeframe": "W",
           "placedOn": "2026-10-19",
           "pricedOn": "2026-10-19",
           "filledOn": null
@@ -288,7 +315,7 @@
     },
     "BTC-USD": {
       "symbol": "BTC-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 76669.5,
@@ -354,6 +381,15 @@
           "filledOn": "2026-11-04"
         },
         {
+          "price": 73530.09,
+          "allocationPct": 28,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 62216.21,
           "allocationPct": 26,
           "source": "Weekly pivot low",
@@ -374,8 +410,8 @@
         {
           "price": 57722.05,
           "allocationPct": 22,
-          "source": "Monthly pivot low",
-          "timeframe": "M",
+          "source": "Weekly pivot low",
+          "timeframe": "W",
           "placedOn": "2026-11-02",
           "pricedOn": "2026-11-02",
           "filledOn": null
@@ -384,7 +420,7 @@
     },
     "LTC-USD": {
       "symbol": "LTC-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 43.855,
@@ -458,6 +494,15 @@
           "filledOn": "2026-11-04"
         },
         {
+          "price": 49.3051,
+          "allocationPct": 28,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 39.2775,
           "allocationPct": 38,
           "source": "Weekly pivot low",
@@ -470,7 +515,7 @@
     },
     "ETH-USD": {
       "symbol": "ETH-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 2388.13,
@@ -527,6 +572,15 @@
           "filledOn": "2026-11-08"
         },
         {
+          "price": 2069.69,
+          "allocationPct": 36,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 1740.66,
           "allocationPct": 33,
           "source": "Monthly pivot low",
@@ -548,7 +602,7 @@
     },
     "DOT-USD": {
       "symbol": "DOT-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 0.751623,
@@ -613,6 +667,15 @@
           "filledOn": "2026-11-08"
         },
         {
+          "price": 0.844789,
+          "allocationPct": 45,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 0.743579,
           "allocationPct": 55,
           "source": "Weekly pivot low",
@@ -625,7 +688,7 @@
     },
     "LINK-USD": {
       "symbol": "LINK-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 10.9957,
@@ -700,8 +763,17 @@
           "filledOn": "2026-11-08"
         },
         {
+          "price": 10.1425,
+          "allocationPct": 45,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
           "price": 7.1742,
-          "allocationPct": 38,
+          "allocationPct": 55,
           "source": "Monthly pivot low",
           "timeframe": "M",
           "placedOn": "2026-08-13",
@@ -712,7 +784,7 @@
     },
     "XRP-USD": {
       "symbol": "XRP-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 1.4181,
@@ -778,19 +850,46 @@
           "filledOn": "2026-11-08"
         },
         {
-          "price": 0.9862,
-          "allocationPct": 38,
+          "price": 1.0082,
+          "allocationPct": 20,
           "source": "Weekly pivot low",
           "timeframe": "W",
-          "placedOn": "2026-10-05",
-          "pricedOn": "2026-10-05",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
+          "price": 0.910025,
+          "allocationPct": 24,
+          "source": "Measured move",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
+          "price": 0.73005,
+          "allocationPct": 27,
+          "source": "Measured move",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
+          "price": 0.550075,
+          "allocationPct": 29,
+          "source": "Measured move",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
           "filledOn": null
         }
       ]
     },
     "ADA-USD": {
       "symbol": "ADA-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 0.174358,
@@ -855,12 +954,21 @@
           "filledOn": "2026-11-05"
         },
         {
-          "price": 0.171129,
+          "price": 0.171413,
+          "allocationPct": 28,
+          "source": "Prior week low",
+          "timeframe": "W",
+          "placedOn": "2026-09-07",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
+          "price": 0.153244,
           "allocationPct": 34,
           "source": "Weekly pivot low",
           "timeframe": "W",
-          "placedOn": "2026-09-07",
-          "pricedOn": "2026-09-07",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
           "filledOn": null
         },
         {
@@ -876,7 +984,7 @@
     },
     "HYPE-USD": {
       "symbol": "HYPE-USD",
-      "planDate": "2026-11-02",
+      "planDate": "2026-11-09",
       "rungs": [
         {
           "price": 79.6125,
@@ -933,12 +1041,39 @@
           "filledOn": "2026-10-26"
         },
         {
-          "price": 51.1075,
-          "allocationPct": 62,
+          "price": 61.2485,
+          "allocationPct": 12,
+          "source": "Measured move",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
+          "price": 52.6069,
+          "allocationPct": 20,
           "source": "Weekly pivot low",
           "timeframe": "W",
-          "placedOn": "2026-10-05",
-          "pricedOn": "2026-10-05",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
+          "price": 49.0889,
+          "allocationPct": 30,
+          "source": "Measured move",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
+          "filledOn": null
+        },
+        {
+          "price": 36.9293,
+          "allocationPct": 38,
+          "source": "Measured move",
+          "timeframe": "W",
+          "placedOn": "2026-11-09",
+          "pricedOn": "2026-11-09",
           "filledOn": null
         }
       ]
