@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": "2026-11-10",
+  "lastCheckedOn": "2026-11-11",
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
@@ -92,7 +92,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-10"
         },
         {
           "price": 69.976,
@@ -300,7 +300,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-10"
         },
         {
           "price": 0.056373,
@@ -387,7 +387,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-10"
         },
         {
           "price": 62216.21,
@@ -500,7 +500,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-10"
         },
         {
           "price": 39.2775,
@@ -578,7 +578,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-10"
         },
         {
           "price": 1740.66,
@@ -673,7 +673,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-10"
         },
         {
           "price": 0.743579,
@@ -769,7 +769,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-10"
         },
         {
           "price": 7.1742,
