@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": "2026-11-11",
+  "lastCheckedOn": "2026-11-12",
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
@@ -101,15 +101,6 @@
           "timeframe": "W",
           "placedOn": "2026-08-17",
           "pricedOn": "2026-08-17",
-          "filledOn": null
-        },
-        {
-          "price": 66.3454,
-          "allocationPct": 27,
-          "source": "Monthly pivot low",
-          "timeframe": "M",
-          "placedOn": "2026-08-13",
-          "pricedOn": "2026-08-13",
           "filledOn": null
         },
         {
@@ -399,15 +390,6 @@
           "filledOn": null
         },
         {
-          "price": 59733.99,
-          "allocationPct": 24,
-          "source": "Monthly pivot low",
-          "timeframe": "M",
-          "placedOn": "2026-08-13",
-          "pricedOn": "2026-08-13",
-          "filledOn": null
-        },
-        {
           "price": 57722.05,
           "allocationPct": 22,
           "source": "Weekly pivot low",
@@ -501,15 +483,6 @@
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
           "filledOn": "2026-11-10"
-        },
-        {
-          "price": 39.2775,
-          "allocationPct": 38,
-          "source": "Weekly pivot low",
-          "timeframe": "W",
-          "placedOn": "2026-08-13",
-          "pricedOn": "2026-08-13",
-          "filledOn": null
         }
       ]
     },
@@ -770,15 +743,6 @@
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
           "filledOn": "2026-11-10"
-        },
-        {
-          "price": 7.1742,
-          "allocationPct": 55,
-          "source": "Monthly pivot low",
-          "timeframe": "M",
-          "placedOn": "2026-08-13",
-          "pricedOn": "2026-08-13",
-          "filledOn": null
         }
       ]
     },
