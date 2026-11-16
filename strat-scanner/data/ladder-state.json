@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastCheckedOn": "2026-11-15",
+  "lastCheckedOn": "2026-11-16",
   "positions": {
     "SOL-USD": {
       "symbol": "SOL-USD",
@@ -101,7 +101,7 @@
           "timeframe": "W",
           "placedOn": "2026-08-17",
           "pricedOn": "2026-08-17",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         },
         {
           "price": 60.1779,
@@ -196,7 +196,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         },
         {
           "price": 6.0437,
@@ -300,7 +300,7 @@
           "timeframe": "W",
           "placedOn": "2026-10-19",
           "pricedOn": "2026-10-19",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         }
       ]
     },
@@ -387,7 +387,7 @@
           "timeframe": "W",
           "placedOn": "2026-08-31",
           "pricedOn": "2026-08-31",
-          "filledOn": null
+          "filledOn": "2026-11-15"
         },
         {
           "price": 57722.05,
@@ -560,7 +560,7 @@
           "timeframe": "M",
           "placedOn": "2026-10-12",
           "pricedOn": "2026-10-12",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         },
         {
           "price": 1510.25,
@@ -655,7 +655,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-02",
           "pricedOn": "2026-11-02",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         }
       ]
     },
@@ -829,7 +829,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         },
         {
           "price": 0.73005,
@@ -933,7 +933,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         },
         {
           "price": 0.138088,
@@ -1011,7 +1011,7 @@
           "timeframe": "W",
           "placedOn": "2026-11-09",
           "pricedOn": "2026-11-09",
-          "filledOn": null
+          "filledOn": "2026-11-14"
         },
         {
           "price": 52.6069,
